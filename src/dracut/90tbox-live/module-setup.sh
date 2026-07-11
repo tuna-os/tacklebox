@@ -10,7 +10,11 @@
 # /sysroot. Claimed by root=tbox:CDLABEL=<iso-label> on the kernel
 # cmdline (see parse-tbox-live.sh for the accepted forms).
 
-check() { return 0; }
+# 255 = include only when explicitly requested (--add tbox-live, which
+# PrepareInitramfs does for ISO targets). check 0 would pull this module
+# into EVERY no-hostonly rebuild — including block-target initramfses
+# that have no business carrying a live-boot cmdline hook.
+check() { return 255; }
 depends() { echo "base"; return 0; }
 
 installkernel() {
