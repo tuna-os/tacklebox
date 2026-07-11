@@ -298,6 +298,26 @@ jobs:
       - name: verify per-env ISO
         run: ./tacklebox verify /mnt/tbx/smoke.iso
 
+      # alpha carries live_customize (fixtures/live-customize-smoke.sh); beta
+      # doesn't. The marker must be inside alpha's squashed rootfs and absent
+      # from beta's — this exercises the full path: recipe parsing, script
+      # resolution, container run, commit, derived-image squash.
+      - name: assert live_customize applied
+        run: |
+          xorriso -osirrox on -indev /mnt/tbx/smoke.iso \
+            -extract /LiveOS/alpha.rootfs.sfs /tmp/alpha.sfs \
+            -extract /LiveOS/beta.rootfs.sfs /tmp/beta.sfs
+          unsquashfs -l /tmp/alpha.sfs 'usr/share/tbox-live-customize-marker' \
+            | grep -q tbox-live-customize-marker \
+            || { echo "::error::alpha rootfs missing live_customize marker"; exit 1; }
+          if unsquashfs -l /tmp/beta.sfs 'usr/share/tbox-live-customize-marker' 2>/dev/null \
+            | grep -q tbox-live-customize-marker; then
+            echo "::error::beta (no live_customize) unexpectedly contains the marker"
+            exit 1
+          fi
+          echo "live_customize marker present in alpha, absent in beta"
+          rm -f /tmp/alpha.sfs /tmp/beta.sfs
+
       - name: build dedup ISO
         run: sudo ./tacklebox build fixtures/iso-dedup-2env.json --iso /mnt/tbx/dedup.iso -b /mnt/tbx
 

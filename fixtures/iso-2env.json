@@ -10,6 +10,7 @@
       "id": "alpha",
       "image": "localhost/tbox-iso-alpha:latest",
       "title": "Fixture Alpha",
+      "live_customize": ["live-customize-smoke.sh"],
       "modes": ["live"]
     },
     {
