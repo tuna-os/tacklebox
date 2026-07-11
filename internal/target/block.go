@@ -73,6 +73,7 @@ func (b *BlockTarget) addCleanup(f func()) {
 // ESP+STORE, and installs systemd-boot onto the ESP. The caller writes
 // per-env content into the returned mount points.
 func (b *BlockTarget) Prepare(track Track) (*Mountpoints, error) {
+	track = orNoopTrack(track)
 	if b.DeviceArg == "" {
 		// Loop-image path. Pre-flight free-space check stays in the
 		// orchestrator (it owns the size warnings); here we just do the

@@ -103,6 +103,15 @@ tacklebox/
      module bind-mounts `/sysroot/<env>` over `/sysroot` — the same pivot it
      performs for block targets. Cache key covers all image IDs, so any image
      change rebuilds the whole combined squashfs.
+   - `Live` + `shared_store.dedup_layout: "delta"`: the `delta_base` env's
+     rootfs becomes `LiveOS/base.rootfs.sfs`; every other env gets a small
+     `LiveOS/<env>.delta.sfs` — a file-level diff against the base with
+     overlayfs whiteouts, produced by re-execing `tacklebox tree-diff`
+     inside `podman unshare` (internal/install/treediff.go). Non-base BLS
+     entries carry `tacklebox.live.delta=<env>.delta.sfs` and tbox-live
+     stacks the delta as an extra overlay lowerdir. Deltas are cached per
+     (base image, env image) pair, so single-image updates re-diff only
+     the changed env — the per-env caching the combined layout gives up.
    - Both: write a BLS entry under `loader/entries/<id>.conf` (menu title from
      the recipe's per-env `title`, falling back to the env ID).
 8. **`Target.Finalize(track)`** returns the artifact path.

@@ -12,8 +12,11 @@ type getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
 [ -f /run/tacklebox-live-done ] || return 0
 ismounted "$NEWROOT" && return 0
 
+lower=/run/rootfsbase
+[ -n "$(getarg tacklebox.live.delta)" ] && lower=/run/tbox-delta:/run/rootfsbase
+
 if mount -t overlay LiveOS_rootfs \
-    -o lowerdir=/run/rootfsbase,upperdir=/run/tbox-overlay/upper,workdir=/run/tbox-overlay/work \
+    -o "lowerdir=${lower},upperdir=/run/tbox-overlay/upper,workdir=/run/tbox-overlay/work" \
     "$NEWROOT"; then
     echo ">>> Tacklebox: live root mounted on $NEWROOT"
 else

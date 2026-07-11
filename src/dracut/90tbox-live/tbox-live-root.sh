@@ -23,6 +23,10 @@
 #   tacklebox.live.dir=<dir>            ISO dir with the squashfs (LiveOS)
 #   tacklebox.live.squashimg=<file>     squashfs name (rootfs.sfs)
 #   tacklebox.live.overlay.size=<MiB>   tmpfs upper size (8192)
+#   tacklebox.live.delta=<file>         optional per-env delta squashfs,
+#                                       loop-mounted at /run/tbox-delta and
+#                                       stacked as an extra overlay lowerdir
+#                                       (shared_store.dedup_layout=delta)
 
 command -v getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
 
@@ -53,6 +57,15 @@ sfs="/run/initramfs/live/$livedir/$squashimg"
 
 mount -t squashfs -o ro,loop "$sfs" /run/rootfsbase \
     || die "Tacklebox: cannot loop-mount $sfs"
+
+delta=$(getarg tacklebox.live.delta)
+if [ -n "$delta" ]; then
+    dsfs="/run/initramfs/live/$livedir/$delta"
+    [ -f "$dsfs" ] || die "Tacklebox: $dsfs not found on live device"
+    mkdir -p /run/tbox-delta
+    mount -t squashfs -o ro,loop "$dsfs" /run/tbox-delta \
+        || die "Tacklebox: cannot loop-mount $dsfs"
+fi
 
 # Dedicated tmpfs for the writable upper layer: /run itself is capped at
 # half of RAM and shared with everything else; the live overlay needs its

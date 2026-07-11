@@ -363,6 +363,35 @@ jobs:
           fi
           echo "6-env/dedup2 ratio: $(echo "scale=2; $dedup6 / $dedup2" | bc)"
 
+      # ── delta layout smoke ──────────────────────────────────────────────
+      # dedup_layout=delta: alpha is the base squashfs, beta boots
+      # base + beta.delta.sfs stacked as overlay lowerdirs. The delta must
+      # be tiny (fixtures differ by one marker file) and must contain the
+      # marker — proof the tree-diff caught the divergent file.
+      - name: build delta ISO
+        run: sudo ./tacklebox build fixtures/iso-delta-2env.json --iso /mnt/tbx/delta.iso -b /mnt/tbx
+
+      - name: verify delta ISO
+        run: ./tacklebox verify /mnt/tbx/delta.iso
+
+      - name: assert delta is small and carries the marker
+        run: |
+          xorriso -osirrox on -indev /mnt/tbx/delta.iso \
+            -extract /LiveOS/beta.delta.sfs /tmp/beta.delta.sfs
+          size=$(stat -c%s /tmp/beta.delta.sfs)
+          echo "beta.delta.sfs: ${size} bytes"
+          # The fixtures differ by one marker file (plus initramfs-adjacent
+          # noise); anything over 64 MiB means the diff degenerated into a
+          # near-full copy.
+          if [ "$size" -ge $((64 * 1024 * 1024)) ]; then
+            echo "::error::beta.delta.sfs (${size}B) is far too large for a one-file diff"
+            exit 1
+          fi
+          unsquashfs -l /tmp/beta.delta.sfs usr/share/tbox-env-marker \
+            | grep -q tbox-env-marker \
+            || { echo "::error::delta squashfs missing the env marker diff"; exit 1; }
+          rm -f /tmp/beta.delta.sfs
+
       # ── offline store smoke ─────────────────────────────────────────────
       # Builds a dedup ISO with offline_payloads that embeds container images
       # as a separate store.squashfs.img in /LiveOS. The boot-time
@@ -400,9 +429,16 @@ jobs:
               2>&1 | tee -a qemu-iso-dedup.out ) &
           pid3=$!
 
+          # delta ISO: beta env boots base + beta.delta.sfs lowerdir stack
+          ( QEMU_LOG=qemu-iso-delta.log ./scripts/test-boot.sh /mnt/tbx/delta.iso 600 \
+              "tacklebox.env=beta" "tacklebox.live.delta=beta.delta.sfs" \
+              2>&1 | tee -a qemu-iso-delta.out ) &
+          pid4=$!
+
           wait $pid1 || { echo "::error::6-env dedup ISO boot failed"; fail=1; }
           wait $pid2 || { echo "::error::per-env ISO boot failed"; fail=1; }
           wait $pid3 || { echo "::error::dedup ISO boot failed"; fail=1; }
+          wait $pid4 || { echo "::error::delta ISO boot failed"; fail=1; }
           exit $fail
 
       - name: upload boot logs

@@ -1,0 +1,26 @@
+{
+  "media_name": "TBX_DELTA",
+  "size": "30G",
+  "shared_store": {
+    "format": "ext4",
+    "dedup": true,
+    "dedup_layout": "delta",
+    "delta_base": "bazzite-kde"
+  },
+  "bootable_environments": [
+    {
+      "id": "bazzite-kde",
+      "image": "ghcr.io/ublue-os/bazzite:stable",
+      "title": "Bazzite (KDE)",
+      "desktop": "kde",
+      "modes": ["live"]
+    },
+    {
+      "id": "bazzite-gnome",
+      "image": "ghcr.io/ublue-os/bazzite-gnome:stable",
+      "title": "Bazzite (GNOME)",
+      "desktop": "gnome",
+      "modes": ["live"]
+    }
+  ]
+}

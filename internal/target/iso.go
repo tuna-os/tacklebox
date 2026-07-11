@@ -149,6 +149,7 @@ func (i *IsoTarget) Prepare(_ Track) (*Mountpoints, error) {
 }
 
 func (i *IsoTarget) Finalize(track Track) (string, error) {
+	track = orNoopTrack(track)
 	if i.EFISource == "" {
 		return "", fmt.Errorf("IsoTarget.Finalize: no EFISource set (orchestrator must pass one of the env images)")
 	}

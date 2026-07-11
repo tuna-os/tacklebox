@@ -183,6 +183,21 @@ one image rebuilds (and re-downloads) the whole combined squashfs, and
 the squashfs cache is keyed by *all* image IDs together. See
 `examples/iso-dedup.json`.
 
+`shared_store.dedup_layout` picks how a dedup'd store is packed:
+
+- `"combined"` (default): the single-squashfs layout described above.
+  Best dedup; any image change rebuilds the whole store.
+- `"delta"`: one `base.rootfs.sfs` (the full rootfs of the
+  `shared_store.delta_base` env — defaults to the first env) plus a
+  small `<env>.delta.sfs` per other env, computed as a file-level diff
+  against the base (with overlayfs whiteouts, so deletions apply too).
+  At boot the delta stacks as an extra overlay lowerdir
+  (`tacklebox.live.delta=<env>.delta.sfs`). Slightly weaker dedup than
+  combined, but **per-env caching survives single-image updates**:
+  changing one env's image re-diffs only that env's delta. Pick the env
+  the others were built from as `delta_base`. See
+  `examples/iso-delta.json`.
+
 > **Sizing rule of thumb:** ostree-backed bootc deployments occupy ~10 GiB
 > each, composefs-backed ones ~5 GiB. A 30 GiB recipe is enough for one
 > ostree env; three need ~60 GiB. Tacklebox prints a warning before

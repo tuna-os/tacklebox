@@ -30,6 +30,12 @@ GENERATOR_DIR="$2"
 [ -z "$GENERATOR_DIR" ] && exit 1
 [ -d "$GENERATOR_DIR" ] || mkdir -p "$GENERATOR_DIR"
 
+# Delta layout (shared_store.dedup_layout=delta): the env's delta
+# squashfs is an extra lowerdir on top of the shared base; whiteouts in
+# the delta hide files the env's image deleted from the base.
+lower=/run/rootfsbase
+[ -n "$(getarg tacklebox.live.delta)" ] && lower=/run/tbox-delta:/run/rootfsbase
+
 {
     echo "[Unit]"
     echo "Before=initrd-root-fs.target"
@@ -37,7 +43,7 @@ GENERATOR_DIR="$2"
     echo "[Mount]"
     echo "Where=/sysroot"
     echo "What=LiveOS_rootfs"
-    echo "Options=lowerdir=/run/rootfsbase,upperdir=/run/tbox-overlay/upper,workdir=/run/tbox-overlay/work"
+    echo "Options=lowerdir=${lower},upperdir=/run/tbox-overlay/upper,workdir=/run/tbox-overlay/work"
     echo "Type=overlay"
 } > "$GENERATOR_DIR"/sysroot.mount
 

@@ -244,16 +244,15 @@ func TestIsoTarget_Finalize_WithEFISource(t *testing.T) {
 		t.Fatalf("Prepare: %v", err)
 	}
 
-	// Finalize will fail at ExtractEFIBinary — we don't have a real
-	// container to extract from. But it should fail with a clear error,
-	// not a nil-pointer crash.
+	// Finalize with a nil track must never nil-deref (regression: it
+	// panicked at the first track() call on hosts where ExtractEFIBinary
+	// found a systemd-boot binary). What happens after that is
+	// host-dependent: no systemd-boot on the host → a clear EFI error;
+	// systemd-boot present → the stubbed runner lets it run through. Both
+	// are fine; a panic or an unrelated error is not.
 	_, err = it.Finalize(nil)
-	if err == nil {
-		t.Fatal("expected error from Finalize without real EFI source")
-	}
-	// The error should mention the missing EFI binary, not an internal
-	// failure like nil deref.
-	if !strings.Contains(err.Error(), "EFI") && !strings.Contains(err.Error(), "systemd-boot") {
+	if err != nil &&
+		!strings.Contains(err.Error(), "EFI") && !strings.Contains(err.Error(), "systemd-boot") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

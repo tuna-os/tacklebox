@@ -3,12 +3,30 @@ package recipe
 type SharedStore struct {
 	Format      string `json:"format"`
 	Compression string `json:"compression"`
-	// Dedup (ISO targets only) packs every env into ONE combined squashfs
-	// (one subtree per env) instead of one squashfs per env, letting
-	// mksquashfs deduplicate files shared across images — e.g. the Fedora
-	// base layers of bluefin + bazzite. Boot pivots into the env subtree
-	// via the tbox-root dracut module (tacklebox.root= kernel arg).
+	// Dedup (ISO targets only) deduplicates content shared across env
+	// images instead of packing one full squashfs per env. The layout is
+	// picked by DedupLayout.
 	Dedup bool `json:"dedup,omitempty"`
+	// DedupLayout selects how a dedup'd store is laid out:
+	//
+	//   "combined" (default): ONE squashfs with one subtree per env;
+	//     mksquashfs dedups shared files. Boot pivots into the env
+	//     subtree via tbox-root (tacklebox.root= kernel arg). Best
+	//     dedup, but changing ANY env's image rebuilds the whole file.
+	//
+	//   "delta": one base.rootfs.sfs (the DeltaBase env's full rootfs)
+	//     plus a small <env>.delta.sfs per other env, computed as a
+	//     file-level diff with overlayfs whiteouts (install.TreeDiff).
+	//     Boot stacks the delta as an extra overlay lowerdir
+	//     (tacklebox.live.delta= kernel arg). Slightly weaker dedup
+	//     than combined, but per-env caching survives single-image
+	//     updates: only the changed env's delta is rebuilt.
+	DedupLayout string `json:"dedup_layout,omitempty"`
+	// DeltaBase names the env whose image becomes base.rootfs.sfs in the
+	// delta layout. Defaults to the first bootable environment. Pick the
+	// env whose image the others were built FROM (or share the most
+	// with) — every other env's delta is a diff against it.
+	DeltaBase string `json:"delta_base,omitempty"`
 }
 
 // Partitions lets a recipe override the auto-computed partition layout.

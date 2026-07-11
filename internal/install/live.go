@@ -161,7 +161,7 @@ func combinedSquashScript(envs []LiveEnv, mksquashfsPath, tmpPath, level, block 
 	}
 	b.WriteString("' EXIT\n")
 
-	excludes := []string{"proc", "sys", "dev", "run", "tmp", "var/lib/containers/storage"}
+	excludes := squashExcludes
 	var excludeArgs []string
 	for _, e := range envs {
 		fmt.Fprintf(&b, "M=$(podman image mount %s)\n", shellEsc(e.Image))
@@ -178,6 +178,110 @@ func combinedSquashScript(envs []LiveEnv, mksquashfsPath, tmpPath, level, block 
   -e %s
 `, mksquashfsPath, shellEsc(tmpPath), level, block, strings.Join(excludeArgs, " "))
 	return b.String()
+}
+
+// squashExcludes is the subtree list pruned from every live squashfs
+// (and, via tree-diff, from every delta): runtime mounts plus nested
+// container storage.
+var squashExcludes = []string{"proc", "sys", "dev", "run", "tmp", "var/lib/containers/storage"}
+
+// InstallLiveDelta packs the delta layout (shared_store.dedup_layout=
+// "delta"): the base env's rootfs as a full squashfs at
+// <storeDir>/<baseName>, and for every OTHER env a small
+// <env>.delta.sfs — a file-level diff against the base with overlayfs
+// whiteouts (TreeDiff), computed inside podman unshare by re-execing
+// this binary's hidden `tree-diff` subcommand (the mounted image trees
+// only exist inside that user namespace).
+//
+// At boot, tbox-live loop-mounts base + delta and stacks them as
+// overlay lowerdirs (tacklebox.live.delta= kernel arg).
+//
+// Caching: the base reuses InstallLive's per-image cache; each delta is
+// keyed by (base image ID, env image ID, compression). That's the point
+// of this layout — updating one env's image re-diffs only that env,
+// where the combined layout rebuilds everything.
+func InstallLiveDelta(baseEnv LiveEnv, envs []LiveEnv, storeDir, baseName, compression string) error {
+	if err := InstallLive(baseEnv.Image, filepath.Join(storeDir, baseName), compression); err != nil {
+		return fmt.Errorf("base squashfs (%s): %w", baseEnv.ID, err)
+	}
+	for _, env := range envs {
+		if env.ID == baseEnv.ID {
+			continue
+		}
+		dst := filepath.Join(storeDir, env.ID+".delta.sfs")
+		if err := installDelta(baseEnv.Image, env, dst, compression); err != nil {
+			return fmt.Errorf("delta squashfs %s: %w", env.ID, err)
+		}
+	}
+	return nil
+}
+
+// installDelta builds one env's delta squashfs against baseImage.
+func installDelta(baseImage string, env LiveEnv, dstSquashfs, compression string) error {
+	mountSerialise.Lock()
+	defer mountSerialise.Unlock()
+
+	mksquashfsPath, err := exec.LookPath("mksquashfs")
+	if err != nil {
+		return fmt.Errorf("mksquashfs not found in PATH: %w", err)
+	}
+	tboxPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate tacklebox binary for tree-diff re-exec: %w", err)
+	}
+	level, block := squashParams(compression)
+
+	var cachePath string
+	if ids, ok := resolveImageIDs([]LiveEnv{{ID: "base", Image: baseImage}, {ID: "env", Image: env.Image}}); ok {
+		cachePath = filepath.Join(stagingRoot, "squashfs-cache", squashCacheName(append(ids, "layout=delta"), level, block))
+		if _, err := os.Stat(cachePath); err == nil {
+			fmt.Printf(">>> [live] delta squashfs cache hit for %s\n", env.ID)
+			return placeSquashfs(cachePath, dstSquashfs)
+		}
+	}
+
+	tmpPath, err := tempSquashFile()
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpPath)
+
+	// World-writable staging dir for the diff output: created by the
+	// (possibly root) tacklebox process, written by the unshare user.
+	// Lives under TMPDIR like tempSquashFile, cleaned up via sudo because
+	// the userns leaves subuid-owned entries behind.
+	stage, err := os.MkdirTemp("", "tbox-delta-*")
+	if err != nil {
+		return fmt.Errorf("mktemp delta stage: %w", err)
+	}
+	defer func() { _ = runner.Run("sudo", "rm", "-rf", stage) }()
+	if err := os.Chmod(stage, 0777); err != nil {
+		return fmt.Errorf("chmod delta stage: %w", err)
+	}
+
+	var excludeFlags strings.Builder
+	for _, x := range squashExcludes {
+		fmt.Fprintf(&excludeFlags, " --exclude %s", shellEsc(x))
+	}
+
+	script := fmt.Sprintf(`set -eu
+B=$(podman image mount %[1]s)
+E=$(podman image mount %[2]s)
+trap 'podman image unmount %[2]s >/dev/null 2>&1 || true; podman image unmount %[1]s >/dev/null 2>&1 || true' EXIT
+%[3]s tree-diff "$B" "$E" %[4]s%[5]s
+%[6]s %[4]s %[7]s \
+  -noappend -comp zstd -Xcompression-level %[8]s -b %[9]s \
+  -processors 4`,
+		shellEsc(baseImage), shellEsc(env.Image),
+		shellEsc(tboxPath), shellEsc(stage), excludeFlags.String(),
+		mksquashfsPath, shellEsc(tmpPath),
+		level, block)
+
+	fmt.Printf(">>> [live] diffing %s against base -> %s (podman unshare)\n", env.Image, dstSquashfs)
+	if err := RunUnshare(script); err != nil {
+		return fmt.Errorf("delta squashfs %s: %w", env.ID, err)
+	}
+	return stashSquashfs(tmpPath, cachePath, dstSquashfs)
 }
 
 // resolveImageIDs maps each env to "<id>=<imageID>" for cache keying.

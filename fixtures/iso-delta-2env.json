@@ -1,0 +1,25 @@
+{
+  "media_name": "TBX_ISO_DELTA",
+  "size": "20G",
+  "default_boot": "beta",
+  "shared_store": {
+    "format": "ext4",
+    "dedup": true,
+    "dedup_layout": "delta",
+    "delta_base": "alpha"
+  },
+  "bootable_environments": [
+    {
+      "id": "alpha",
+      "image": "localhost/tbox-iso-alpha:latest",
+      "title": "Fixture Alpha (delta base)",
+      "modes": ["live"]
+    },
+    {
+      "id": "beta",
+      "image": "localhost/tbox-iso-beta:latest",
+      "title": "Fixture Beta",
+      "modes": ["live"]
+    }
+  ]
+}

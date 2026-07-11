@@ -14,6 +14,16 @@ package target
 // summary as the per-env phases.
 type Track func(name string, fn func() error) error
 
+// orNoopTrack normalizes a nil Track to a pass-through, so Target
+// implementations never nil-deref when a caller (tests, future
+// embedders) doesn't care about phase timing.
+func orNoopTrack(t Track) Track {
+	if t != nil {
+		return t
+	}
+	return func(_ string, fn func() error) error { return fn() }
+}
+
 // Mountpoints names the two filesystem locations a per-env install needs
 // to write into. Their meaning is the same regardless of target type:
 //
