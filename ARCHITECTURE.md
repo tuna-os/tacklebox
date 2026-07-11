@@ -25,7 +25,7 @@ Every media has the same logical layout regardless of target type:
 Each *bootable environment* is independently bootable from the systemd-boot
 menu. Today envs install via either `bootc install to-filesystem` (block
 targets, ostree or composefs) or `podman image mount` + `mksquashfs` (ISO
-targets, dmsquash-live).
+targets, tbox-live).
 
 ## Code layout
 
@@ -78,8 +78,9 @@ tacklebox/
 7. **Per-env install loop** (`installEnv`), dispatched on `Target.InstallMode()`:
    - Both modes start with **initramfs preparation** (`install.PrepareInitramfs`):
      - Compute cache key from image ID + required module set. Module set is
-       determined by target type — ISO: `[dmsquash-live, tbox-root]`;
-       Block: `[tbox-root]`.
+       determined by target type — ISO: `[tbox-live, tbox-root]`;
+       Block: `[tbox-root]`. Both are tacklebox's own embedded modules,
+       so images need only core dracut — no distro-specific packages.
      - **Cache hit** (`<output-base>/initramfs-cache/<key>.img`): use as-is.
      - **Cache miss**: probe the image's stock initramfs (`lsinitrd -m`) inside
        a container; if all modules are present, cache the stock initramfs;
@@ -98,7 +99,7 @@ tacklebox/
    - `Live` + `shared_store.dedup`: one `mksquashfs` pass packs every env as a
      subtree of `LiveOS/combined.rootfs.sfs` (cross-env file dedup). Every BLS
      entry points at the same squashimg plus `tacklebox.root=<env>`; at boot,
-     dmsquash-live mounts the combined squashfs + overlay and the `tbox-root`
+     tbox-live mounts the combined squashfs + overlay and the `tbox-root`
      module bind-mounts `/sysroot/<env>` over `/sysroot` — the same pivot it
      performs for block targets. Cache key covers all image IDs, so any image
      change rebuilds the whole combined squashfs.
@@ -134,11 +135,38 @@ beyond constructing the right Target; conversely, Targets never touch
 recipes or per-env install logic. That separation is what makes adding
 a new output type (e.g. PXE netboot, OCI archive) a self-contained job.
 
-## The dracut module: `95tbox-root`
+## The dracut modules: `90tbox-live` and `95tbox-root`
 
-`src/dracut/95tbox-root/` ships in **each env's initramfs** (the
-SuperISO live containers `--add tbox-root` to `dracut`). Its job at
-boot time, for **block targets only**:
+Both live under `src/dracut/`, are embedded in the tacklebox binary
+(`embedded.go`), and are injected into each env's initramfs by
+`PrepareInitramfs` using the image's own dracut. Neither needs anything
+beyond core dracut, which is why live ISOs work from any distro's bootc
+image (tuna-os/tacklebox#90 — Fedora's `dracut-live`/`dmsquash-live` is
+no longer required).
+
+### `90tbox-live` — the live root (ISO targets)
+
+Claimed by `root=tbox:CDLABEL=<iso-label>` on the kernel cmdline. A
+cmdline hook validates the arg and queues an initqueue script that, once
+the labeled device appears:
+
+1. Mounts the ISO at `/run/initramfs/live` (the dmsquash-live-compatible
+   path `superiso-store.mount` expects for offline payloads).
+2. Loop-mounts `LiveOS/<squashimg>` (from `tacklebox.live.squashimg=`)
+   at `/run/rootfsbase`.
+3. Mounts a dedicated tmpfs (`tacklebox.live.overlay.size=` MiB) at
+   `/run/tbox-overlay` for the overlay upper/work dirs.
+
+The final overlay mount onto `/sysroot` is a systemd `sysroot.mount`
+unit written by the module's generator into the *early* generator dir —
+this must be a generator because systemd-fstab-generator otherwise
+copies the unrecognized `root=tbox:…` into a broken sysroot.mount of
+its own (observed on systemd 257). Non-systemd initramfses use a
+classic dracut mount hook instead.
+
+### `95tbox-root` — the per-env pivot (all targets)
+
+Its job at boot time, for **block targets**:
 
 1. Read `tacklebox.root=tbox-install/<env>` from the kernel cmdline.
 2. Bind-mount `/sysroot/<env>` over `/sysroot` so `ostree-prepare-root`
@@ -146,17 +174,20 @@ boot time, for **block targets only**:
 3. Optionally overlay `/home` from the persist partition.
 
 For per-env-squashfs ISOs, this module is a no-op (no `tacklebox.root=`
-arg); `dmsquash-live` does the equivalent work via `rd.live.squashimg=`.
-For `shared_store.dedup` ISOs the module IS the per-env mechanism: every
-entry mounts the same combined squashfs and `tacklebox.root=<env>` makes
-the module bind-mount the env subtree over `/sysroot` (step 2 above,
-without the `tbox-install/` prefix).
+arg); `tbox-live` has already landed the env's own squashfs on
+`/sysroot`. For `shared_store.dedup` ISOs the module IS the per-env
+mechanism: every entry mounts the same combined squashfs and
+`tacklebox.root=<env>` makes the module bind-mount the env subtree over
+`/sysroot` (step 2 above, without the `tbox-install/` prefix).
 
 The unit ordering took two iterations (see git log around 2026-05-11):
 the service is symlinked into both `initrd-root-fs.target.wants/` AND
 `ostree-prepare-root.service.requires/` so the `Before=` edge holds even
 when `ostree-prepare-root.service` is started outside the target's
-transaction.
+transaction. Ordering on `sysroot.mount` is `After=` only (no
+`Requires=`): on live boots no generator creates `sysroot.mount` —
+tbox-live mounts `/sysroot` from `dracut-initqueue.service`, which the
+unit also orders `After=`.
 
 ## The verify command
 
@@ -230,7 +261,7 @@ Updates are best-effort and never block boot; failures log but exit 0.
   pivot + login.
 - **`iso-smoke`** (~20-30 min) — the ISO counterpart. Builds two fixture
   live images in-job (`fixtures/iso-smoke.Containerfile`:
-  `fedora-bootc:44` + `dracut-live` + a per-env marker file) into the
+  stock `fedora-bootc:44` + a per-env marker file) into the
   runner user's rootless store, then builds **both** ISO layouts from
   them: the per-env-squashfs `fixtures/iso-2env.json` and the combined
   `fixtures/iso-dedup-2env.json`. Verifies each, asserts the dedup ISO is

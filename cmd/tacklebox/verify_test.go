@@ -103,9 +103,24 @@ func TestBLSOption(t *testing.T) {
 	}
 }
 
+func TestBLSSquashimg(t *testing.T) {
+	// Current spelling (tbox-live module).
+	if got := blsSquashimg("root=tbox:CDLABEL=X tacklebox.live.squashimg=alpha.rootfs.sfs"); got != "alpha.rootfs.sfs" {
+		t.Errorf("tbox-live spelling = %q", got)
+	}
+	// Legacy dmsquash-live spelling: ISOs built before the tbox-live
+	// switch must stay verifiable.
+	if got := blsSquashimg("root=live:CDLABEL=X rd.live.squashimg=beta.rootfs.sfs"); got != "beta.rootfs.sfs" {
+		t.Errorf("legacy spelling = %q", got)
+	}
+	if got := blsSquashimg("root=LABEL=TBOX_STORE rw"); got != "" {
+		t.Errorf("non-live entry = %q, want empty", got)
+	}
+}
+
 func TestCheckCombinedPivots(t *testing.T) {
 	combined := func(name, root string) blsEntry {
-		return blsEntry{name: name, options: "rd.live.squashimg=combined.rootfs.sfs tacklebox.root=" + root}
+		return blsEntry{name: name, options: "tacklebox.live.squashimg=combined.rootfs.sfs tacklebox.root=" + root}
 	}
 
 	// Healthy combined layout: distinct pivots, one OK result.

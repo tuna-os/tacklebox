@@ -20,8 +20,8 @@ on:
         description: >-
           Optional recipe path to build instead of the fixture PoC pair.
           Images must be pullable from a registry (and live-bootable:
-          dracut + dracut-live installed, or skip_initramfs_rebuild with a
-          prepared initramfs).
+          dracut installed, or skip_initramfs_rebuild with a prepared
+          initramfs).
         required: false
         default: ""
       skip_upload:
@@ -71,7 +71,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xorriso mtools squashfs-tools dosfstools \
-            systemd-boot systemd-boot-efi podman rclone dracut-live
+            systemd-boot systemd-boot-efi podman rclone
 
       - name: build tacklebox
         run: go build -o tacklebox ./cmd/tacklebox

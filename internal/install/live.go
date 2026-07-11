@@ -15,7 +15,7 @@ import (
 )
 
 // InstallLive packs the rootfs of image into a single squashfs file at
-// dstSquashfs, suitable for a live ISO consumed by dmsquash-live.
+// dstSquashfs, suitable for a live ISO consumed by tbox-live.
 //
 // Uses `podman unshare` instead of `sudo podman` so that:
 //   - Images in the invoking user's store (e.g. localhost/ images built with
@@ -102,7 +102,7 @@ type LiveEnv struct {
 // Fedora base of bluefin + bazzite) exactly once — the cross-env dedup
 // that motivates a multi-image ISO in the first place.
 //
-// At boot, dmsquash-live mounts the combined squashfs + overlay as usual
+// At boot, tbox-live mounts the combined squashfs + overlay as usual
 // and the tbox-root dracut module bind-mounts /sysroot/<env> over /sysroot
 // (driven by tacklebox.root=<env> on the cmdline) — the same pivot it
 // performs for block targets.

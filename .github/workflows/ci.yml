@@ -55,10 +55,10 @@ jobs:
           done
           exit $fail
 
-      - name: shellcheck dracut module
+      - name: shellcheck dracut modules
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # master as of 2026-06-09
         with:
-          additional_files: src/dracut/95tbox-root/module-setup.sh src/dracut/95tbox-root/tbox-root-mount.sh scripts/test-boot.sh
+          additional_files: src/dracut/95tbox-root/module-setup.sh src/dracut/95tbox-root/tbox-root-mount.sh src/dracut/90tbox-live/module-setup.sh src/dracut/90tbox-live/parse-tbox-live.sh src/dracut/90tbox-live/tbox-live-root.sh src/dracut/90tbox-live/tbox-live-generator.sh src/dracut/90tbox-live/tbox-live-mount.sh scripts/test-boot.sh
           severity: warning
 
   # ── Stage 3: two-env disk-build smoke, verify, update, and boot ────────────
@@ -231,12 +231,14 @@ jobs:
           fi
 
   # ── Stage 3-ISO: two-env ISO smoke (per-env + dedup layouts) ──────────────
-  # Builds BOTH ISO layouts from one pair of fixture images (fedora-bootc +
-  # dracut-live + a per-env marker, built in-job so the localhost/ user-store
-  # path is exercised), verifies them, asserts that the dedup layout actually
-  # shrinks the ISO, and QEMU-boots each layout. The two recipes pick
-  # different default_boot envs on purpose so both envs get boot coverage:
-  #   - per-env layout boots beta (plain dmsquash-live path)
+  # Builds BOTH ISO layouts from one pair of fixture images (STOCK
+  # fedora-bootc + a per-env marker, built in-job so the localhost/
+  # user-store path is exercised), verifies them, asserts that the dedup
+  # layout actually shrinks the ISO, and QEMU-boots each layout. The stock
+  # fixture (no dracut-live) is the regression test for the embedded
+  # tbox-live module (#90). The two recipes pick different default_boot
+  # envs on purpose so both envs get boot coverage:
+  #   - per-env layout boots beta (plain tbox-live path)
   #   - dedup layout boots alpha and must log the tbox-root subtree pivot
   # No actions/cache here: the fixture images are rebuilt every run, so their
   # image IDs (and thus every tacklebox cache key) change every run.

@@ -5,9 +5,14 @@ package tacklebox
 
 import "embed"
 
-// DracutTboxRoot is the 95tbox-root dracut module source. PrepareInitramfs
-// (internal/install) materializes it to a temp dir and bind-mounts it into
-// the dracut rebuild container at /usr/lib/dracut/modules.d/95tbox-root.
+// DracutModules carries the source of every tacklebox dracut module.
+// PrepareInitramfs (internal/install) materializes them to temp dirs and
+// bind-mounts each into the dracut rebuild container at
+// /usr/lib/dracut/modules.d/<name>:
 //
-//go:embed src/dracut/95tbox-root
-var DracutTboxRoot embed.FS
+//   - 95tbox-root: per-env root pivot + persist overlay (all targets)
+//   - 90tbox-live: distro-neutral live root — ISO by label -> squashfs ->
+//     tmpfs overlay -> /sysroot (ISO targets; replaces dmsquash-live)
+//
+//go:embed src/dracut/95tbox-root src/dracut/90tbox-live
+var DracutModules embed.FS

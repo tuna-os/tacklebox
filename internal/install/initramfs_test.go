@@ -24,13 +24,16 @@ func TestInitramfsCacheKey(t *testing.T) {
 	if a != initramfsCacheKey("sha256:aaa", IsoInitramfsModules) {
 		t.Error("key must be stable for the same inputs")
 	}
+	if embeddedModulesDigest() == "" {
+		t.Error("embedded modules digest must not be empty — a stale digest would let cached initramfses survive module changes")
+	}
 }
 
 func TestInitramfsScript(t *testing.T) {
 	s := initramfsScript(IsoInitramfsModules)
 	for _, want := range []string{
-		`dracut --force --no-hostonly --reproducible --add "dmsquash-live tbox-root"`,
-		"for m in dmsquash-live tbox-root; do",
+		`dracut --force --no-hostonly --reproducible --add "tbox-live tbox-root"`,
+		"for m in tbox-live tbox-root; do",
 		"/tbox-out/initramfs.img",
 		"TBOX_INITRAMFS=",
 	} {
@@ -44,16 +47,36 @@ func TestInitramfsScript(t *testing.T) {
 	}
 }
 
-func TestMaterializeDracutModule(t *testing.T) {
-	dir, err := materializeDracutModule()
+func TestMaterializeDracutModules(t *testing.T) {
+	dirs, err := materializeDracutModules()
 	if err != nil {
-		t.Fatalf("materializeDracutModule: %v", err)
+		t.Fatalf("materializeDracutModules: %v", err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		for _, d := range dirs {
+			_ = os.RemoveAll(d)
+		}
+	})
 
-	for _, f := range []string{"module-setup.sh", "tbox-root-mount.sh", "tbox-root.service"} {
-		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
-			t.Errorf("embedded module file %s not materialized: %v", f, err)
+	wantFiles := map[string][]string{
+		"tbox-root": {"module-setup.sh", "tbox-root-mount.sh", "tbox-root.service"},
+		"tbox-live": {"module-setup.sh", "parse-tbox-live.sh", "tbox-live-root.sh", "tbox-live-generator.sh", "tbox-live-mount.sh"},
+	}
+	for name := range embeddedDracutModules {
+		if _, ok := wantFiles[name]; !ok {
+			t.Errorf("embedded module %s has no expectation here — add its files", name)
+		}
+	}
+	for name, files := range wantFiles {
+		dir, ok := dirs[name]
+		if !ok {
+			t.Errorf("module %s not materialized", name)
+			continue
+		}
+		for _, f := range files {
+			if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+				t.Errorf("embedded module file %s/%s not materialized: %v", name, f, err)
+			}
 		}
 	}
 }

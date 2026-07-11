@@ -95,13 +95,12 @@ func (i *IsoTarget) addCleanup(f func()) {
 func (i *IsoTarget) InstallMode() InstallMode { return InstallModeLive }
 
 // IsoLabel exposes the volume label so the live install path can put it
-// on the kernel cmdline (`root=live:CDLABEL=...`). Read by installEnvLive
+// on the kernel cmdline (`root=tbox:CDLABEL=...`). Read by installEnvLive
 // in cmd/tacklebox/build.go via a small interface.
 func (i *IsoTarget) IsoLabel() string { return i.Label }
 
 // IsoTarget puts per-env kernel/initrd under /images/pxeboot/<env>/
-// inside the FAT ESP, where dmsquash-live ISOs conventionally keep
-// them.
+// inside the FAT ESP, where live ISOs conventionally keep them.
 func (i *IsoTarget) KernelPath(envID string) string { return "/images/pxeboot/" + envID + "/vmlinuz" }
 func (i *IsoTarget) InitrdPath(envID string) string { return "/images/pxeboot/" + envID + "/initrd.img" }
 

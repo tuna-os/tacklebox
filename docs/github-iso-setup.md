@@ -12,8 +12,8 @@ UEFI-bootable ISO from one or more bootc container images using Tacklebox.
 1. Each bootable environment is packed into a squashfs file
    (`LiveOS/<id>.rootfs.sfs`) using `podman image mount` + `mksquashfs`.
 2. Before copying the initramfs to the ESP, Tacklebox checks whether the image's
-   initramfs contains the modules required for live ISO boot (`dmsquash-live`,
-   `tbox-root`). If not, it rebuilds the initramfs automatically by running
+   initramfs contains the modules required for live ISO boot (`tbox-live`,
+   `tbox-root` — Tacklebox's own embedded dracut modules). If not, it rebuilds the initramfs automatically by running
    `dracut` inside a privileged container. The result is cached by OCI image
    digest — the rebuild only happens on the **first** build or after an image
    update.
@@ -21,14 +21,14 @@ UEFI-bootable ISO from one or more bootc container images using Tacklebox.
 4. `xorriso` wraps everything into an ISO9660+El Torito image that boots on
    real hardware and QEMU.
 
-At runtime the ISO boots via `dmsquash-live`. Each env's squashfs is loop-mounted
+At runtime the ISO boots via `tbox-live`. Each env's squashfs is loop-mounted
 and an overlayfs on top gives you a writable (but ephemeral) root. **No disk is
 written.** Persistent mode is not supported for ISO targets — use a block target
 (USB drive) if you need persistence.
 
 **Performance note:** The first build is ~2–3 min slower per environment due to
 the dracut rebuild. Subsequent builds hit the cache and add no overhead. If your
-images already include `dmsquash-live` and `tbox-root`, set
+images already include `tbox-live` and `tbox-root`, set
 `"skip_initramfs_rebuild": true` in the env to skip the rebuild.
 
 The per-env squashfs is also cached (keyed by image ID + compression
@@ -86,7 +86,7 @@ Trade-offs: changing any image rebuilds the whole combined squashfs (the
 squashfs cache covers the env set as a whole), and every env's initramfs
 must contain `tbox-root` — which the automatic initramfs preparation
 guarantees unless you set `skip_initramfs_rebuild` (only do that for
-images that ship **both** `dmsquash-live` and `tbox-root`).
+images that ship **both** `tbox-live` and `tbox-root`).
 See `examples/iso-dedup.json`.
 
 ```json
@@ -367,7 +367,7 @@ Then in the workflow:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Build fails at `initramfs:<env>` | Image lacks `dracut` or the `dracut-live` module | Install `dracut`/`dracut-live` in the image, or set `"skip_initramfs_rebuild": true` and provide an image whose initramfs already has `dmsquash-live` + `tbox-root` |
+| Build fails at `initramfs:<env>` | Image lacks `dracut` | Install `dracut` in the image, or set `"skip_initramfs_rebuild": true` and provide an image whose initramfs already has `tbox-live` + `tbox-root` |
 | First build unexpectedly slow | Dracut initramfs rebuild running (normal on first build per image) | Expected; subsequent builds use the cache |
 | `tacklebox verify` fails: "same squashfs hash" | Two envs resolved to the identical container image | Use distinct image refs or check your registry tags |
 | `xorriso` not found | Missing dep | `sudo apt-get install xorriso` |

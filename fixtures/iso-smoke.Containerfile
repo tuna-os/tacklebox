@@ -1,16 +1,16 @@
 # Minimal live-bootable bootc image for the CI ISO smoke tests.
 #
-# dracut-live provides the dmsquash-live dracut module that live ISO boots
-# need; tacklebox's automatic initramfs preparation rebuilds the initramfs
-# with it (plus tbox-root) at build time — but only modules INSTALLED in
-# the image can be added, hence the dnf install here. Stock minimal bootc
-# images don't ship dracut-live.
+# Deliberately a STOCK bootc image with no extra packages: tacklebox's
+# initramfs preparation injects its own embedded dracut modules
+# (tbox-live + tbox-root) using only the dracut the image already ships,
+# so live ISO boots need no distro-specific packages like Fedora's
+# dracut-live. This fixture staying stock is the regression test for that
+# (tuna-os/tacklebox#90).
 FROM quay.io/fedora/fedora-bootc:44
-RUN dnf -y install dracut-live && dnf clean all
 
-# Per-env marker, layered AFTER the shared dnf layer so the two fixture
-# builds (alpha/beta) differ only by this file: the verify distinctness
-# checks need distinct content, and the dedup smoke needs almost-identical
-# content to prove cross-env dedup shrinks the ISO.
+# Per-env marker: the two fixture builds (alpha/beta) differ only by this
+# file — the verify distinctness checks need distinct content, and the
+# dedup smoke needs almost-identical content to prove cross-env dedup
+# shrinks the ISO.
 ARG MARKER=dev
 RUN echo "$MARKER" > /usr/share/tbox-env-marker

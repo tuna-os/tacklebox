@@ -1,8 +1,12 @@
 [Unit]
 Description=Tacklebox Root Mount
 DefaultDependencies=no
-After=sysroot.mount
-Requires=sysroot.mount
+# Block targets: sysroot.mount comes from systemd-fstab-generator
+# (root=LABEL=TBOX_STORE). Live ISOs: it comes from the tbox-live
+# generator (an overlay over lower mounts that dracut-initqueue
+# prepares — hence also After= that). Ordering-only (no Requires=):
+# initrd-root-fs.target already requires sysroot.mount on both paths.
+After=sysroot.mount dracut-initqueue.service
 Before=ostree-prepare-root.service initrd-root-fs.target
 ConditionPathExists=/sysroot
 

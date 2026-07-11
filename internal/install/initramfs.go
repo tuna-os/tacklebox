@@ -15,13 +15,24 @@ import (
 	"github.com/tuna-os/tacklebox/internal/runner"
 )
 
-// Dracut module sets required per target type. ISO boots need
-// dmsquash-live to loop-mount the per-env squashfs; both target types
-// need tbox-root for the per-env root pivot + persist overlay.
+// Dracut module sets required per target type. ISO boots need tbox-live
+// to assemble the live root (ISO by label -> squashfs -> tmpfs overlay);
+// both target types need tbox-root for the per-env root pivot + persist
+// overlay. Both modules are embedded (see embedded.go) and bind-mounted
+// into the rebuild container, so images only need core dracut — no
+// distro-specific packages like Fedora's dracut-live.
 var (
-	IsoInitramfsModules   = []string{"dmsquash-live", "tbox-root"}
+	IsoInitramfsModules   = []string{"tbox-live", "tbox-root"}
 	BlockInitramfsModules = []string{"tbox-root"}
 )
+
+// embeddedDracutModules maps dracut module names to their embedded source
+// directories under src/dracut/ (the numeric prefix is dracut ordering,
+// not part of the module name).
+var embeddedDracutModules = map[string]string{
+	"tbox-root": "95tbox-root",
+	"tbox-live": "90tbox-live",
+}
 
 // initramfsSerialise prevents concurrent dracut probe/rebuild containers.
 // Rebuilds are memory- and IO-heavy, and under --parallel-install two envs
@@ -31,7 +42,7 @@ var initramfsSerialise sync.Mutex
 // PrepareInitramfs returns the host path of an initramfs for image that is
 // guaranteed to contain the given dracut modules. It probes the image's
 // stock initramfs inside a container; if any module is missing it rebuilds
-// the initramfs with dracut (the embedded 95tbox-root module source is
+// the initramfs with dracut (the embedded tacklebox module sources are
 // bind-mounted in). The result is cached under
 // <staging-root>/initramfs-cache keyed by image ID + module set, so the
 // probe/rebuild cost is paid once per image update, not per build.
@@ -58,11 +69,15 @@ func PrepareInitramfs(image string, modules []string, skip bool) (string, error)
 		return cachePath, nil
 	}
 
-	moduleDir, err := materializeDracutModule()
+	moduleDirs, err := materializeDracutModules()
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(moduleDir)
+	defer func() {
+		for _, d := range moduleDirs {
+			os.RemoveAll(d)
+		}
+	}()
 
 	outDir, err := os.MkdirTemp("", "tbox-initramfs-*")
 	if err != nil {
@@ -79,15 +94,10 @@ func PrepareInitramfs(image string, modules []string, skip bool) (string, error)
 		"run", "--rm", "--privileged",
 		"--security-opt", "label=disable",
 		"-v", outDir+":/tbox-out",
-		"-v", moduleDir+":/usr/lib/dracut/modules.d/95tbox-root:ro",
 	)
-	if _, err := os.Stat("/usr/lib/dracut/modules.d/90dmsquash-live"); err == nil {
-		runArgs = append(runArgs, "-v", "/usr/lib/dracut/modules.d/90dmsquash-live:/usr/lib/dracut/modules.d/90dmsquash-live:ro")
-	}
-	if _, err := os.Stat("/usr/lib/dracut/modules.d/99img-lib"); err == nil {
-		runArgs = append(runArgs, "-v", "/usr/lib/dracut/modules.d/99img-lib:/usr/lib/dracut/modules.d/99img-lib:ro")
-	} else if _, err := os.Stat("/usr/lib/dracut/modules.d/90img-lib"); err == nil {
-		runArgs = append(runArgs, "-v", "/usr/lib/dracut/modules.d/90img-lib:/usr/lib/dracut/modules.d/90img-lib:ro")
+	for name, dir := range moduleDirs {
+		runArgs = append(runArgs,
+			"-v", dir+":/usr/lib/dracut/modules.d/"+embeddedDracutModules[name]+":ro")
 	}
 	runArgs = append(runArgs,
 		"--entrypoint", "/bin/sh",
@@ -95,7 +105,7 @@ func PrepareInitramfs(image string, modules []string, skip bool) (string, error)
 	)
 	out, err := runner.Output(prefix[0], runArgs...)
 	if err != nil {
-		return "", fmt.Errorf("initramfs preparation for %s failed (does the image ship dracut and the dracut-live module?): %w", image, err)
+		return "", fmt.Errorf("initramfs preparation for %s failed (does the image ship dracut?): %w", image, err)
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "TBOX_INITRAMFS=") {
@@ -115,13 +125,35 @@ func PrepareInitramfs(image string, modules []string, skip bool) (string, error)
 	return cachePath, nil
 }
 
-// initramfsCacheKey derives the cache filename from the image ID and the
-// module set, so an image update or a different target type (different
-// modules) never reuses a stale initramfs.
+// initramfsCacheKey derives the cache filename from the image ID, the
+// module set, and the embedded module sources, so an image update, a
+// different target type (different modules), or a tacklebox release that
+// changes the embedded dracut modules never reuses a stale initramfs.
 func initramfsCacheKey(imageID string, modules []string) string {
-	h := sha256.Sum256([]byte(imageID + "|" + strings.Join(modules, ",")))
+	h := sha256.Sum256([]byte(imageID + "|" + strings.Join(modules, ",") + "|" + embeddedModulesDigest()))
 	return hex.EncodeToString(h[:])[:16]
 }
+
+// embeddedModulesDigest hashes every embedded dracut module file (path +
+// content, in sorted path order). Computed once — the embed.FS is
+// immutable for the life of the binary.
+var embeddedModulesDigest = sync.OnceValue(func() string {
+	h := sha256.New()
+	// fs.WalkDir walks lexically, so the digest is deterministic.
+	_ = fs.WalkDir(tacklebox.DracutModules, "src/dracut", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(tacklebox.DracutModules, p)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00", p, len(data))
+		h.Write(data)
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil))
+})
 
 // initramfsScript builds the in-container probe + rebuild script.
 // It exits 0 with /tbox-out/initramfs.img populated either way:
@@ -177,38 +209,48 @@ func podmanForImage(image string) (prefix []string, id string, err error) {
 	return nil, "", fmt.Errorf("image %s not found in the user or root podman store (was pre-pull skipped?)", image)
 }
 
-// materializeDracutModule writes the embedded 95tbox-root module source to
-// a temp dir for bind-mounting into the rebuild container. Embedded rather
-// than read from the repo checkout so installed binaries and CI work
-// without the source tree on disk.
-func materializeDracutModule() (string, error) {
-	dir, err := os.MkdirTemp("", "tbox-dracut-module-*")
-	if err != nil {
-		return "", fmt.Errorf("mktemp: %w", err)
+// materializeDracutModules writes every embedded dracut module's source to
+// a temp dir for bind-mounting into the rebuild container, keyed by module
+// name. Embedded rather than read from the repo checkout so installed
+// binaries and CI work without the source tree on disk.
+func materializeDracutModules() (map[string]string, error) {
+	dirs := make(map[string]string, len(embeddedDracutModules))
+	cleanup := func() {
+		for _, d := range dirs {
+			os.RemoveAll(d)
+		}
 	}
-	const src = "src/dracut/95tbox-root"
-	entries, err := fs.ReadDir(tacklebox.DracutTboxRoot, src)
-	if err != nil {
-		os.RemoveAll(dir)
-		return "", fmt.Errorf("read embedded dracut module: %w", err)
-	}
-	for _, e := range entries {
-		data, err := fs.ReadFile(tacklebox.DracutTboxRoot, path.Join(src, e.Name()))
+	for name, srcDir := range embeddedDracutModules {
+		dir, err := os.MkdirTemp("", "tbox-dracut-module-*")
 		if err != nil {
-			os.RemoveAll(dir)
-			return "", fmt.Errorf("read embedded %s: %w", e.Name(), err)
+			cleanup()
+			return nil, fmt.Errorf("mktemp: %w", err)
 		}
-		// 0755 across the board: module-setup.sh is sourced, the mount
-		// script is exec'd, and the unit file doesn't mind. Must be
-		// world-readable for the rootless container user.
-		if err := os.WriteFile(filepath.Join(dir, e.Name()), data, 0755); err != nil {
-			os.RemoveAll(dir)
-			return "", fmt.Errorf("write %s: %w", e.Name(), err)
+		dirs[name] = dir
+		src := "src/dracut/" + srcDir
+		entries, err := fs.ReadDir(tacklebox.DracutModules, src)
+		if err != nil {
+			cleanup()
+			return nil, fmt.Errorf("read embedded dracut module %s: %w", name, err)
+		}
+		for _, e := range entries {
+			data, err := fs.ReadFile(tacklebox.DracutModules, path.Join(src, e.Name()))
+			if err != nil {
+				cleanup()
+				return nil, fmt.Errorf("read embedded %s: %w", e.Name(), err)
+			}
+			// 0755 across the board: module-setup.sh is sourced, the mount
+			// scripts are exec'd, and the unit file doesn't mind. Must be
+			// world-readable for the rootless container user.
+			if err := os.WriteFile(filepath.Join(dir, e.Name()), data, 0755); err != nil {
+				cleanup()
+				return nil, fmt.Errorf("write %s: %w", e.Name(), err)
+			}
+		}
+		if err := os.Chmod(dir, 0755); err != nil {
+			cleanup()
+			return nil, err
 		}
 	}
-	if err := os.Chmod(dir, 0755); err != nil {
-		os.RemoveAll(dir)
-		return "", err
-	}
-	return dir, nil
+	return dirs, nil
 }

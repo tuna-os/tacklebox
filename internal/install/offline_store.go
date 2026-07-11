@@ -20,7 +20,7 @@ import (
 //
 // IsoTarget: caller writes to <isoRoot>/LiveOS/store.squashfs.img.
 //
-//	dmsquash-live mounts the ISO at /run/initramfs/live, so the live container's
+//	tbox-live mounts the ISO at /run/initramfs/live, so the live container's
 //	superiso-store.mount finds it at
 //	/run/initramfs/live/LiveOS/store.squashfs.img  — already wired in
 //	live/src/systemd/superiso-store.mount.

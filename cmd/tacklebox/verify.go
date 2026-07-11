@@ -120,7 +120,7 @@ func verifyIso(path string) []checkResult {
 	}
 
 	// Combined-squashfs layout (shared_store.dedup): every entry points
-	// at the same rd.live.squashimg and per-env distinctness lives in the
+	// at the same squashimg and per-env distinctness lives in the
 	// tacklebox.root= pivot instead of separate squashfs files.
 	results = append(results, checkCombinedPivots(entries)...)
 
@@ -141,7 +141,7 @@ func verifyIso(path string) []checkResult {
 	// Every BLS entry must reference a squashfs image that exists.
 	// A missing file means the ISO will fail at boot even if verify passes.
 	for _, e := range entries {
-		if img := blsOption(e.options, "rd.live.squashimg"); img != "" {
+		if img := blsSquashimg(e.options); img != "" {
 			if !sfsSet[img] {
 				results = append(results, checkResult{
 					"squashfs referenced by BLS entry",
@@ -355,8 +355,20 @@ func blsOption(options, key string) string {
 	return ""
 }
 
+// blsSquashimg extracts the squashfs image referenced by a live BLS
+// entry. tacklebox.live.squashimg is what tacklebox writes today
+// (tbox-live module); rd.live.squashimg is the dmsquash-live spelling
+// kept so `tacklebox verify` still validates ISOs built before the
+// tbox-live switch (tuna-os/tacklebox#90).
+func blsSquashimg(options string) string {
+	if v := blsOption(options, "tacklebox.live.squashimg"); v != "" {
+		return v
+	}
+	return blsOption(options, "rd.live.squashimg")
+}
+
 // checkCombinedPivots validates the combined-squashfs layout: when
-// multiple BLS entries share one rd.live.squashimg, each must carry a
+// multiple BLS entries share one squashimg, each must carry a
 // distinct tacklebox.root= so the tbox-root module pivots every entry
 // into its own subtree. Two entries sharing a pivot would boot identical
 // content — the combined-layout analogue of the squashfs-hash collision.
@@ -364,7 +376,7 @@ func blsOption(options, key string) string {
 func checkCombinedPivots(entries []blsEntry) []checkResult {
 	squashimgs := map[string]bool{}
 	for _, e := range entries {
-		if v := blsOption(e.options, "rd.live.squashimg"); v != "" {
+		if v := blsSquashimg(e.options); v != "" {
 			squashimgs[v] = true
 		}
 	}

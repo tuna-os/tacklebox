@@ -39,9 +39,9 @@ type BootableEnvironment struct {
 	Modes   []BootMode `json:"modes"`
 	// SkipInitramfsRebuild uses the image's initramfs as-is instead of
 	// probing it for the required dracut modules and rebuilding when any
-	// are missing. Set it for images that already ship dmsquash-live +
-	// tbox-root (e.g. pre-built superiso-live images) to save the probe
-	// container run on first build.
+	// are missing. Set it for images that already ship tbox-live +
+	// tbox-root (e.g. images that pre-bake tacklebox's dracut modules)
+	// to save the probe container run on first build.
 	SkipInitramfsRebuild bool `json:"skip_initramfs_rebuild,omitempty"`
 	// LiveCustomize lists host paths of scripts run inside a container of
 	// this env's image before it is squashed (live/ISO builds only; block

@@ -115,28 +115,25 @@ func TestBuildLiveKernelCmdline(t *testing.T) {
 			envID: "bazzite",
 			label: "TBX_ISO",
 			contains: []string{
-				"root=live:CDLABEL=TBX_ISO",
-				"rd.live.image",
-				"rd.live.dir=LiveOS",
-				"rd.live.squashimg=bazzite.rootfs.sfs",
-				"rd.live.overlay.overlayfs=1",
+				"root=tbox:CDLABEL=TBX_ISO",
+				"tacklebox.live.squashimg=bazzite.rootfs.sfs",
+				"tacklebox.live.overlay.size=8192",
 				"enforcing=0",
 				"tacklebox.env=bazzite",
 				"console=ttyS0,115200n8",
 			},
-			// Regression: rd.live.overlay=tmpfs hangs dracut-initqueue
-			// because dmsquash-live treats "tmpfs" as a label/path, not
-			// the literal string. We rely on rd.live.overlay.overlayfs=1
-			// alone defaulting to a tmpfs upper.
-			excludes: []string{"rd.live.overlay=tmpfs"},
+			// The rd.live.* / root=live: args belong to dmsquash-live;
+			// emitting them alongside root=tbox: would make an image that
+			// happens to ship dmsquash-live fight tbox-live for the root.
+			excludes: []string{"root=live:", "rd.live."},
 		},
 		{
 			name:  "label with spaces gets passed verbatim",
 			envID: "fedora",
 			label: "MY_LABEL",
 			contains: []string{
-				"root=live:CDLABEL=MY_LABEL",
-				"rd.live.squashimg=fedora.rootfs.sfs",
+				"root=tbox:CDLABEL=MY_LABEL",
+				"tacklebox.live.squashimg=fedora.rootfs.sfs",
 			},
 		},
 	}
@@ -359,11 +356,11 @@ func TestEnvTitle(t *testing.T) {
 func TestBuildLiveKernelCmdlineCombined(t *testing.T) {
 	got := buildLiveKernelCmdlineCombined("bazzite", "TBX_ISO")
 	for _, want := range []string{
-		"root=live:CDLABEL=TBX_ISO",
-		"rd.live.squashimg=combined.rootfs.sfs",
+		"root=tbox:CDLABEL=TBX_ISO",
+		"tacklebox.live.squashimg=combined.rootfs.sfs",
 		"tacklebox.root=bazzite",
 		"tacklebox.env=bazzite",
-		"rd.live.overlay.overlayfs=1",
+		"tacklebox.live.overlay.size=8192",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("combined cmdline missing %q: %s", want, got)

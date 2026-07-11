@@ -433,7 +433,7 @@ func runEnvs(r recipe.MediaRecipe, tgt target.Target, storeMount, espMount strin
 const combinedSquashName = "combined.rootfs.sfs"
 
 // buildLiveKernelCmdline returns the BLS `options` line for an env that
-// will be booted via dmsquash-live from a per-env squashfs in /LiveOS/.
+// will be booted via tbox-live from a per-env squashfs in /LiveOS/.
 // appendKargs appends recipe-level extra kernel arguments to a generated
 // options line. Empty/whitespace entries are skipped; order is preserved.
 func appendKargs(options string, kargs []string) string {
@@ -447,8 +447,8 @@ func appendKargs(options string, kargs []string) string {
 	return options
 }
 
-// Used by IsoTarget. label is the ISO9660 volume label (so dmsquash-live
-// can find the iso by `root=live:CDLABEL=...`).
+// Used by IsoTarget. label is the ISO9660 volume label (so tbox-live
+// can find the iso by `root=tbox:CDLABEL=...`).
 func buildLiveKernelCmdline(envID, label string) string {
 	return liveKernelCmdline(envID, label, envID+".rootfs.sfs", "")
 }
@@ -456,7 +456,7 @@ func buildLiveKernelCmdline(envID, label string) string {
 // buildLiveKernelCmdlineCombined is the dedup variant: every env's entry
 // points at the same combined squashfs, and `tacklebox.root=<env>` makes
 // the tbox-root dracut module bind-mount /sysroot/<env> over /sysroot
-// after dmsquash-live has mounted the squashfs + overlay (the same pivot
+// after tbox-live has mounted the squashfs + overlay (the same pivot
 // it performs for block targets, minus the tbox-install/ prefix).
 func buildLiveKernelCmdlineCombined(envID, label string) string {
 	return liveKernelCmdline(envID, label, combinedSquashName, " tacklebox.root="+envID)
@@ -465,19 +465,19 @@ func buildLiveKernelCmdlineCombined(envID, label string) string {
 // liveKernelCmdline is the shared core. Pure — no I/O — so it can be
 // unit-tested.
 //
-// rd.live.overlay.overlayfs=1 alone => tmpfs-backed overlayfs (the
-// default). DON'T pass `rd.live.overlay=tmpfs` — that's interpreted
-// as a label/path to look up, not the literal string "tmpfs", which
-// stalls dracut-initqueue waiting for a non-existent device.
+// root=tbox:CDLABEL= and the tacklebox.live.* args are consumed by the
+// embedded tbox-live dracut module (src/dracut/90tbox-live) — tacklebox's
+// distro-neutral replacement for dmsquash-live, so images built from any
+// distro's dracut can live-boot (tuna-os/tacklebox#90).
 // enforcing=0: live boots can't use the on-disk SELinux contexts
 // from the bootc image because the labels reference paths that
 // don't exist in the overlayfs view. Without this, systemd PID 1
 // dies with "Failed to allocate manager object: Permission denied"
 // before reaching userspace. SuperISO's existing build-iso.sh sets
 // the same flag for the same reason.
-// rd.live.overlay.size=8192: size in MiB for the tmpfs that backs
-// the live overlay upper layer. The default (~half of RAM) is often
-// only 1-2 GiB on 8 GiB machines. The offline bootc installer
+// tacklebox.live.overlay.size=8192: size in MiB for the tmpfs that
+// backs the live overlay upper layer. A half-of-RAM default would
+// often be only 1-2 GiB on 8 GiB machines. The offline bootc installer
 // (fisherman / podman run) writes container layers to the overlay
 // root before they can be redirected to the target disk, filling
 // it and aborting the install. 8 GiB is large enough for any
@@ -485,8 +485,8 @@ func buildLiveKernelCmdlineCombined(envID, label string) string {
 // the 16 GiB machines this ISO targets.
 func liveKernelCmdline(envID, label, squashimg, extra string) string {
 	return fmt.Sprintf(
-		"root=live:CDLABEL=%s rd.live.image rd.live.dir=LiveOS rd.live.squashimg=%s"+
-			" rd.live.overlay.overlayfs=1 rd.live.overlay.size=8192 enforcing=0"+
+		"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
+			" tacklebox.live.overlay.size=8192 enforcing=0"+
 			" tacklebox.env=%s%s console=ttyS0,115200n8",
 		label, squashimg, envID, extra,
 	)
@@ -632,7 +632,7 @@ func installEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt t
 }
 
 // installEnvLive packs env's container rootfs as a single squashfs and
-// writes a dmsquash-live BLS entry. ISO label comes from the IsoTarget;
+// writes a tbox-live BLS entry. ISO label comes from the IsoTarget;
 // we reach it via a small interface to avoid a hard target.IsoTarget
 // import.
 func installEnvLive(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt target.Target, storeMount, espMount string, track func(string, func() error) error) error {
@@ -657,8 +657,8 @@ func installEnvLive(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt ta
 		}
 	}
 
-	// Initramfs first: a hopeless image (no dracut, no dmsquash-live)
-	// fails here in seconds instead of after a multi-minute squash.
+	// Initramfs first: a hopeless image (no dracut) fails here in
+	// seconds instead of after a multi-minute squash.
 	var initrdOverride string
 	if err := track("initramfs:"+env.ID, func() error {
 		var err error

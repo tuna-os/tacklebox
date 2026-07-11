@@ -37,8 +37,9 @@ type Mountpoints struct {
 //     subdir of the shared store. Used by BlockTarget. Each env ends
 //     up as an ostree (or composefs) deployment.
 //   - Live:  per-env podman-image-mount + mksquashfs into a single
-//     <env>.rootfs.sfs file. Used by IsoTarget. Boot-time pivot is
-//     dmsquash-live's job (rd.live.* on the kernel cmdline).
+//     <env>.rootfs.sfs file. Used by IsoTarget. Boot-time assembly is
+//     the tbox-live dracut module's job (root=tbox: + tacklebox.live.*
+//     on the kernel cmdline).
 type InstallMode string
 
 const (
@@ -76,7 +77,7 @@ type Target interface {
 	// BLS `linux` and `initrd` lines should reference for env. For
 	// BlockTarget these are `/EFI/<env>/vmlinuz` (the ESP root *is* the
 	// boot fs). For IsoTarget they're `/images/pxeboot/<env>/vmlinuz`
-	// (where dmsquash-live expects them on a live ISO).
+	// (the conventional live-ISO location).
 	KernelPath(envID string) string
 	InitrdPath(envID string) string
 }
