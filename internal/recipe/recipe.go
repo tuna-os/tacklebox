@@ -43,6 +43,20 @@ type BootableEnvironment struct {
 	// tbox-root (e.g. pre-built superiso-live images) to save the probe
 	// container run on first build.
 	SkipInitramfsRebuild bool `json:"skip_initramfs_rebuild,omitempty"`
+	// LiveCustomize lists host paths of scripts run inside a container of
+	// this env's image before it is squashed (live/ISO builds only; block
+	// installs ignore it). Each script runs as root inside the container
+	// with CAP_SYS_ADMIN and network — enough for `flatpak install`,
+	// dbus-daemon, dconf update, etc. (the dakota-iso configure-live
+	// pattern). The container is committed to a content-addressed derived
+	// image which is then squashed/extracted instead of the original, so
+	// unchanged image+scripts hit the existing squashfs cache.
+	//
+	// Relative paths resolve against the recipe file's directory. Each
+	// script's own directory is mounted read-only at /run/tbox-customize/<n>/
+	// and the script runs with that as its working directory, so scripts can
+	// reference sibling assets (icons, configs) relatively.
+	LiveCustomize []string `json:"live_customize,omitempty"`
 }
 
 type MediaRecipe struct {

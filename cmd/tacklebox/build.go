@@ -70,6 +70,22 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("recipe %s missing size", recipePath)
 	}
 
+	// Resolve live_customize script paths against the recipe's directory and
+	// fail fast on missing files, before any expensive build work starts.
+	recipeDir := filepath.Dir(recipePath)
+	for i := range r.BootableEnvironments {
+		for j, s := range r.BootableEnvironments[i].LiveCustomize {
+			if !filepath.IsAbs(s) {
+				s = filepath.Join(recipeDir, s)
+			}
+			if _, err := os.Stat(s); err != nil {
+				return fmt.Errorf("live_customize script for env %s: %w",
+					r.BootableEnvironments[i].ID, err)
+			}
+			r.BootableEnvironments[i].LiveCustomize[j] = s
+		}
+	}
+
 	// Validate the target argument shape before doing any filesystem work,
 	// so a typo like `tacklebox build recipe.json sdaX` fails instantly
 	// instead of after creating an output directory.
@@ -626,6 +642,21 @@ func installEnvLive(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt ta
 		label = l.IsoLabel()
 	}
 
+	// Live customization first: everything downstream (initramfs probe,
+	// squash, boot-file extraction) works from the derived image. env is a
+	// by-value copy, so rewriting Image here is local to this install.
+	if len(env.LiveCustomize) > 0 {
+		if err := track("customize:"+env.ID, func() error {
+			derived, err := install.CustomizeLive(env.Image, env.LiveCustomize)
+			if err == nil {
+				env.Image = derived
+			}
+			return err
+		}); err != nil {
+			return fmt.Errorf("live customize for %s: %w", env.ID, err)
+		}
+	}
+
 	// Initramfs first: a hopeless image (no dracut, no dmsquash-live)
 	// fails here in seconds instead of after a multi-minute squash.
 	var initrdOverride string
@@ -684,10 +715,29 @@ func installEnvsLiveCombined(r recipe.MediaRecipe, tgt target.Target, storeMount
 		label = l.IsoLabel()
 	}
 
+	// Live customization first (see installEnvLive). Work on a copy of the
+	// env list so the derived image refs stay local to this build pass.
+	localEnvs := append([]recipe.BootableEnvironment(nil), r.BootableEnvironments...)
+	for i := range localEnvs {
+		env := &localEnvs[i]
+		if len(env.LiveCustomize) == 0 {
+			continue
+		}
+		if err := track("customize:"+env.ID, func() error {
+			derived, err := install.CustomizeLive(env.Image, env.LiveCustomize)
+			if err == nil {
+				env.Image = derived
+			}
+			return err
+		}); err != nil {
+			return fmt.Errorf("live customize for %s: %w", env.ID, err)
+		}
+	}
+
 	// Initramfs prep for every env up front: a hopeless image fails in
 	// seconds, before the (single, expensive) combined squash.
-	initrdOverrides := make(map[string]string, len(r.BootableEnvironments))
-	for _, env := range r.BootableEnvironments {
+	initrdOverrides := make(map[string]string, len(localEnvs))
+	for _, env := range localEnvs {
 		env := env
 		if err := track("initramfs:"+env.ID, func() error {
 			p, err := install.PrepareInitramfs(env.Image, install.IsoInitramfsModules, env.SkipInitramfsRebuild)
@@ -698,8 +748,8 @@ func installEnvsLiveCombined(r recipe.MediaRecipe, tgt target.Target, storeMount
 		}
 	}
 
-	envs := make([]install.LiveEnv, 0, len(r.BootableEnvironments))
-	for _, e := range r.BootableEnvironments {
+	envs := make([]install.LiveEnv, 0, len(localEnvs))
+	for _, e := range localEnvs {
 		envs = append(envs, install.LiveEnv{ID: e.ID, Image: e.Image})
 	}
 	sfs := filepath.Join(storeMount, combinedSquashName)
@@ -709,7 +759,7 @@ func installEnvsLiveCombined(r recipe.MediaRecipe, tgt target.Target, storeMount
 		return fmt.Errorf("combined squashfs: %w", err)
 	}
 
-	for _, env := range r.BootableEnvironments {
+	for _, env := range localEnvs {
 		bootDir := filepath.Join(espMount, "images", "pxeboot", env.ID)
 		if err := runner.Run("sudo", "mkdir", "-p", bootDir); err != nil {
 			return fmt.Errorf("create boot dir %s: %w", bootDir, err)
