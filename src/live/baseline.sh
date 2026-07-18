@@ -99,14 +99,7 @@ write_lightdm() {
 case "${DESKTOP}" in
 gnome) write_gdm ;;
 kde) write_sddm ;;
-niri)
-	if command -v dms-greeter &>/dev/null; then
-		write_greetd "niri-session"
-		sed -i 's|^type = .*|type = "login_manager"|' /etc/greetd/config.toml 2>/dev/null || true
-	else
-		write_greetd "niri-session"
-	fi
-	;;
+niri) write_greetd "niri-session" ;;
 cosmic) write_greetd "cosmic-session" ;;
 xfce)
 	session="startxfce4"
