@@ -111,17 +111,17 @@ enable_dm() {
 }
 
 case "${DESKTOP}" in
-gnome) write_gdm; enable_dm gdm.service || enable_dm gdm3.service ;;
-kde) write_sddm; enable_dm sddm.service ;;
-niri) write_greetd "niri-session"; enable_dm greetd.service ;;
-cosmic) write_greetd "cosmic-session"; enable_dm greetd.service ;;
+gnome) write_gdm; enable_dm gdm.service || enable_dm gdm3.service || true ;;
+kde) write_sddm; enable_dm sddm.service || true ;;
+niri) write_greetd "niri-session"; enable_dm greetd.service || true ;;
+cosmic) write_greetd "cosmic-session"; enable_dm greetd.service || true ;;
 xfce)
 	session="startxfce4"
 	compgen -G "/usr/share/wayland-sessions/xfce*.desktop" >/dev/null && session="xfce-wayland-session"
 	write_lightdm
 	write_greetd "${session}"
 	write_gdm
-	enable_dm lightdm.service || enable_dm greetd.service || enable_dm gdm.service
+	enable_dm lightdm.service || enable_dm greetd.service || enable_dm gdm.service || true
 	;;
 esac
 
