@@ -48,7 +48,7 @@ jobs:
       - name: hdiutil create + attach a virtual disk (the CI-testable proxy from #106's research)
         run: |
           hdiutil create -size 64m -layout GPTSPUD -fs "MS-DOS FAT32" -volname TBOXCI /tmp/tboxci.dmg
-          attach_out=$(hdiutil attach -nomount /tmp/tboxci.dmg.dmg)
+          attach_out=$(hdiutil attach -nomount /tmp/tboxci.dmg)
           echo "$attach_out"
           dev=$(echo "$attach_out" | head -1 | awk '{print $1}')
           echo "attached as $dev"
