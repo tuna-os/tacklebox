@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  SYNTHETIC fixture, not captured from real hardware — no physical USB
+  drive was plugged into the test machine during this research
+  (tuna-os/tacklebox#108/#109). Field values are the documented/expected
+  shape for a real external USB disk based on Apple's diskutil field
+  semantics, cross-checked against the two REAL captured fixtures in this
+  directory (diskutil-info-internal-ssd.plist, diskutil-info-virtual-dmg.plist).
+  Replace with a real captured fixture the first time a physical USB drive
+  is available for testing — until then, treat this one fixture with more
+  skepticism than the other two.
+-->
+<plist version="1.0">
+<dict>
+	<key>BusProtocol</key>
+	<string>USB</string>
+	<key>DeviceIdentifier</key>
+	<string>disk5</string>
+	<key>DeviceLocation</key>
+	<string>External</string>
+	<key>Internal</key>
+	<false/>
+	<key>MediaName</key>
+	<string>Generic Flash Disk Media</string>
+	<key>RemovableMedia</key>
+	<true/>
+	<key>Size</key>
+	<integer>32000000000</integer>
+	<key>VirtualOrPhysical</key>
+	<string>Physical</string>
+	<key>WholeDisk</key>
+	<true/>
+</dict>
+</plist>
