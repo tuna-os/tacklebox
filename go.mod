@@ -3,7 +3,7 @@ module github.com/tuna-os/tacklebox
 go 1.26.3
 
 require (
-	github.com/diskfs/go-diskfs v1.9.3
+	github.com/diskfs/go-diskfs v1.9.4
 	github.com/klauspost/compress v1.19.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.43.0
