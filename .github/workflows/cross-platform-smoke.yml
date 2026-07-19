@@ -1,0 +1,80 @@
+name: cross-platform disk smoke
+
+# tuna-os/tacklebox#109's original plan was a full loopback build→verify→
+# add→remove cycle on windows-latest/macos-latest, mirroring the Linux
+# verify-smoke job. That assumed the write path stayed inside tacklebox
+# itself. It didn't: tuna-os/iso-builder#107/#108 moved the actual macOS/
+# Windows write orchestration into iso-builder/native (a bundled QEMU VM
+# on macOS, WSL2 on Windows) — tacklebox's own code on non-Linux is just
+# enumeration/filtering (pkg/blockdev/darwin), already unit-tested and
+# platform-independent of any live device.
+#
+# A full VM-boot-and-bootc-install run (what iso-builder's exec_darwin.go
+# actually does) is real work only proven live on real hardware so far —
+# GitHub's macos-latest runners have no hardware acceleration for an
+# x86_64 guest (this needs QEMU TCG regardless of host, see #108's
+# research on Apple Silicon, but a CI VM adds its own nested-virtualization
+# uncertainty on top), so doing that full cycle in CI risks either not
+# working at all or blowing well past a sane job timeout. What's realistic
+# and actually valuable here: prove the underlying OS primitives this
+# whole approach depends on (hdiutil on macOS, diskpart/Win32_DiskDrive on
+# Windows) work on GitHub-hosted runners, and run pkg/blockdev/darwin's
+# tests compiled natively for darwin — previously only ever cross-compiled
+# from Linux (GOOS=darwin without a macOS toolchain can type-check but
+# never actually execute a test binary).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos-disk-primitives:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Real execution, not just cross-compiled type-checking: this is the
+      # first time pkg/blockdev/darwin's tests have actually run on darwin.
+      - name: run pkg/blockdev/darwin tests natively
+        run: go test -v ./pkg/blockdev/darwin/...
+
+      - name: hdiutil create + attach a virtual disk (the CI-testable proxy from #106's research)
+        run: |
+          hdiutil create -size 64m -layout GPTSPUD -fs "MS-DOS FAT32" -volname TBOXCI /tmp/tboxci.dmg
+          attach_out=$(hdiutil attach -nomount /tmp/tboxci.dmg.dmg)
+          echo "$attach_out"
+          dev=$(echo "$attach_out" | head -1 | awk '{print $1}')
+          echo "attached as $dev"
+          diskutil info "$dev" | grep -E "Virtual|Protocol|Removable Media"
+          hdiutil detach "$dev"
+
+  windows-disk-primitives:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: diskpart create + attach + format a virtual disk (the CI-testable proxy from #109's original research)
+        shell: pwsh
+        run: |
+          $script = @"
+          create vdisk file=C:\tboxci.vhdx maximum=64 type=expandable
+          select vdisk file=C:\tboxci.vhdx
+          attach vdisk
+          create partition primary
+          format fs=fat32 quick
+          assign
+          "@
+          $script | Out-File -Encoding ascii C:\tboxci-diskpart.txt
+          diskpart /s C:\tboxci-diskpart.txt
+
+      - name: Win32_DiskDrive query (the exact query iso-builder/native/blockdev_windows.go uses)
+        shell: pwsh
+        run: Get-CimInstance Win32_DiskDrive | Select-Object DeviceID,Model,Size,InterfaceType,MediaType | ConvertTo-Json
