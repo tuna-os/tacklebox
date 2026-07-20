@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/tuna-os/tacklebox/internal/recipe"
-	"gopkg.in/yaml.v3"
 )
 
 // --- yamlNormalize tests ---
@@ -134,73 +133,95 @@ func TestYamlNormalizeDeeplyNested(t *testing.T) {
 	}
 }
 
-// --- recipe generation tests (via YAML input) ---
-
-func writeTempYAML(t *testing.T, content string) string {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "input.yaml")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write temp yaml: %v", err)
+func TestYamlNormalizeRetainsJSONCompatibility(t *testing.T) {
+	// After yamlNormalize, the result must be JSON-marshalable.
+	input := map[any]any{
+		"str":  "hello",
+		"int":  42,
+		"bool": true,
+		"arr":  []any{"a", "b", "c"},
+		"nested": map[any]any{
+			"inner": "value",
+		},
 	}
-	return path
+	normalized := yamlNormalize(input)
+	_, err := json.Marshal(normalized)
+	if err != nil {
+		t.Fatalf("json.Marshal after yamlNormalize failed: %v", err)
+	}
 }
 
-func runRecipeGen(t *testing.T, yamlContent string) (recipe.MediaRecipe, error) {
+// --- recipeGenCmd.RunE invocation tests ─────────────────────────────────
+//
+// Every test below drives the real recipeGenCmd.RunE handler — file read,
+// YAML/JSON parse, defaults, validation, and output writing — rather than
+// a parallel helper that reimplements RunE's logic by hand. That
+// duplication was the actual gap flagged by tacklebox#78: a hand-typed
+// second copy of the defaulting/validation logic can silently drift from
+// what RunE actually does and still show green tests, so it was replaced
+// entirely rather than kept alongside these.
+
+// runRecipeGenViaCmd invokes recipeGenCmd.RunE against content written to
+// a temp input file named input<ext> (ext lets callers exercise both the
+// YAML and JSON parse paths, which share the same yaml.Unmarshal entry
+// point). When toStdout is false (the common case), output is captured
+// via the --output flag and read back from disk; when true, the flag is
+// cleared and os.Stdout is temporarily redirected through a pipe instead,
+// covering the branch every other test in this file leaves untested.
+func runRecipeGenViaCmd(t *testing.T, content, ext string, toStdout bool) (recipe.MediaRecipe, error) {
 	t.Helper()
-	inputPath := writeTempYAML(t, yamlContent)
-
-	data, err := os.ReadFile(inputPath)
-	if err != nil {
-		return recipe.MediaRecipe{}, fmt.Errorf("read input: %w", err)
+	dir := t.TempDir()
+	inputPath := filepath.Join(dir, "input"+ext)
+	if err := os.WriteFile(inputPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write temp input: %v", err)
 	}
 
-	var raw any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return recipe.MediaRecipe{}, fmt.Errorf("parse input: %w", err)
+	var rawOut []byte
+	var runErr error
+
+	if toStdout {
+		if err := recipeGenCmd.Flags().Set("output", ""); err != nil {
+			t.Fatalf("reset output flag: %v", err)
+		}
+		origStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("create pipe: %v", err)
+		}
+		os.Stdout = w
+		runErr = recipeGenCmd.RunE(recipeGenCmd, []string{inputPath})
+		w.Close()
+		os.Stdout = origStdout
+		rawOut, _ = io.ReadAll(r)
+	} else {
+		outputPath := filepath.Join(dir, "out.json")
+		if err := recipeGenCmd.Flags().Set("output", outputPath); err != nil {
+			t.Fatalf("set output flag: %v", err)
+		}
+		runErr = recipeGenCmd.RunE(recipeGenCmd, []string{inputPath})
+		if runErr == nil {
+			var readErr error
+			rawOut, readErr = os.ReadFile(outputPath)
+			if readErr != nil {
+				t.Fatalf("output file not created: %v", readErr)
+			}
+		}
 	}
-	jsonData, err := json.Marshal(yamlNormalize(raw))
-	if err != nil {
-		return recipe.MediaRecipe{}, fmt.Errorf("convert to json: %w", err)
+
+	if runErr != nil {
+		return recipe.MediaRecipe{}, runErr
 	}
+
 	var r recipe.MediaRecipe
-	if err := json.Unmarshal(jsonData, &r); err != nil {
-		return recipe.MediaRecipe{}, fmt.Errorf("parse recipe: %w", err)
+	if err := json.Unmarshal(rawOut, &r); err != nil {
+		t.Fatalf("output is not valid recipe JSON: %v\noutput: %s", err, rawOut)
 	}
-
-	// Apply defaults (mirrors recipeGenCmd.RunE logic).
-	if r.Size == "" {
-		r.Size = fmt.Sprintf("%dG", len(r.BootableEnvironments)*5+3)
-	}
-	if r.SharedStore.Format == "" {
-		r.SharedStore.Format = "ext4"
-	}
-	if len(r.BootableEnvironments) > 1 && !r.SharedStore.Dedup {
-		r.SharedStore.Dedup = true
-	}
-	for i := range r.BootableEnvironments {
-		if len(r.BootableEnvironments[i].Modes) == 0 {
-			r.BootableEnvironments[i].Modes = []recipe.BootMode{"live"}
-		}
-	}
-	for i := range r.BootableEnvironments {
-		if r.BootableEnvironments[i].Title == "" {
-			r.BootableEnvironments[i].Title = r.BootableEnvironments[i].ID
-		}
-	}
-	if r.DefaultBoot == "" && len(r.BootableEnvironments) > 0 {
-		r.DefaultBoot = r.BootableEnvironments[0].ID
-	}
-
-	// Validate.
-	if len(r.BootableEnvironments) == 0 {
-		return recipe.MediaRecipe{}, fmt.Errorf("at least one bootable environment is required")
-	}
-	if r.MediaName == "" {
-		return recipe.MediaRecipe{}, fmt.Errorf("media_name is required")
-	}
-
 	return r, nil
+}
+
+func runRecipeGenYAML(t *testing.T, yamlContent string) (recipe.MediaRecipe, error) {
+	t.Helper()
+	return runRecipeGenViaCmd(t, yamlContent, ".yaml", false)
 }
 
 func TestRecipeGenMinimalInput(t *testing.T) {
@@ -210,7 +231,7 @@ bootable_environments:
   - id: test-env
     image: ghcr.io/test/image:latest
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -253,7 +274,7 @@ bootable_environments:
   - id: solo
     image: ghcr.io/test/solo:latest
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -271,7 +292,7 @@ bootable_environments:
   - id: env-b
     image: ghcr.io/test/b:latest
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -303,7 +324,7 @@ bootable_environments:
   - id: env
     image: ghcr.io/test/image:latest
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -321,7 +342,7 @@ bootable_environments:
   - id: env
     image: ghcr.io/test/image:latest
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,7 +361,7 @@ bootable_environments:
   - id: solo
     image: ghcr.io/test/solo:latest
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -361,7 +382,7 @@ bootable_environments:
   - id: env-b
     image: ghcr.io/test/b:latest
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -382,7 +403,7 @@ bootable_environments:
     image: ghcr.io/test/b:latest
     modes: ["live", "persistent"]
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -409,7 +430,7 @@ bootable_environments:
     image: ghcr.io/test/gnome:latest
     title: "GNOME Desktop"
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -428,7 +449,7 @@ bootable_environments:
   - id: second
     image: ghcr.io/test/second:latest
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -443,7 +464,7 @@ bootable_environments:
   - id: env
     image: ghcr.io/test/image:latest
 `
-	_, err := runRecipeGen(t, yamlContent)
+	_, err := runRecipeGenYAML(t, yamlContent)
 	if err == nil {
 		t.Fatal("expected error for missing media_name, got nil")
 	}
@@ -457,7 +478,7 @@ func TestRecipeGenMissingBootableEnvs(t *testing.T) {
 media_name: Empty
 bootable_environments: []
 `
-	_, err := runRecipeGen(t, yamlContent)
+	_, err := runRecipeGenYAML(t, yamlContent)
 	if err == nil {
 		t.Fatal("expected error for empty bootable_environments, got nil")
 	}
@@ -485,7 +506,7 @@ offline_payloads:
   - "payload-a"
   - "payload-b"
 `
-	r, err := runRecipeGen(t, yamlContent)
+	r, err := runRecipeGenYAML(t, yamlContent)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -514,34 +535,17 @@ offline_payloads:
 }
 
 func TestRecipeGenJSONInput(t *testing.T) {
-	// The yamlNormalize + json.Unmarshal path should also handle JSON input
-	// (parsed through yaml.Unmarshal which also handles JSON).
+	// yaml.Unmarshal (recipe_gen.go's single parse entry point) also
+	// accepts JSON, since JSON is a syntactic subset of YAML.
 	jsonContent := `{
   "media_name": "JSON Input",
   "bootable_environments": [
     {"id": "json-env", "image": "ghcr.io/test/json:latest"}
   ]
 }`
-	inputPath := filepath.Join(t.TempDir(), "input.json")
-	if err := os.WriteFile(inputPath, []byte(jsonContent), 0644); err != nil {
-		t.Fatalf("write temp json: %v", err)
-	}
-
-	data, err := os.ReadFile(inputPath)
+	r, err := runRecipeGenViaCmd(t, jsonContent, ".json", false)
 	if err != nil {
-		t.Fatalf("read input: %v", err)
-	}
-	var raw any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("parse JSON via yaml: %v", err)
-	}
-	jsonData, err := json.Marshal(yamlNormalize(raw))
-	if err != nil {
-		t.Fatalf("convert to json: %v", err)
-	}
-	var r recipe.MediaRecipe
-	if err := json.Unmarshal(jsonData, &r); err != nil {
-		t.Fatalf("parse recipe: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if r.MediaName != "JSON Input" {
 		t.Errorf("MediaName = %q, want JSON Input", r.MediaName)
@@ -551,54 +555,27 @@ func TestRecipeGenJSONInput(t *testing.T) {
 	}
 }
 
-// ── recipeGenCmd.RunE invocation tests ─────────────────────────────────────
-// These tests invoke recipeGenCmd.RunE directly, exercising the
-// full file read → parse → defaults → validation → output pipeline.
-// The critical gap vs runRecipeGen above is that this calls the *real*
-// command handler with its actual flag parsing.
-
-func TestRecipeGenRunE_MinimalInput(t *testing.T) {
-	yamlContent := `media_name: Test Media
+func TestRecipeGenRunE_StdoutOutput(t *testing.T) {
+	// Every other test in this file sets --output to a temp file. Without
+	// it, RunE takes the fmt.Println(stdout) branch instead — previously
+	// dead code as far as this test suite was concerned.
+	yamlContent := `
+media_name: Stdout Test
 bootable_environments:
-  - id: test-env
+  - id: env
     image: ghcr.io/test/image:latest
 `
-	inputPath := filepath.Join(t.TempDir(), "input.yaml")
-	if err := os.WriteFile(inputPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Set up the --output flag to capture to a temp file instead of stdout.
-	outputPath := filepath.Join(t.TempDir(), "out.json")
-	recipeGenCmd.Flags().Set("output", outputPath)
-	err := recipeGenCmd.RunE(recipeGenCmd, []string{inputPath})
+	r, err := runRecipeGenViaCmd(t, yamlContent, ".yaml", true)
 	if err != nil {
-		t.Fatalf("recipeGenCmd.RunE failed: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	// Verify output.
-	data, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatalf("output file not created: %v", err)
-	}
-	var r map[string]any
-	if err := json.Unmarshal(data, &r); err != nil {
-		t.Fatalf("output is not valid JSON: %v", err)
-	}
-	if r["media_name"] != "Test Media" {
-		t.Errorf("media_name = %v", r["media_name"])
+	if r.MediaName != "Stdout Test" {
+		t.Errorf("MediaName = %q, want Stdout Test", r.MediaName)
 	}
 }
 
 func TestRecipeGenRunE_InvalidYAML(t *testing.T) {
-	inputPath := filepath.Join(t.TempDir(), "invalid.yaml")
-	if err := os.WriteFile(inputPath, []byte("{{invalid yaml"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	outputPath := filepath.Join(t.TempDir(), "out.json")
-	recipeGenCmd.Flags().Set("output", outputPath)
-	err := recipeGenCmd.RunE(recipeGenCmd, []string{inputPath})
+	_, err := runRecipeGenViaCmd(t, "{{invalid yaml", ".yaml", false)
 	if err == nil {
 		t.Error("expected error for invalid YAML, got nil")
 	}
@@ -606,27 +583,58 @@ func TestRecipeGenRunE_InvalidYAML(t *testing.T) {
 
 func TestRecipeGenRunE_MissingFile(t *testing.T) {
 	outputPath := filepath.Join(t.TempDir(), "out.json")
-	recipeGenCmd.Flags().Set("output", outputPath)
+	if err := recipeGenCmd.Flags().Set("output", outputPath); err != nil {
+		t.Fatal(err)
+	}
 	err := recipeGenCmd.RunE(recipeGenCmd, []string{"/nonexistent/input.yaml"})
 	if err == nil {
 		t.Error("expected error for missing file, got nil")
 	}
 }
 
-func TestYamlNormalizeRetainsJSONCompatibility(t *testing.T) {
-	// After yamlNormalize, the result must be JSON-marshalable.
-	input := map[any]any{
-		"str":  "hello",
-		"int":  42,
-		"bool": true,
-		"arr":  []any{"a", "b", "c"},
-		"nested": map[any]any{
-			"inner": "value",
-		},
+func TestRecipeGenRunE_OutputWriteFailure(t *testing.T) {
+	// --output pointed at a path whose parent directory doesn't exist —
+	// exercises the os.WriteFile error branch every other --output test
+	// leaves untested (they all succeed).
+	dir := t.TempDir()
+	inputPath := filepath.Join(dir, "input.yaml")
+	yamlContent := `
+media_name: Unwritable
+bootable_environments:
+  - id: env
+    image: ghcr.io/test/image:latest
+`
+	if err := os.WriteFile(inputPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
 	}
-	normalized := yamlNormalize(input)
-	_, err := json.Marshal(normalized)
-	if err != nil {
-		t.Fatalf("json.Marshal after yamlNormalize failed: %v", err)
+	badOutputPath := filepath.Join(dir, "no-such-subdir", "out.json")
+	if err := recipeGenCmd.Flags().Set("output", badOutputPath); err != nil {
+		t.Fatal(err)
+	}
+	err := recipeGenCmd.RunE(recipeGenCmd, []string{inputPath})
+	if err == nil {
+		t.Fatal("expected an error writing to a path with a missing parent directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "write output") {
+		t.Errorf("expected a 'write output' error, got: %v", err)
+	}
+}
+
+func TestRecipeGenRunE_TypeMismatchFailsToParseRecipe(t *testing.T) {
+	// Valid YAML, valid JSON after normalization, but the wrong shape for
+	// recipe.MediaRecipe (bootable_environments must be a list, not a
+	// scalar) — exercises the json.Unmarshal(jsonData, &r) error branch
+	// specifically, distinct from the yaml.Unmarshal parse-error branch
+	// TestRecipeGenRunE_InvalidYAML covers.
+	yamlContent := `
+media_name: Bad Shape
+bootable_environments: "this should be a list, not a string"
+`
+	_, err := runRecipeGenViaCmd(t, yamlContent, ".yaml", false)
+	if err == nil {
+		t.Fatal("expected a parse error for a type-mismatched field, got nil")
+	}
+	if !strings.Contains(err.Error(), "parse recipe") {
+		t.Errorf("expected a 'parse recipe' error, got: %v", err)
 	}
 }
