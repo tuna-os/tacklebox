@@ -8,7 +8,7 @@
 # this instead of cloning the source and `go build`ing per machine.
 
 ARG BUILDER_IMAGE=docker.io/library/golang:1.26-bookworm
-ARG RUNTIME_IMAGE=registry.fedoraproject.org/fedora:43
+ARG RUNTIME_IMAGE=registry.fedoraproject.org/fedora:45
 
 # ─── Build stage ─────────────────────────────────────────────────────────────
 FROM ${BUILDER_IMAGE} AS build
