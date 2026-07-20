@@ -29,6 +29,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# See ci.yml's concurrency block for why this matters — this workflow's
+# macOS/Windows jobs draw from the same scarce shared-runner pool, so
+# stale duplicate runs here are just as costly to leave queued.
+concurrency:
+  group: cross-platform-smoke-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   macos-disk-primitives:
     runs-on: macos-latest
