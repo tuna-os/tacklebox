@@ -302,6 +302,52 @@ func TestEnsureAutologinIgnoresInactiveDefault(t *testing.T) {
 	}
 }
 
+// The passwordless live user must never hit a lock screen. GNOME can't use
+// the recipe's glib-compile-schemas override in the pure-Go path, so assert
+// the login-time gsettings autostart + script are written instead.
+func TestEnsureAutologinDisablesGNOMELock(t *testing.T) {
+	root, store := newImageTree(t,
+		[]string{"usr/share/wayland-sessions/gnome.desktop"},
+		[]string{"gdm.service"})
+	if err := EnsureAutologin(root, store, "gnome", "liveuser"); err != nil {
+		t.Fatal(err)
+	}
+	readNode(t, store, root, "etc/xdg/autostart/tunaos-live-nolock.desktop")
+	script := readNode(t, store, root, "usr/lib/tunaos/live-nolock.sh")
+	if !strings.Contains(script, "lock-enabled false") || !strings.Contains(script, "idle-delay 0") {
+		t.Errorf("nolock script missing gsettings calls:\n%s", script)
+	}
+}
+
+func TestEnsureAutologinDisablesKDELock(t *testing.T) {
+	root, store := newImageTree(t,
+		[]string{"usr/share/wayland-sessions/plasma.desktop"},
+		[]string{"sddm.service"})
+	if err := EnsureAutologin(root, store, "kde", "liveuser"); err != nil {
+		t.Fatal(err)
+	}
+	klr := readNode(t, store, root, "etc/xdg/kscreenlockerrc")
+	if !strings.Contains(klr, "Autolock=false") {
+		t.Errorf("kscreenlockerrc missing Autolock=false:\n%s", klr)
+	}
+}
+
+// The overlay already ships screen-lock config, so when autologin is active
+// (overlay applied) EnsureAutologin must skip our screen-lock writes too.
+func TestEnsureAutologinOverlaySkipsScreenLock(t *testing.T) {
+	root, store := newImageTree(t,
+		[]string{"usr/share/wayland-sessions/gnome.desktop"},
+		[]string{"gdm.service"})
+	addFile(t, store, root, "etc/gdm/custom.conf",
+		"[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=liveuser\n", 0o644, 0, 0)
+	if err := EnsureAutologin(root, store, "gnome", "liveuser"); err != nil {
+		t.Fatal(err)
+	}
+	if root.Lookup("etc/xdg/autostart/tunaos-live-nolock.desktop") != nil {
+		t.Error("screen-lock config written despite active overlay autologin")
+	}
+}
+
 func containsGroupMember(groupFile, group, user string) bool {
 	for _, line := range strings.Split(groupFile, "\n") {
 		f := strings.Split(line, ":")

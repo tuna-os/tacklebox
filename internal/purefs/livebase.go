@@ -188,6 +188,14 @@ func EnsureAutologin(root *oci.Node, store oci.BlobStore, desktop, user string) 
 		return nil // no desktop detected — appliance/server base, no DM
 	}
 
+	// Keep the passwordless live user from being locked out: disable the
+	// desktop's screen locker / idle-lock. Without this the session locks
+	// after a few minutes idle and the blank password can't unlock it — the
+	// exact lockout autologin just fixed at the greeter.
+	if err := disableScreenLock(root, store, desktop); err != nil {
+		return err
+	}
+
 	// Live niceties baseline.sh also applies (best-effort, pure FS): bring
 	// networking up on images that ship it disabled, and never sleep/suspend
 	// mid-install.
@@ -378,6 +386,54 @@ func writeFileNode(root *oci.Node, store oci.BlobStore, p, content string, mode 
 func symlinkNode(root *oci.Node, p, target string) {
 	dir := ensureDir(root, path.Dir(p))
 	dir.Children[path.Base(p)] = &oci.Node{Type: oci.TypeSymlink, Mode: 0o777, Target: target}
+}
+
+// disableScreenLock stops the live session locking the screen or idling out —
+// critical because the live user is passwordless, so an idle lock strands them
+// exactly as the greeter did before autologin. Mirrors the recipe's desktop
+// adapters (tunaos live-iso/common/src/desktop-*.sh), all pure files except
+// GNOME: its adapter compiles a gschema override (glib-compile-schemas, which
+// the WASM path can't run), so here a login-time gsettings autostart does the
+// same job file-only.
+func disableScreenLock(root *oci.Node, store oci.BlobStore, desktop string) error {
+	switch desktop {
+	case "gnome":
+		script := "#!/bin/sh\n" +
+			"# TunaOS live: keep the passwordless session unlocked.\n" +
+			"gsettings set org.gnome.desktop.screensaver lock-enabled false 2>/dev/null || true\n" +
+			"gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null || true\n" +
+			"gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing 2>/dev/null || true\n" +
+			"gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type nothing 2>/dev/null || true\n"
+		if err := writeFileNode(root, store, "/usr/lib/tunaos/live-nolock.sh", script, 0o755); err != nil {
+			return err
+		}
+		entry := "[Desktop Entry]\nType=Application\nName=TunaOS Live: disable screen lock\n" +
+			"Exec=/usr/lib/tunaos/live-nolock.sh\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\nOnlyShowIn=GNOME;\n"
+		return writeFileNode(root, store, "/etc/xdg/autostart/tunaos-live-nolock.desktop", entry, 0o644)
+	case "kde":
+		if err := writeFileNode(root, store, "/etc/xdg/kscreenlockerrc",
+			"[Daemon]\nAutolock=false\nLockOnResume=false\n", 0o644); err != nil {
+			return err
+		}
+		return writeFileNode(root, store, "/etc/xdg/powermanagementprofilesrc",
+			"[AC][SuspendSession]\nidleTime=0\nsuspendType=0\n\n"+
+				"[Battery][SuspendSession]\nidleTime=0\nsuspendType=0\n\n"+
+				"[LowBattery][SuspendSession]\nidleTime=0\nsuspendType=0\n", 0o644)
+	case "cosmic":
+		return writeFileNode(root, store, "/etc/xdg/cosmic-settings-daemon.override",
+			"[power]\nauto_suspend = false\nauto_suspend_on_battery = false\nscreen_blank = 0\nscreen_lock = false\n", 0o644)
+	case "xfce":
+		return writeFileNode(root, store, "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml",
+			"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"+
+				"<channel name=\"xfce4-screensaver\" version=\"1.0\">\n"+
+				"  <property name=\"saver\" type=\"empty\">\n    <property name=\"enabled\" type=\"bool\" value=\"false\"/>\n  </property>\n"+
+				"  <property name=\"lock\" type=\"empty\">\n    <property name=\"enabled\" type=\"bool\" value=\"false\"/>\n  </property>\n"+
+				"</channel>\n", 0o644)
+	case "niri":
+		return writeFileNode(root, store, "/etc/xdg/niri-session.override",
+			"[idle]\ninhibit-when-fullscreen = false\n", 0o644)
+	}
+	return nil
 }
 
 // dmAutologinActive reports whether the image already has active autologin
