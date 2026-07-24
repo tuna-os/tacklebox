@@ -191,6 +191,13 @@ func buildIso(_ js.Value, args []js.Value) any {
 		if err := purefs.EnsureLiveUser(root, store, "liveuser", 1000); err != nil {
 			return nil, err
 		}
+		// Autologin + display-manager (baseline.sh's pure-Go sibling): the
+		// live-overlay above only exists for a few variants, so without this
+		// every other browser ISO boots to a greeter no blank password
+		// satisfies. Idempotent, so re-applying over an overlay is harmless.
+		if err := purefs.EnsureAutologin(root, store, purefs.DetectDesktop(root), "liveuser"); err != nil {
+			return nil, err
+		}
 
 		kver := gFacts.KernelVer
 		if kver == "" {

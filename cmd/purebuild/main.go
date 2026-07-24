@@ -112,6 +112,14 @@ func main() {
 	}
 	log.Printf(">>> liveuser baked into rootfs")
 
+	// Autologin + display-manager setup (baseline.sh's pure-Go sibling) so
+	// the live session actually reaches the desktop instead of a greeter that
+	// rejects the passwordless user's blank password.
+	if err := purefs.EnsureAutologin(root, store, purefs.DetectDesktop(root), "liveuser"); err != nil {
+		log.Fatal(err)
+	}
+	log.Printf(">>> autologin + display-manager configured")
+
 	// Kernel + stock initramfs + systemd-boot out of the image tree.
 	modDir := root.Lookup("usr/lib/modules")
 	if modDir == nil {
