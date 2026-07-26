@@ -177,8 +177,14 @@ func EnsureAutologin(root *oci.Node, store oci.BlobStore, desktop, user string) 
 		// labwc or specify another compositor as argument" onto a black
 		// screen (tunaOS#833). startxfce4 only autodiscovers labwc/wayfire,
 		// so name the compositor explicitly when we do have one.
+		//
+		// xfwl4 deliberately does not qualify, despite being the compositor
+		// the EL10 xfce manifest installs: startxfce4 passes its argument no
+		// startup command (the labwc default path appends
+		// `--session xfce4-session`) and xfwl4 has no equivalent option, so
+		// naming it would yield a bare compositor with no session in it.
 		session := "startxfce4"
-		for _, comp := range []string{"xfwl4", "labwc", "wayfire"} {
+		for _, comp := range []string{"labwc", "wayfire"} {
 			if binInTree(root, comp) {
 				session = "dbus-run-session startxfce4 --wayland " + comp
 				break
