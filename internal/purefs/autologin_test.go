@@ -231,6 +231,21 @@ func TestEnsureAutologinXFCEWayland(t *testing.T) {
 	}
 }
 
+// xfwl4 is the compositor the EL10 xfce manifest installs, so it must win
+// when present — naming it is what gets that base to a live Wayland session.
+func TestEnsureAutologinXFCEPrefersXfwl4(t *testing.T) {
+	root, store := newImageTree(t,
+		[]string{"usr/share/wayland-sessions/xfce.desktop", "usr/bin/xfwl4", "usr/bin/labwc"},
+		[]string{"lightdm.service"})
+	if err := EnsureAutologin(root, store, "xfce", "liveuser"); err != nil {
+		t.Fatal(err)
+	}
+	gc := readNode(t, store, root, "etc/greetd/config.toml")
+	if !strings.Contains(gc, `--wayland xfwl4"`) {
+		t.Errorf("xfwl4 should win over labwc when both are present:\n%s", gc)
+	}
+}
+
 // Regression (tunaOS#833): several bases package the xfce Wayland session
 // file with no compositor behind it. Selecting the Wayland session off that
 // file alone produced a live ISO that booted to
