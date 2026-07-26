@@ -69,6 +69,17 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 		"--cap-add", "sys_admin",
 		"--security-opt", "label=disable",
 	)
+	// The customize scripts need outbound network (flatpak install above all),
+	// and podman's default bridge is not always usable: on a host whose
+	// netavark/firewalld rules have gone stale, root-context containers get an
+	// interface with no route out while rootless ones work fine. The symptom is
+	// remote — "Could not resolve hostname tunaos.org" from inside flatpak —
+	// and the build then produces an ISO with no installer on it.
+	// TBOX_CUSTOMIZE_NETWORK=host is the escape hatch; unset keeps podman's
+	// default, so nothing changes for hosts that are fine.
+	if net := strings.TrimSpace(os.Getenv("TBOX_CUSTOMIZE_NETWORK")); net != "" {
+		runArgs = append(runArgs, "--network", net)
+	}
 	var inner strings.Builder
 	inner.WriteString("set -eu\n")
 	for i, s := range scripts {
