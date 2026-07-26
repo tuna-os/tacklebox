@@ -156,7 +156,9 @@ func EnsureAutologin(root *oci.Node, store oci.BlobStore, desktop, user string) 
 		if err := writeSDDM(root, store, user); err != nil {
 			return err
 		}
-		enableDM(root, "sddm.service")
+		if !enableDM(root, "sddm.service") {
+			enableDM(root, "plasmalogin.service") // KDE 6.5+ rename
+		}
 	case "niri":
 		if err := writeGreetd(root, store, user, "niri-session"); err != nil {
 			return err
@@ -168,9 +170,19 @@ func EnsureAutologin(root *oci.Node, store oci.BlobStore, desktop, user string) 
 		}
 		enableDM(root, "greetd.service")
 	case "xfce":
+		// Gate the Wayland session on a *compositor binary*, not on the
+		// packaged session file: several bases ship
+		// usr/share/wayland-sessions/xfce-wayland.desktop with nothing behind
+		// it, and startxfce4 --wayland then dies with "Please either install
+		// labwc or specify another compositor as argument" onto a black
+		// screen (tunaOS#833). startxfce4 only autodiscovers labwc/wayfire,
+		// so name the compositor explicitly when we do have one.
 		session := "startxfce4"
-		if hasPrefixChild(root, "usr/share/wayland-sessions", "xfce") {
-			session = "xfce-wayland-session"
+		for _, comp := range []string{"xfwl4", "labwc", "wayfire"} {
+			if binInTree(root, comp) {
+				session = "dbus-run-session startxfce4 --wayland " + comp
+				break
+			}
 		}
 		if err := writeLightDM(root, store, user); err != nil {
 			return err
@@ -228,7 +240,18 @@ func writeSDDM(root *oci.Node, store oci.BlobStore, user string) error {
 	}
 	body := "[General]\nDisplayServer=wayland\nCompositorCommand=kwin_wayland --no-lockscreen\n\n" +
 		"[Autologin]\nUser=" + user + "\nSession=" + session + "\nRelogin=false\n"
-	return writeFileNode(root, store, "/etc/sddm.conf.d/tbox-live-autologin.conf", body, 0o644)
+	// KDE 6.5+ renames sddm to plasmalogin, config directory included. Both
+	// names ship in the wild (yellowfin:kde carried sddm on 2026-07-19 and
+	// plasmalogin by 07-22), and a drop-in in the directory the image's DM
+	// doesn't read is inert — so write both rather than detect. Getting this
+	// wrong is silent: the ISO boots to a password prompt no blank password
+	// satisfies, which is exactly how the CI ISO failed (tunaOS#833).
+	for _, dir := range []string{"/etc/sddm.conf.d", "/etc/plasmalogin.conf.d"} {
+		if err := writeFileNode(root, store, dir+"/tbox-live-autologin.conf", body, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeGreetd(root *oci.Node, store oci.BlobStore, user, cmd string) error {
@@ -276,6 +299,19 @@ func unitPath(root *oci.Node, unit string) string {
 		}
 	}
 	return ""
+}
+
+// binInTree is the tree-surgery equivalent of `command -v`: true if the named
+// executable exists on the image's PATH. /bin and /sbin are symlinks to their
+// /usr counterparts on usr-merged distros, so a Lookup of "bin/..." would not
+// resolve — the usr/ paths are the ones that matter.
+func binInTree(root *oci.Node, name string) bool {
+	for _, dir := range []string{"usr/bin", "usr/sbin", "usr/local/bin"} {
+		if root.Lookup(dir+"/"+name) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func hasPrefixChild(root *oci.Node, dir, prefix string) bool {
@@ -447,12 +483,16 @@ func dmAutologinActive(root *oci.Node, store oci.BlobStore, desktop string) bool
 	}
 	sddm := func() bool {
 		on := kvWithValue("User")
-		for _, name := range dirChildren(root, "etc/sddm.conf.d") {
-			if hasActiveLine(readIfFile(root, store, "etc/sddm.conf.d/"+name), on) {
-				return true
+		// Both the sddm and the KDE 6.5+ plasmalogin config locations.
+		for _, dir := range []string{"etc/sddm.conf.d", "etc/plasmalogin.conf.d"} {
+			for _, name := range dirChildren(root, dir) {
+				if hasActiveLine(readIfFile(root, store, dir+"/"+name), on) {
+					return true
+				}
 			}
 		}
-		return hasActiveLine(readIfFile(root, store, "etc/sddm.conf"), on)
+		return hasActiveLine(readIfFile(root, store, "etc/sddm.conf"), on) ||
+			hasActiveLine(readIfFile(root, store, "etc/plasmalogin.conf"), on)
 	}
 	greetd := func() bool {
 		// [initial_session] is greetd's autologin table (vs a bare greeter).

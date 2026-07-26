@@ -114,6 +114,30 @@ func TestEnsureAutologinKDE(t *testing.T) {
 	mustSymlink(t, root, "etc/systemd/system/graphical.target.wants/sddm.service", "/usr/lib/systemd/system/sddm.service")
 }
 
+// Regression (tunaOS#833): KDE 6.5+ renames sddm to plasmalogin, config
+// directory included. Writing the drop-in only to /etc/sddm.conf.d left the
+// CI ISO booting to a password prompt that no blank password satisfies —
+// silent, because nothing downstream distinguishes "greeter" from "session".
+func TestEnsureAutologinKDEPlasmalogin(t *testing.T) {
+	root, store := newImageTree(t,
+		[]string{"usr/share/wayland-sessions/plasma.desktop"},
+		[]string{"plasmalogin.service"}) // no sddm.service at all
+	if err := EnsureAutologin(root, store, "kde", "liveuser"); err != nil {
+		t.Fatal(err)
+	}
+	conf := readNode(t, store, root, "etc/plasmalogin.conf.d/tbox-live-autologin.conf")
+	if !strings.Contains(conf, "User=liveuser") {
+		t.Errorf("plasmalogin conf missing autologin user:\n%s", conf)
+	}
+	mustSymlink(t, root, "etc/systemd/system/graphical.target.wants/plasmalogin.service",
+		"/usr/lib/systemd/system/plasmalogin.service")
+	// An image that already carries plasmalogin autologin must be left alone,
+	// the same way an sddm-configured one is.
+	if !dmAutologinActive(root, store, "kde") {
+		t.Error("plasmalogin autologin should be detected as already active")
+	}
+}
+
 func TestEnsureAutologinKDEPlasmaWayland(t *testing.T) {
 	// Only plasmawayland.desktop present -> Session=plasmawayland.
 	root, store := newImageTree(t,
@@ -192,6 +216,28 @@ func TestEnsureAutologinXFCE(t *testing.T) {
 }
 
 func TestEnsureAutologinXFCEWayland(t *testing.T) {
+	// A compositor binary is what makes the Wayland session real, so the
+	// greetd command must name it: startxfce4 only autodiscovers labwc and
+	// wayfire, and dies onto a black screen when handed neither.
+	root, store := newImageTree(t,
+		[]string{"usr/share/wayland-sessions/xfce.desktop", "usr/bin/labwc"},
+		[]string{"lightdm.service"})
+	if err := EnsureAutologin(root, store, "xfce", "liveuser"); err != nil {
+		t.Fatal(err)
+	}
+	gc := readNode(t, store, root, "etc/greetd/config.toml")
+	if !strings.Contains(gc, `command = "dbus-run-session startxfce4 --wayland labwc"`) {
+		t.Errorf("want the compositor named explicitly:\n%s", gc)
+	}
+}
+
+// Regression (tunaOS#833): several bases package the xfce Wayland session
+// file with no compositor behind it. Selecting the Wayland session off that
+// file alone produced a live ISO that booted to
+// "startxfce4: Please either install labwc or specify another compositor as
+// argument" on an otherwise black screen. Absent a compositor we must fall
+// back to the X11 session, which lightdm can actually start.
+func TestEnsureAutologinXFCEWaylandSessionFileButNoCompositor(t *testing.T) {
 	root, store := newImageTree(t,
 		[]string{"usr/share/wayland-sessions/xfce.desktop"},
 		[]string{"lightdm.service"})
@@ -199,8 +245,8 @@ func TestEnsureAutologinXFCEWayland(t *testing.T) {
 		t.Fatal(err)
 	}
 	gc := readNode(t, store, root, "etc/greetd/config.toml")
-	if !strings.Contains(gc, `command = "xfce-wayland-session"`) {
-		t.Errorf("want xfce-wayland-session:\n%s", gc)
+	if !strings.Contains(gc, `command = "startxfce4"`) {
+		t.Errorf("want the plain X11 session, not a Wayland one we can't start:\n%s", gc)
 	}
 }
 
