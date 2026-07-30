@@ -102,9 +102,6 @@ func layoutIso(volumeID string, files []IsoInput, bootImage string) (*isoLayout,
 	ly := &isoLayout{volumeID: volumeID, root: root, now: time.Now().UTC()}
 	for i := range files {
 		f := files[i]
-		if f.Size >= 1<<32 {
-			return nil, fmt.Errorf("%s: %d bytes exceeds the single-extent ISO9660 limit (4 GiB)", f.Path, f.Size)
-		}
 		clean := path.Clean("/" + f.Path)
 		e := &isoEntry{name: path.Base(clean), size: f.Size, src: f.Source}
 		getDir(path.Dir(clean)).files = append(getDir(path.Dir(clean)).files, e)
@@ -213,13 +210,19 @@ func (ly *isoLayout) dirContentLen(d *isoDir) int64 {
 	if d.parent == nil {
 		dotName = "SP"
 	}
-	add(ly.dirRecord(dotName, 0, 0, true, 1))
-	add(ly.dirRecord("", 0, 0, true, 2))
+	add(ly.dirRecord(dotName, 0, 0, true, 1, false))
+	add(ly.dirRecord("", 0, 0, true, 2, false))
 	for _, s := range d.subdirs {
-		add(ly.dirRecord(s.name, 0, 0, true, 0))
+		add(ly.dirRecord(s.name, 0, 0, true, 0, false))
 	}
 	for _, f := range d.files {
-		add(ly.dirRecord(f.name, 0, 0, false, 0))
+		// One record per extent — the layout pass only needs the count and
+		// the name (record length is name-derived), but it MUST match what
+		// the write pass emits or directory sizes drift and the image is
+		// silently malformed.
+		for range extentSpans(f.size) {
+			add(ly.dirRecord(f.name, 0, 0, false, 0, false))
+		}
 	}
 	return used
 }
@@ -255,7 +258,38 @@ func recTime(t time.Time) []byte {
 }
 
 // dirRecord encodes one directory record (with RR) into buf.
-func (ly *isoLayout) dirRecord(name string, extent, size int64, isDir bool, dot int) []byte {
+// maxExtent is the largest file span one directory record can describe: the
+// size field is 32-bit, so the ceiling is the biggest multiple of the sector
+// size below 2^32. Anything larger needs several records.
+const maxExtent = 0xFFFFF800 // 4294965248 = (2^32 - 1) rounded down to 2048
+
+// extentSpans splits a file into the (offset, length) pairs that each get
+// their own directory record. Always returns at least one span, so a zero
+// length file still gets a record.
+//
+// ISO9660 Level 3 multi-extent: a file too large for one record is described
+// by consecutive records with the same name, each covering the next chunk,
+// with the multi-extent bit set in File Flags on every record but the last.
+// Readers concatenate them. Without this the writer had to reject the file —
+// which is what made a 4.9 GB rootfs produce a 0-byte ISO
+// (tuna-os/tacklebox#158), and forced the ISO Builder and purebuild to shell
+// out to xorriso for any desktop edition.
+func extentSpans(size int64) [][2]int64 {
+	if size <= maxExtent {
+		return [][2]int64{{0, size}}
+	}
+	var spans [][2]int64
+	for off := int64(0); off < size; off += maxExtent {
+		n := size - off
+		if n > maxExtent {
+			n = maxExtent
+		}
+		spans = append(spans, [2]int64{off, n})
+	}
+	return spans
+}
+
+func (ly *isoLayout) dirRecord(name string, extent, size int64, isDir bool, dot int, multi bool) []byte {
 	// dot: 0 = regular entry, 1 = ".", 2 = ".."
 	var id string
 	switch dot {
@@ -319,6 +353,10 @@ func (ly *isoLayout) dirRecord(name string, extent, size int64, isDir bool, dot 
 	copy(rec[18:25], recTime(ly.now))
 	if isDir {
 		rec[25] = 0x02
+	}
+	if multi {
+		// Bit 7: "not the final extent of this file".
+		rec[25] |= 0x80
 	}
 	copy(rec[28:32], both16(1)) // volume sequence number
 	rec[32] = byte(len(id))
@@ -471,13 +509,20 @@ func (ly *isoLayout) write(w io.Writer) error {
 		if d.parent == nil {
 			dotName = "SP" // marker: root "." carries the SUSP SP entry
 		}
-		add(ly.dirRecord(dotName, self.extent, self.size, true, 1))
-		add(ly.dirRecord("", parent.extent, parent.size, true, 2))
+		add(ly.dirRecord(dotName, self.extent, self.size, true, 1, false))
+		add(ly.dirRecord("", parent.extent, parent.size, true, 2, false))
 		for _, s := range d.subdirs {
-			add(ly.dirRecord(s.name, s.extent, s.size, true, 0))
+			add(ly.dirRecord(s.name, s.extent, s.size, true, 0, false))
 		}
 		for _, f := range d.files {
-			add(ly.dirRecord(f.name, f.extent, f.size, false, 0))
+			spans := extentSpans(f.size)
+			for i, sp := range spans {
+				// f.extent is the file's first sector; each later span starts
+				// maxExtent bytes further in, which is sector-aligned by
+				// construction.
+				add(ly.dirRecord(f.name, f.extent+sp[0]/sectorSize, sp[1],
+					false, 0, i < len(spans)-1))
+			}
 		}
 		sw.write(buf)
 	}
