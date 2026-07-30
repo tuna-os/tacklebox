@@ -68,11 +68,17 @@ func promise(fn func() (any, error)) js.Value {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
+					// Console, not just the rejection: app.js routes the
+					// rejection to log(), which writes to the DOM, so a
+					// headless run's only record of WHY a build died was a
+					// screenshot. The e2e greps console for engine death.
+					fmt.Println("!!! tbox panic:", r)
 					reject.Invoke(fmt.Sprint(r))
 				}
 			}()
 			v, err := fn()
 			if err != nil {
+				fmt.Println("!!! tbox failed:", err)
 				reject.Invoke(err.Error())
 				return
 			}
