@@ -185,7 +185,14 @@ func (r *resumingReader) Read(p []byte) (int, error) {
 
 // resume reopens the blob at the current offset. Reports false when the
 // attempt budget is spent or reopening fails, having set r.err.
+//
+// The resume is announced because a silent one is indistinguishable from a
+// healthy download that merely took longer, and telling those apart from
+// outside the engine is precisely what was impossible before: on wasm
+// fmt.Println reaches the browser console, so a build that recovers still
+// leaves evidence that the link stalled.
 func (r *resumingReader) resume(why string) bool {
+	fmt.Printf("tbox: layer stalled at byte %d (%s); resuming, %d attempt(s) left\n", r.off, why, r.attempts)
 	r.abandon()
 	if r.attempts <= 0 {
 		r.err = fmt.Errorf("%w at byte %d: %s (no attempts left)", ErrStalled, r.off, why)
