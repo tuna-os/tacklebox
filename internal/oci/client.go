@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Client speaks the small read-only slice of the distribution API the
@@ -38,6 +39,16 @@ type Client struct {
 	// an open response body, so this trades registry connections and peak
 	// buffering for throughput. 0 means DefaultFetchAhead.
 	FetchAhead int
+
+	// StallTimeout is how long a layer body may deliver nothing before it is
+	// abandoned and resumed from its byte offset. 0 means
+	// DefaultStallTimeout. This is not an http.Client timeout and cannot be
+	// one: see resume.go for why the deadline has to sit above the reader.
+	StallTimeout time.Duration
+
+	// ResumeAttempts bounds reconnects per layer. 0 means
+	// DefaultResumeAttempts.
+	ResumeAttempts int
 
 	tokenMu sync.Mutex
 	token   string
@@ -127,6 +138,15 @@ func (c *Client) bearer() string {
 }
 
 func (c *Client) get(repo, path, accept string) (*http.Response, error) {
+	return c.getRange(repo, path, accept, 0)
+}
+
+// getRange is get with an optional resume offset. offset > 0 asks for
+// bytes=offset- and accepts 206; a registry or proxy that ignores Range
+// answers 200 with the whole blob, which would silently duplicate the
+// prefix into a resumed stream, so that case is rejected rather than
+// trusted.
+func (c *Client) getRange(repo, path, accept string, offset int64) (*http.Response, error) {
 	if err := c.authorize(repo); err != nil {
 		return nil, err
 	}
@@ -140,12 +160,22 @@ func (c *Client) get(repo, path, accept string) (*http.Response, error) {
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}
+	if offset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
+	want := http.StatusOK
+	if offset > 0 {
+		want = http.StatusPartialContent
+	}
+	if resp.StatusCode != want {
 		resp.Body.Close()
+		if offset > 0 && resp.StatusCode == http.StatusOK {
+			return nil, fmt.Errorf("GET %s: resume from %d unsupported (got 200, want 206)", path, offset)
+		}
 		return nil, fmt.Errorf("GET %s: HTTP %d", path, resp.StatusCode)
 	}
 	return resp, nil
@@ -193,12 +223,38 @@ func (c *Client) ResolveManifest(ref Ref, arch string) (*Manifest, error) {
 // Blob streams a blob while verifying its digest: the returned reader
 // yields the blob's bytes and its Close reports a digest mismatch as an
 // error, so callers that consume to EOF get integrity for free.
+// A stalled body is wrapped so it resumes instead of hanging — on wasm a
+// read that never completes cannot be interrupted by any timeout, so the
+// guard has to sit above the reader. See resume.go.
 func (c *Client) Blob(ref Ref, d Descriptor) (io.ReadCloser, error) {
-	resp, err := c.get(ref.Repo, "blobs/"+d.Digest, "")
+	body, err := newResumingReader(func(offset int64) (io.ReadCloser, error) {
+		resp, err := c.getRange(ref.Repo, "blobs/"+d.Digest, "", offset)
+		if err != nil {
+			return nil, err
+		}
+		return resp.Body, nil
+	}, c.stallTimeout(), c.resumeAttempts())
 	if err != nil {
 		return nil, err
 	}
-	return &verifyingReader{body: resp.Body, want: d.Digest, hash: sha256.New()}, nil
+	// Digest verification still spans the whole blob: resuming reconnects at
+	// the consumed offset, so the bytes reaching the hash are the same
+	// sequence a single uninterrupted response would have produced.
+	return &verifyingReader{body: body, want: d.Digest, hash: sha256.New()}, nil
+}
+
+func (c *Client) stallTimeout() time.Duration {
+	if c.StallTimeout > 0 {
+		return c.StallTimeout
+	}
+	return DefaultStallTimeout
+}
+
+func (c *Client) resumeAttempts() int {
+	if c.ResumeAttempts > 0 {
+		return c.ResumeAttempts
+	}
+	return DefaultResumeAttempts
 }
 
 type verifyingReader struct {
