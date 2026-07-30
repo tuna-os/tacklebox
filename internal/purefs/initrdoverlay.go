@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/ulikunitz/xz"
 
 	"github.com/tuna-os/tacklebox/internal/oci"
 )
@@ -126,16 +127,30 @@ func BuildInitrdOverlay(root *oci.Node, store oci.BlobStore, kver string, module
 				return err
 			}
 		case strings.HasSuffix(base, ".xz"):
-			// no stdlib xz — skip; the insmod fallback simply won't find
-			// it and squashfs/erofs may be builtin on such kernels anyway
-			return nil
+			// Debian compresses EVERY module with xz, so skipping these
+			// (as this did while there was no decoder wired up) dropped all
+			// seven wanted modules and left found==0 — a live root that
+			// cannot insmod erofs or isofs. ulikunitz/xz is pure Go and was
+			// already in the module graph via go-diskfs, so this costs a
+			// direct require and nothing else.
+			xr, err := xz.NewReader(rc)
+			if err != nil {
+				return err
+			}
+			body, err = io.ReadAll(xr)
+			if err != nil {
+				return err
+			}
 		default:
 			body, err = io.ReadAll(rc)
 			if err != nil {
 				return err
 			}
 		}
-		dst := "usr/lib/modules/" + kver + "/" + strings.TrimSuffix(strings.TrimSuffix(p, ".zst"), ".gz")
+		// Name the extracted module by its decompressed form — tbox-live-root
+		// insmods these directly, and insmod does not decompress.
+		dst := "usr/lib/modules/" + kver + "/" +
+			strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(p, ".zst"), ".gz"), ".xz")
 		w.file(dst, 0o644, body)
 		found++
 		return nil

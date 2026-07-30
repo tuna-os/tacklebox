@@ -16,4 +16,5 @@ require (
 	github.com/elliotwutingfeng/asciiset v0.0.0-20260129054604-cfde2086bc57 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/ulikunitz/xz v0.5.15 // indirect
 )
