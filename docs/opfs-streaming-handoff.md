@@ -1,184 +1,147 @@
-# Handoff: OPFS streaming and the wasm32 4 GiB ceiling (#156)
+# OPFS streaming and the wasm32 4 GiB ceiling (#156)
 
-Status: **not started.** Diagnosis is solid, the cause of the memory is not.
-Read the "What is NOT known" section before designing anything — the obvious
-theory is already disproven.
-
----
-
-## The failure
-
-`tbox.wasm` is Go compiled to **wasm32**. Linear memory is a single 32-bit
-address space, so ~4 GiB is the absolute ceiling — not a tunable, not a host
-limit. Measured from JS (`instance.exports.mem.buffer.byteLength`) over one
-build of `flounder:xfce`:
-
-```
-51 MB → 79 → 89 → 630 → 1788 → 3072 → 4094 MB → fatal
-```
-
-```
-runtime: out of memory: cannot allocate 4194304-byte block (4252303360 in use)
-fatal error: out of memory
-exit code: 2
-```
-
-4,252,303,360 = 3.96 GiB. The failing allocation is **4 MiB**, which is
-exactly `sliceChunk` in `opfsSliceReader.Read` — so the heap was already full
-when a routine read buffer tipped it over. The allocation that failed is not
-the allocation that matters.
-
-Not the host: reproduced with 13 GB RAM free and 226 GB disk, and the
-browser's own log line read `storage quota ~10.7 GB free`.
-
-### Two shapes, same cause
-
-- **Fatal** — a large enough allocation trips `fatal error: out of memory`
-  and the module exits(2). `flounder:xfce` does this.
-- **Silent wedge** — more common in CI. The heap parks near 4094 MB and the
-  GC thrashes with **no console output, no `pageerror`, no panic**. The page
-  simply never advances. This is why it read as a network stall for hours.
-  A memory guard was added in `iso-builder/app/public/app.js`
-  (`tboxWasmMB()` + `watchEngineMemory()`) so this now surfaces as a
-  reported error rather than a frozen progress bar.
+Status: **cause found, fixed, measured.** The earlier revision of this doc
+said "nobody has identified what holds ~4 GiB" and listed four suspects
+inside `WriteErofs`. All four were wrong, and the instrumentation it asked
+for is what proved it. Kept as a record so the dead ends stay dead.
 
 ---
 
-## What IS known
+## The answer
 
-**Layer unpack already streams to OPFS.** `cmd/tbwasm/main.go` passes the
-`opfsArena` directly to `c.Unpack(...)`, not the `MemStore`. Each file body
-goes to OPFS via `arena.Put` in 1 MiB chunks.
+`GraftLiveOverlay` unpacked the published live-overlay delta into the
+**heap**, not OPFS.
 
-**EROFS output already streams to OPFS.** `WriteErofs(root, store,
-arenaWriter{sfsArena}, 0)` writes into a *second* arena. File data inside it
-goes through `io.Copy(w, r)` — streaming.
+`introspect` passes the `opfsArena` directly to `c.Unpack(...)`, so base
+layers stream to origin-private storage exactly as designed. It then wraps
+that arena in a `hybridStore` whose `Put` was backed by an `oci.MemStore`
+— justified by a comment reading "writes after the unpack (tree surgery
+like EnsureLiveUser — small files) land in memory."
 
-**Reads from OPFS already chunk.** `opfsSliceReader.Read` pulls 4 MiB slices
-via `blob.slice(...).arrayBuffer()`.
+That assumption does not hold. `GraftLiveOverlay` calls `UnpackOnto` with
+the *same* store, so every file body in the overlay delta went into linear
+memory. For `flounder:xfce`:
 
-**So the obvious answer is wrong.** The `main.go` header comment still says:
+| | |
+|---|---|
+| extra layers over base | 1 |
+| compressed | 941 MB |
+| unpacked | **2.49 GiB** |
+| files | 42,177 |
+| location | effectively all `var/lib/` (installer flatpak payload) |
+| dropped by `SkipBodies` | **none** |
 
-> Memory model (MVP): MemStore holds unpacked file bodies and the EROFS is
-> buffered before streaming — peak ≈ 2× unpacked rootfs.
+2.49 GiB of bodies plus the tree and inode tables is the whole of the
+reported `4252303360 in use`, and is why the allocation that failed was a
+routine 4 MiB `sliceChunk` read buffer.
 
-That comment is **stale**. It describes an earlier design. Do not plan work
-from it. (Fixing the comment is a freebie.)
+### Why the suspect list was wrong
 
-**Where it dies:** stage label was `Authoring EROFS live root…`, i.e. inside
-`purefs.WriteErofs`, after `GraftLiveOverlay` / `EnsureLiveUser` /
-`EnsureAutologin` have run.
+Metadata was never the problem. Instrumented, on the edition that OOMed:
 
----
-
-## What is NOT known
-
-**Nobody has identified what holds ~4 GiB.** This is the single blocking
-unknown, and every design below is speculative until it is answered.
-
-Candidates inside `WriteErofs` (`internal/purefs/erofs.go`), none confirmed:
-
-1. `inodes []*inode` — one struct per file in the tree.
-2. `byPath map[string]*inode` — a **second** full copy of the path space, keyed
-   by full path strings.
-3. `in.dirData []byte` per directory — every directory's packed dirents, all
-   retained simultaneously (`packDirents` result stored on the inode).
-4. The `oci.Node` tree itself, built during unpack and still live: every file's
-   name, mode, ownership, and a `Children map[string]*Node` per directory.
-
-For a desktop image these are hundreds of thousands of entries. Maps and
-per-node strings are the suspicious part, not file contents.
-
-**Also unquantified:** wasm linear memory only ever **grows** — it is never
-returned. So transient peaks are permanent. Fragmentation across many
-short-lived 4 MiB read buffers may inflate the high-water mark well above
-live-set size.
-
-### First task for whoever picks this up
-
-Instrument, do not theorise. Add allocation accounting around the phases and
-report via the existing `tboxOnProgress`/console path:
-
-```go
-var ms runtime.MemStats
-runtime.ReadMemStats(&ms)
-fmt.Printf("tbox: phase=%s heap=%d MB objects=%d\n",
-    phase, ms.HeapAlloc>>20, ms.HeapObjects)
+```
+phase=unpack   heap=52MB   objects=259686  opfs(layers=2350MB post=0MB)
+phase=overlay  heap=112MB  objects=662360  opfs(layers=2350MB post=2550MB)
 ```
 
-Print after unpack, after each of the graft/liveuser/autologin steps, after
-`mirror()` in `WriteErofs`, after `packDirents`, and during the data-block
-loop. That converts this from guesswork into a number. Everything below is
-premature until then.
+The complete `oci.Node` tree for a 65-layer desktop image is **52 MB**.
+`inodes`, `byPath`, retained `dirData`, per-node strings — all of it lives
+inside that number. Design option C ("reduce the in-memory tree") would
+have bought tens of megabytes against a 4 GiB problem.
+
+Note also `objects` more than doubling across the overlay while heap moves
+60 MB: that is the shape of metadata for 42k new files. Heap on its own
+cannot tell "holds metadata" from "holds content" — which is exactly why
+`reportMem` prints heap *and* per-arena bytes together.
+
+### The fix
+
+Post-unpack writes go to a second OPFS arena (`tbox-post.bin`). Three
+parts that are not obvious:
+
+1. **Refs are namespaced per arena** — `a:` layers, `o:` post-unpack,
+   `s:` authored EROFS. Two arenas both minting `a:<off>:<len>` would
+   resolve one ref against two different files at the same offsets: a
+   silently corrupt EROFS, no error raised anywhere.
+2. **Read-before-seal is handled, not avoided.** The overlay rewrites
+   `/etc/{passwd,shadow,group,gshadow}` and `EnsureLiveUser` reads them
+   straight back. OPFS does not commit an open `FileSystemWritableFileStream`,
+   so the old lazy `getFile()` snapshot would have returned stale or short
+   bytes silently. `opfsArena.Open` now seals and reopens-with-seek to
+   resume appending.
+3. **The post arena is sealed before `WriteErofs`**, which reads bodies
+   from both arenas.
+
+`oci.MemStore` is gone from the wasm store entirely rather than left as a
+fallback. A heap-backed blob store is the one thing this engine cannot
+afford, and keeping one wired up invites the bug back the next time
+something unpacks through the post path.
 
 ---
 
-## Design options
+## Still true, still worth not re-deriving
 
-Ordered by confidence, not by effort.
+**Memory64 — do not pursue.** Browsers ship it (Chrome M133; Wasm 3.0),
+but **Go cannot target it** — there is no memory64 backend, and
+golang/go#63131 is about a *32-bit* `wasm32` for wasip1. For a Go engine
+there is no "raise the limit" option. The ~4 GiB linear-memory ceiling is
+a hard constraint to design under, not a tunable.
 
-### A. Publish pre-authored artifacts from CI *(highest confidence)*
-
-Tracked as tuna-os/tunaOS#673. CI already builds these images; have it also
-publish the authored EROFS rootfs (and optionally the customize overlay tar)
-as OCI artifacts. The browser then streams a ready-made blob to disk instead
-of unpacking 65 layers and authoring a filesystem in a 4 GiB address space.
-
-- Sidesteps the ceiling entirely rather than fighting it.
-- Makes browser and CI ISOs identical **by construction**, which is the actual
-  goal of #673.
-- Cost: the browser stops being a builder for those editions and becomes an
-  assembler. Custom package/flatpak layering would need a different path.
-
-### B. Compress the EROFS
-
-`erofs.go` writes `FLAT_PLAIN` — uncompressed — so a 2.17 GB `marlin:gnome`
-image becomes a **7.4 GB** ISO. EROFS supports lz4/zstd compressed clusters.
-
-- Attacks the problem from both ends: smaller working set *and* far smaller
-  ISOs (bandwidth matters, R2 grouping exists precisely to limit it).
-- Does **not** on its own prove the 4 GiB peak goes away — that depends on the
-  unknown above.
-- Cost: implementing Z_EROFS compressed-cluster layout is real work.
-
-### C. Reduce the in-memory tree
-
-If instrumentation points at the inode/node structures:
-
-- Drop `byPath` — it duplicates the whole path space; parent pointers already
-  exist.
-- Intern or elide `dirData`: regenerate each directory's dirents at write time
-  instead of retaining all of them.
-- Consider a disk-backed (OPFS) inode table for very large trees.
-
-Cheapest if the tree is the culprit, useless if it is not. **Measure first.**
-
-### D. Memory64 — *do not pursue*
-
-Ruled out already, recorded so nobody re-investigates. Browsers do ship
-Memory64 (Chrome M133; Wasm 3.0), **but Go cannot target it** — there is no
-memory64 backend, and golang/go#63131 is about a *32-bit* `wasm32` for wasip1.
-For a Go engine there is no "raise the limit" option.
-
----
-
-## Constraints to respect
+**Wasm linear memory only grows.** It is never returned to the host, so
+transient peaks are permanent for the life of the module. Anything that
+briefly holds content, even if promptly freed, raises the high-water mark
+for good.
 
 **Firefox is materially worse.** Go's js/wasm transport falls back to
 `arrayBuffer()` when the browser lacks streaming response bodies — i.e.
-Firefox — buffering **each layer body whole** into linear memory on top of
-everything else. Any "largest buildable image" figure is Chromium-only.
+Firefox — buffering each layer body whole into linear memory. Any
+"largest buildable image" figure is Chromium-only.
 
 **`await()` in `cmd/tbwasm/opfsstore.go` has no timeout.** It blocks on
 `<-done` for a JS promise that may never settle — the same unbreakable-wait
-class as the fetch bug fixed in #157, but in our own code. Worth fixing while
-in here.
+class as the fetch bug fixed in #157, but in our own code. Deliberately
+*not* bundled into this fix: mixing an unbreakable-wait change into an OOM
+change means a red run cannot tell you which one caused it.
 
-**Multi-extent ISO9660 is done** (#160). Files >4 GiB can now be *written* by
-the pure-Go path, verified against a real 5 GiB image with xorriso. That was
-the other web-builder blocker; #156 is the remaining one. They are
-independent — a 7.4 GB ISO still cannot be assembled inside a 4 GiB address
-space no matter how well it is written out.
+**Multi-extent ISO9660 is done** (#160) and independent. Files >4 GiB can
+be written by the pure-Go path, verified against a real 5 GiB image with
+xorriso.
+
+**The two-bug split in `iso-builder`'s `ci.yml` header still stands.** The
+layer-stall hang (#157) killed large editions *before* they reached
+authoring, so there was only ever **one** OOM datapoint — `flounder:xfce`,
+an edition that does have a live-overlay tag. "8 of 9 red" was never 8
+instances of this bug.
+
+---
+
+## Next walls (distinct from the ceiling — do not conflate)
+
+Neither is a wasm32 problem, and neither shows up in `tboxWasmMB()`.
+
+**OPFS quota.** Peak origin-storage usage is now base + post + authored
+EROFS simultaneously — roughly 2.4 + 2.6 + 5 GB for `flounder:xfce`
+against the ~10.7 GB the app reports free. Larger editions will exceed it.
+The layer and post arenas cannot simply be dropped after authoring: the
+ISO write still reads kernel and initramfs bodies out of them.
+
+**The headless ISO sink.** `app.js` uses `showSaveFilePicker` when it can,
+but with `?autodl` (and in any browser lacking the File System Access
+API) it accumulates the whole ISO into `chunks[]` and then a `Blob` — in
+**JS** heap. A multi-GB ISO there will present as an unexplained tab death
+with no Go panic and no memory-guard trip, because the memory guard only
+samples wasm linear memory.
+
+**Uncompressed EROFS.** `erofs.go` writes `FLAT_PLAIN`, so a 2.17 GB
+`marlin:gnome` becomes a 7.4 GB ISO. Z_EROFS lz4/zstd clusters would cut
+both the ISO size and the OPFS peak above. Real work, but it now attacks
+the *remaining* problems rather than a misdiagnosed one.
+
+**Publishing pre-authored artifacts from CI** (tunaOS#673) remains the
+strategic option: have CI publish the authored EROFS as an OCI artifact so
+the browser assembles rather than builds. It sidesteps quota and sink
+alike, at the cost of the browser no longer being a builder for those
+editions.
 
 ---
 
@@ -187,9 +150,11 @@ space no matter how well it is written out.
 Runners are frequently saturated; do not debug this through CI.
 
 ```bash
+GOOS=js GOARCH=wasm go build -o iso-builder/app/public/tbox.wasm ./cmd/tbwasm
+
 rsync -az --exclude node_modules --exclude .git app e2e himachal:/var/tmp/isob/
 
-ssh himachal 'podman run --rm --shm-size=2g \
+ssh himachal 'mkdir -p /var/tmp/isob/home && cd /var/tmp/isob && podman run --rm --shm-size=2g \
   -v /var/tmp/isob:/w:z -w /w/e2e \
   -e TBOX_E2E_FULL=1 -e TBOX_E2E_IMAGE=tuna-os/flounder:xfce \
   -e HOME=/w/home \
@@ -198,24 +163,30 @@ ssh himachal 'podman run --rm --shm-size=2g \
 ```
 
 `flounder:xfce` is the right test case: at 1.04 GB compressed it is the
-*smallest* edition, and it still OOMs — so it fails fast and proves the
-problem is not raw image size. The `@full` heartbeat prints
-`[stage] <phase> wasm=<N> MB` every 30s, which is how the memory curve above
-was captured.
+*smallest* edition, it still OOMed, and it is one of the 39 editions with
+a `live-overlay` tag — so it exercises the bug and fails fast.
 
-`--shm-size=2g` matters; a small `/dev/shm` makes chromium fail for unrelated
-reasons. `HOME` must be on the mounted volume because Chrome derives the OPFS
-quota from that partition's free space.
+`--shm-size=2g` matters; a small `/dev/shm` makes chromium fail for
+unrelated reasons. `HOME` must be on the mounted volume because Chrome
+derives the OPFS quota from that partition's free space.
+
+The `@full` spec forwards page console to the run log, so `reportMem`'s
+`tbox: phase=...` lines land there next to the 30s
+`[stage] <phase> wasm=<N> MB` heartbeat.
 
 Interactive alternative: `corral`'s `tuna-lab iso <ref>` builds an ISO and
 boots it with a console. Note corral's qemu unit has **no `-serial`**, so
-guest serial is not captured there — fine for looking at a desktop, useless
-for a boot that prints nothing.
+guest serial is not captured there — fine for looking at a desktop,
+useless for a boot that prints nothing.
 
 ---
 
 ## Definition of done
 
-`flounder:xfce` and `marlin:kde-cachyos` both build an ISO in the browser and
-pass `@full` in `iso-builder`'s `full-matrix`, with peak `tboxWasmMB()`
-reported and comfortably under 4096.
+`flounder:xfce` and `marlin:kde-cachyos` both build an ISO in the browser
+and pass `@full` in `iso-builder`'s `full-matrix`, with peak
+`tboxWasmMB()` reported and comfortably under 4096.
+
+`marlin:kde-cachyos` has no `live-overlay` tag, so it never hit this bug;
+it was blocked by the layer stall (#157). It is the check that nothing
+*else* holds gigabytes.
