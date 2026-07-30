@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/tuna-os/tacklebox/internal/oci"
 	"io"
 	"strconv"
 	"strings"
@@ -13,10 +12,16 @@ import (
 )
 
 // opfsArena is a BlobStore over ONE append-only OPFS file: refs are
-// "a:<offset>:<len>". This is the streaming answer to MemStore — the
-// wasm heap holds chunk buffers and tree metadata only, while multi-GB
+// "<prefix>:<offset>:<len>". This is the streaming answer to MemStore —
+// the wasm heap holds chunk buffers and tree metadata only, while multi-GB
 // image content lives in origin-private storage (the same pattern the
 // Android/GrapheneOS web flashers use: stream, never hold).
+//
+// Each arena mints refs under its own prefix, and hybridStore routes reads
+// back by that prefix. This is not cosmetic: two arenas both minting "a:"
+// would hand identical refs to different files, and a body would be read
+// from the wrong one at the same offset — a silently corrupt EROFS with no
+// error anywhere.
 //
 // Writes go through a single FileSystemWritableFileStream kept open for
 // the whole unpack (one open/close per image, not per blob — 45k blob
@@ -29,6 +34,7 @@ type opfsArena struct {
 	writer js.Value // FileSystemWritableFileStream (valid until Seal)
 	file   js.Value // File snapshot for reads (refreshed on Seal)
 	name   string
+	prefix string // ref namespace, e.g. "a"
 	off    int64
 	sealed bool
 }
@@ -73,7 +79,7 @@ func jsErrString(v js.Value) string {
 	return v.String()
 }
 
-func newOpfsArena(name string) (*opfsArena, error) {
+func newOpfsArena(name, prefix string) (*opfsArena, error) {
 	nav := js.Global().Get("navigator")
 	root, err := await(nav.Get("storage").Call("getDirectory"))
 	if err != nil {
@@ -89,7 +95,7 @@ func newOpfsArena(name string) (*opfsArena, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &opfsArena{dir: root, handle: h, writer: w, name: name}, nil
+	return &opfsArena{dir: root, handle: h, writer: w, name: name, prefix: prefix}, nil
 }
 
 func (a *opfsArena) Put(r io.Reader) (string, int64, error) {
@@ -119,13 +125,18 @@ func (a *opfsArena) Put(r io.Reader) (string, int64, error) {
 		}
 	}
 	a.off += n
-	return fmt.Sprintf("a:%d:%d", start, n), n, nil
+	return fmt.Sprintf("%s:%d:%d", a.prefix, start, n), n, nil
 }
 
-// Seal flushes the writer so reads see all content. Put becomes invalid.
+// Seal flushes the writer so reads see all content. Put becomes invalid
+// until reopen().
 func (a *opfsArena) Seal() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.sealLocked()
+}
+
+func (a *opfsArena) sealLocked() error {
 	if a.sealed {
 		return nil
 	}
@@ -141,25 +152,50 @@ func (a *opfsArena) Seal() error {
 	return nil
 }
 
+// reopen resumes appending after a Seal. A FileSystemWritableFileStream
+// always starts at position 0, so keepExistingData alone would overwrite
+// the arena from the front — the seek is what makes this an append.
+func (a *opfsArena) reopenLocked() error {
+	if !a.sealed {
+		return nil
+	}
+	opts := js.Global().Get("Object").New()
+	opts.Set("keepExistingData", true)
+	w, err := await(a.handle.Call("createWritable", opts))
+	if err != nil {
+		return err
+	}
+	if _, err := await(w.Call("seek", float64(a.off))); err != nil {
+		return err
+	}
+	a.writer = w
+	a.sealed = false
+	return nil
+}
+
 func (a *opfsArena) Open(ref string) (io.ReadCloser, error) {
 	parts := strings.Split(ref, ":")
-	if len(parts) != 3 || parts[0] != "a" {
-		return nil, fmt.Errorf("bad arena ref %q", ref)
+	if len(parts) != 3 || parts[0] != a.prefix {
+		return nil, fmt.Errorf("bad %s-arena ref %q", a.prefix, ref)
 	}
 	off, _ := strconv.ParseInt(parts[1], 10, 64)
 	ln, _ := strconv.ParseInt(parts[2], 10, 64)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.sealed {
-		// Reads before Seal (EnsureLiveUser mid-pipeline): flush via
-		// close+reopen-append is not supported by OPFS streams, so
-		// snapshot through a temporary seal-and-reopen is avoided by
-		// keeping such reads out of the hot path; snapshot the file lazily.
-		f, err := await(a.handle.Call("getFile"))
-		if err != nil {
+		// Read-before-seal is a real path, not a corner: the live overlay
+		// rewrites /etc/{passwd,shadow,group,gshadow} and EnsureLiveUser
+		// reads them straight back. Writes to an open writable stream go to
+		// a swap file and are NOT visible to getFile() until close(), so
+		// snapshotting alone would hand back stale or short bytes with no
+		// error. Seal and reopen-append instead — correct, and rare enough
+		// that the extra round-trip does not matter.
+		if err := a.sealLocked(); err != nil {
 			return nil, err
 		}
-		a.file = f
+		if err := a.reopenLocked(); err != nil {
+			return nil, err
+		}
 	}
 	slice := a.file.Call("slice", float64(off), float64(off+ln))
 	return &opfsSliceReader{blob: slice, size: ln}, nil
@@ -208,23 +244,73 @@ func (r *opfsSliceReader) Read(p []byte) (int, error) {
 
 func (r *opfsSliceReader) Close() error { return nil }
 
-// hybridStore: reads dispatch by ref prefix; writes after the unpack
-// (tree surgery like EnsureLiveUser — small files) land in memory.
+// hybridStore fronts two OPFS arenas and dispatches reads by ref prefix:
+// "a:" — layer bodies written during Unpack; "o:" — everything written
+// after it.
+//
+// Post-unpack writes used to land in an oci.MemStore, on the assumption
+// that they were only ever EnsureLiveUser's handful of /etc edits. They
+// are not. GraftLiveOverlay unpacks the published live-overlay delta
+// through this same store, and for a desktop edition that delta is the
+// installer flatpak payload — 2.49 GiB across 42k files under var/lib/
+// for flounder:xfce, none of it caught by Client.SkipBodies. In a wasm32
+// address space with a hard ~4 GiB ceiling that was the OOM
+// (tacklebox#156): the base unpack streamed to OPFS exactly as designed,
+// then the overlay poured 2.5 GiB straight back into linear memory.
+//
+// So there is no memory path here at all any more. A blob store that
+// holds bodies in the heap is precisely the thing this engine cannot
+// afford, and leaving one wired up as a fallback would just let the bug
+// grow back the next time something unpacks through the post arena.
 type hybridStore struct {
-	arena *opfsArena
-	mem   *oci.MemStore
+	arena *opfsArena // "a:" — sealed once Unpack finishes
+	post  *opfsArena // "o:" — created on first post-unpack write
 }
 
 func (h *hybridStore) Put(r io.Reader) (string, int64, error) {
-	ref, n, err := h.mem.Put(r)
-	return "m/" + ref, n, err
+	if h.post == nil {
+		a, err := newOpfsArena("tbox-post.bin", "o")
+		if err != nil {
+			return "", 0, fmt.Errorf("post-unpack arena: %w", err)
+		}
+		h.post = a
+	}
+	// A read may have sealed it (see opfsArena.Open); resume appending.
+	h.post.mu.Lock()
+	if err := h.post.reopenLocked(); err != nil {
+		h.post.mu.Unlock()
+		return "", 0, err
+	}
+	h.post.mu.Unlock()
+	return h.post.Put(r)
 }
 
 func (h *hybridStore) Open(ref string) (io.ReadCloser, error) {
-	if strings.HasPrefix(ref, "m/") {
-		return h.mem.Open(strings.TrimPrefix(ref, "m/"))
+	if strings.HasPrefix(ref, "o:") {
+		if h.post == nil {
+			return nil, fmt.Errorf("post-arena ref %q with no post arena", ref)
+		}
+		return h.post.Open(ref)
 	}
 	return h.arena.Open(ref)
+}
+
+// seal makes every ref in both arenas readable and stops further writes —
+// call before WriteErofs, which reads bodies from both.
+func (h *hybridStore) seal() error {
+	if h.post == nil {
+		return nil
+	}
+	return h.post.Seal()
+}
+
+func (h *hybridStore) destroy() {
+	if h.arena != nil {
+		h.arena.Destroy()
+	}
+	if h.post != nil {
+		h.post.Destroy()
+	}
 }
 
 // arenaWriter appends raw bytes to the arena file (EROFS authoring).
