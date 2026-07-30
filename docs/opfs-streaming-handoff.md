@@ -103,9 +103,15 @@ class as the fetch bug fixed in #157, but in our own code. Deliberately
 *not* bundled into this fix: mixing an unbreakable-wait change into an OOM
 change means a red run cannot tell you which one caused it.
 
-**Multi-extent ISO9660 is done** (#160) and independent. Files >4 GiB can
-be written by the pure-Go path, verified against a real 5 GiB image with
-xorriso.
+**Multi-extent ISO9660 (#160) is an OPEN PR, and it is not independent —
+it is the next hard blocker.** An earlier revision of this doc described
+it as done, which reads as merged; it is not. Fixing the ceiling is
+exactly what lets a build reach ISO assembly, where a desktop edition's
+~4.9 GB EROFS rootfs immediately trips
+`exceeds the single-extent ISO9660 limit (4 GiB)`. #156 and #160 are
+therefore sequential: neither alone produces an ISO for any desktop
+edition. Merging #160 makes the full chain write a 5.36 GB image
+(`TestIsoBrowserShapeOver4GiB`).
 
 **The two-bug split in `iso-builder`'s `ci.yml` header still stands.** The
 layer-stall hang (#157) killed large editions *before* they reached
