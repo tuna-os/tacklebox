@@ -290,9 +290,26 @@ func buildIso(_ js.Value, args []js.Value) any {
 		if err != nil {
 			return nil, fmt.Errorf("no initramfs in image: %w", err)
 		}
-		sdSrc, _, err := blob("usr/lib/systemd/boot/efi/systemd-bootx64.efi")
-		if err != nil {
-			return nil, fmt.Errorf("image ships no systemd-boot (EL10-style images need a supplied one): %w", err)
+		// Debian ships ONLY systemd-bootx64.efi.signed — the sbat-signed PE,
+		// not a detached signature, so it boots as BOOTX64.EFI unchanged.
+		// Fedora-family images ship the unsigned name. Preferring the
+		// unsigned one and falling back keeps images that carry both on
+		// their existing artifact. Nothing Debian-based had ever reached
+		// this line before tacklebox#156 was fixed: the OOM in EROFS
+		// authoring came first, so a hard error here read as "no Debian
+		// edition builds" rather than "wrong filename".
+		var sdSrc func() (io.ReadCloser, error)
+		for _, cand := range []string{
+			"usr/lib/systemd/boot/efi/systemd-bootx64.efi",
+			"usr/lib/systemd/boot/efi/systemd-bootx64.efi.signed",
+		} {
+			if src, _, berr := blob(cand); berr == nil {
+				sdSrc = src
+				break
+			}
+		}
+		if sdSrc == nil {
+			return nil, fmt.Errorf("image ships no systemd-boot at usr/lib/systemd/boot/efi/systemd-bootx64.efi[.signed] (EL10-style images need a supplied one)")
 		}
 
 		kargs := fmt.Sprintf(

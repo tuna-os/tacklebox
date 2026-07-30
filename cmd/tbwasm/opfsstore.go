@@ -101,8 +101,12 @@ func newOpfsArena(name, prefix string) (*opfsArena, error) {
 func (a *opfsArena) Put(r io.Reader) (string, int64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.sealed {
-		return "", 0, fmt.Errorf("arena sealed")
+	// A read may have sealed this arena to make its bytes visible (see
+	// Open); resume appending. Done under the same lock as the write so
+	// there is no window where another goroutine sees a reopened-but-not-
+	// yet-written arena.
+	if err := a.reopenLocked(); err != nil {
+		return "", 0, err
 	}
 	start := a.off
 	buf := make([]byte, 1<<20)
@@ -275,13 +279,6 @@ func (h *hybridStore) Put(r io.Reader) (string, int64, error) {
 		}
 		h.post = a
 	}
-	// A read may have sealed it (see opfsArena.Open); resume appending.
-	h.post.mu.Lock()
-	if err := h.post.reopenLocked(); err != nil {
-		h.post.mu.Unlock()
-		return "", 0, err
-	}
-	h.post.mu.Unlock()
 	return h.post.Put(r)
 }
 
