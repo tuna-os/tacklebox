@@ -22,6 +22,29 @@ import (
 // stays small, the leak is on the body/store side; if it explodes, it is
 // the Node tree.
 //
+// Measured across the full iso-builder matrix, 2026-07-31:
+//
+//	edition           files    dirs   peak heap  peak sys
+//	sailfin:gnome     34712    5474        59MB     118MB
+//	flounder:xfce     46681    5523        82MB     142MB
+//	marlin:niri       63704    7324        57MB     134MB
+//	grouper:gnome     74519   11381       100MB     167MB
+//	albacore:gnome   184237   10461       117MB     204MB
+//	yellowfin:gnome  184627   10745       129MB     204MB
+//	skipjack:gnome   193272   10761       120MB     220MB
+//	bonito:kde       262068   16408       146MB     240MB
+//	guppy:gnome      263756   18646       183MB     261MB
+//
+// Two things fall out. The tree never costs more than 261 MB even for the
+// largest edition, so it is not what exhausts wasm32 for any of them. And
+// flounder:xfce (46,681 files) was the one edition that ever completed in
+// the browser while marlin:niri (63,704) died — only 1.36x apart. The old
+// per-file allocation in opfsArena.Put put a threshold in that gap, which
+// is why seven of the nine sit on the failing side and why the CI comment
+// recorded "breaks 8 of 9".
+//
+// File count, not image size, is therefore the variable to sweep against.
+//
 // Network + multi-GB pull, so it is opt-in:
 //
 //	TBOX_MEMTEST=tuna-os/marlin:niri go test ./internal/oci -run UnpackPeakMemory -v -timeout 30m
