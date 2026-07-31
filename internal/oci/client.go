@@ -8,6 +8,7 @@
 package oci
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -49,6 +50,12 @@ type Client struct {
 	// ResumeAttempts bounds reconnects per layer. 0 means
 	// DefaultResumeAttempts.
 	ResumeAttempts int
+
+	// HeaderTimeout bounds how long a request may take to return response
+	// headers. 0 means DefaultHeaderTimeout. Distinct from StallTimeout,
+	// which governs a body that has already started: this one is what stops
+	// a *reopen* from hanging in the resume path itself.
+	HeaderTimeout time.Duration
 
 	tokenMu sync.Mutex
 	token   string
@@ -154,6 +161,28 @@ func (c *Client) getRange(repo, path, accept string, offset int64) (*http.Respon
 	if err != nil {
 		return nil, err
 	}
+	// Bound the *header* phase. resume.go explains why a body read cannot be
+	// interrupted on wasm and puts its guard above the reader — but a resume
+	// reopens the blob, and that reopen is a fresh request whose header phase
+	// CAN be cancelled, because js/wasm RoundTrip wires the AbortController to
+	// the request context around the fetch promise.
+	//
+	// Without this, a reopen that never returns headers wedges the build
+	// permanently and silently: resume() prints its message, calls open(), and
+	// never returns to the select that would have armed the next stall timer.
+	// One "resuming" line and then nothing, forever. albacore:gnome did exactly
+	// that at layer 44/65, flat at 109 MB for the full 5-minute watchdog window
+	// (iso-builder run 30602176842) — the stall guard was there, announced
+	// itself, and then hung in the recovery path it was supposed to drive.
+	//
+	// Only the header phase is bounded, and it must stay that way: the request
+	// context governs the body too, so a plain WithTimeout would tear a layer
+	// out mid-stream after the deadline. A layer takes minutes to read; that
+	// would trade a rare hang for a guaranteed failure. So the timer is stopped
+	// once headers land, and the cancel is handed to the body's Close.
+	ctx, cancel := context.WithCancel(context.Background())
+	headerTimer := time.AfterFunc(c.headerTimeout(), cancel)
+	req = req.WithContext(ctx)
 	if tok := c.bearer(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
@@ -164,7 +193,16 @@ func (c *Client) getRange(repo, path, accept string, offset int64) (*http.Respon
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 	resp, err := c.HTTP.Do(req)
+	// Stop reports false when the timer already fired, i.e. the cancel that
+	// aborted this request was ours. Naming that is the difference between
+	// "the registry is down" and "we gave up too early", which is exactly the
+	// distinction the silent wedge destroyed.
+	timedOut := !headerTimer.Stop()
 	if err != nil {
+		cancel()
+		if timedOut {
+			return nil, fmt.Errorf("%w: GET %s: no response headers within %s", ErrStalled, path, c.headerTimeout())
+		}
 		return nil, err
 	}
 	want := http.StatusOK
@@ -173,12 +211,45 @@ func (c *Client) getRange(repo, path, accept string, offset int64) (*http.Respon
 	}
 	if resp.StatusCode != want {
 		resp.Body.Close()
+		cancel()
 		if offset > 0 && resp.StatusCode == http.StatusOK {
 			return nil, fmt.Errorf("GET %s: resume from %d unsupported (got 200, want 206)", path, offset)
 		}
 		return nil, fmt.Errorf("GET %s: HTTP %d", path, resp.StatusCode)
 	}
+	// Headers are in, so the deadline has done its job. The context must
+	// outlive this function for the body to stay readable, so cancel travels
+	// with Close rather than a defer — a defer here would cancel the request
+	// the caller is about to read from.
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
 	return resp, nil
+}
+
+// cancelOnClose ties a request context's cancel to the body's lifetime, so
+// the context is released exactly when the caller is done with the stream and
+// not a moment earlier.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
+}
+
+// DefaultHeaderTimeout bounds how long a blob request may take to produce
+// response headers. Generous relative to a healthy registry, because the cost
+// of being wrong in the tight direction is a failed build on a slow link,
+// while the cost of having no bound at all is an unbreakable hang.
+const DefaultHeaderTimeout = 60 * time.Second
+
+func (c *Client) headerTimeout() time.Duration {
+	if c.HeaderTimeout > 0 {
+		return c.HeaderTimeout
+	}
+	return DefaultHeaderTimeout
 }
 
 // ResolveManifest fetches ref's manifest, following one level of index
