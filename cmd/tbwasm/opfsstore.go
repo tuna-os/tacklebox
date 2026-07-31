@@ -37,6 +37,12 @@ type opfsArena struct {
 	prefix string // ref namespace, e.g. "a"
 	off    int64
 	sealed bool
+
+	// Copy scratch, allocated once per arena and reused by every Put.
+	// See the comment in Put — these being per-call is what exhausted
+	// wasm32 on a 63k-file image.
+	buf []byte   // Go-side read buffer
+	u8  js.Value // JS-side staging array, same length as buf
 }
 
 // await blocks the calling goroutine on a JS promise.
@@ -109,14 +115,36 @@ func (a *opfsArena) Put(r io.Reader) (string, int64, error) {
 		return "", 0, err
 	}
 	start := a.off
-	buf := make([]byte, 1<<20)
+	// Scratch is per-ARENA, not per-Put. It used to be a fresh
+	// `make([]byte, 1<<20)` plus a fresh Uint8Array per chunk, which looks
+	// harmless because the GC reclaims both — and natively it is: unpacking
+	// marlin:niri through a discarding store peaks at 57 MB heap.
+	//
+	// On wasm32 it is fatal. A 1 MiB allocation is a large object, so every
+	// file gets its own span, and WebAssembly.Memory can only ever grow —
+	// go's runtime never returns linear memory to the host. Across
+	// marlin:niri's 63,704 files the fragmentation is permanent and the
+	// arena climbed to `out of memory ... 4279042048 in use` partway
+	// through the layer loop, having been at 71 MB nine layers earlier.
+	// flounder:xfce survived only because 42,177 files fragment less.
+	//
+	// Reuse is safe: Put holds a.mu for its whole body, and each write is
+	// awaited, so the stream has taken the bytes before the buffer is
+	// touched again.
+	if a.buf == nil {
+		a.buf = make([]byte, 1<<20)
+		a.u8 = js.Global().Get("Uint8Array").New(len(a.buf))
+	}
 	var n int64
 	for {
-		k, err := r.Read(buf)
+		k, err := r.Read(a.buf)
 		if k > 0 {
-			u8 := js.Global().Get("Uint8Array").New(k)
-			js.CopyBytesToJS(u8, buf[:k])
-			if _, werr := await(a.writer.Call("write", u8)); werr != nil {
+			js.CopyBytesToJS(a.u8, a.buf[:k])
+			chunk := a.u8
+			if k < len(a.buf) {
+				chunk = a.u8.Call("subarray", 0, k)
+			}
+			if _, werr := await(a.writer.Call("write", chunk)); werr != nil {
 				return "", 0, werr
 			}
 			n += int64(k)
