@@ -28,6 +28,19 @@ import (
 var initrdOnDisk string
 var sdBootDisk string
 
+// mustStatSize is the declared size of an ISO input. It exits rather than
+// returning, because every caller is building the layout and there is no
+// useful way to continue with an unknown size — the previous code wrote
+// `st, _ := os.Stat(p)` and would have nil-dereferenced on a missing file
+// instead of saying which one.
+func mustStatSize(path string) int64 {
+	st, err := os.Stat(path)
+	if err != nil {
+		log.Fatalf("iso input: %v", err)
+	}
+	return st.Size()
+}
+
 func main() {
 	var (
 		image      = flag.String("image", "", "image as <repo>:<tag>, e.g. tuna-os/sailfin:kde")
@@ -291,23 +304,29 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		espSt, _ := os.Stat(espPath)
-		sfsSt, _ := os.Stat(sfsPath)
 		kn := root.Lookup("usr/lib/modules/" + kver + "/vmlinuz")
-		var initrdSize int64
-		if *initrd != "" {
-			ist, _ := os.Stat(*initrd)
-			initrdSize = ist.Size()
-		} else {
-			initrdSize = root.Lookup("usr/lib/modules/" + kver + "/initramfs.img").Size
-		}
-		sdbSt, _ := os.Stat(sdBootDisk)
+		// Every size here must come from the thing that is actually
+		// streamed. WriteIso9660 computes the whole layout from declared
+		// sizes up front and then streams each source once, so a size that
+		// disagrees with its source is not caught until gigabytes are
+		// already on disk:
+		//
+		//   initrd.img: declared 53383528 bytes, source yielded 54859624
+		//
+		// which is what this used to do. initrdSource is the overlay+stock
+		// concatenation whenever --initrd is absent, but the size was
+		// re-derived from the stock initramfs node — so it under-declared by
+		// exactly the overlay segment (1,476,096 bytes). Two expressions for
+		// one fact, free to drift, and the xz module fix drifted them.
+		//
+		// initrdOnDisk is by construction the file initrdSource reads in
+		// both branches, so stat that and there is only one expression left.
 		inputs := []purefs.IsoInput{
-			{Path: "/EFI/efi.img", Size: espSt.Size(), Source: purefs.FileSource(espPath)},
-			{Path: "/EFI/BOOT/BOOTX64.EFI", Size: sdbSt.Size(), Source: purefs.FileSource(sdBootDisk)},
+			{Path: "/EFI/efi.img", Size: mustStatSize(espPath), Source: purefs.FileSource(espPath)},
+			{Path: "/EFI/BOOT/BOOTX64.EFI", Size: mustStatSize(sdBootDisk), Source: purefs.FileSource(sdBootDisk)},
 			{Path: kernelPath, Size: kn.Size, Source: blob("usr/lib/modules/" + kver + "/vmlinuz")},
-			{Path: initrdPath, Size: initrdSize, Source: initrdSource},
-			{Path: "/LiveOS/" + sfsName, Size: sfsSt.Size(), Source: purefs.FileSource(sfsPath)},
+			{Path: initrdPath, Size: mustStatSize(initrdOnDisk), Source: initrdSource},
+			{Path: "/LiveOS/" + sfsName, Size: mustStatSize(sfsPath), Source: purefs.FileSource(sfsPath)},
 		}
 		if err := purefs.WriteIso9660(f, *label, inputs, "/EFI/efi.img"); err != nil {
 			log.Fatal(err)
