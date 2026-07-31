@@ -2,6 +2,7 @@ package install
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -44,6 +45,48 @@ func TestInitramfsScript(t *testing.T) {
 	// The Sprintf %%s escape must come out as a literal %s for printf.
 	if !strings.Contains(s, `printf '%s\n'`) {
 		t.Errorf("script printf format mangled:\n%s", s)
+	}
+}
+
+// TestInitramfsScriptOmitsOnlyMissingModules pins the per-image omit list.
+// A baked-in `--omit "tpm2-tss pcsc"` breaks Fedora/CentOS images, which
+// ship both modules and force-add clevis / systemd-cryptsetup on top of
+// them: the omit makes those dependents "cannot be installed" and dracut
+// exits 1. Dropping the omit entirely breaks Gentoo images, which ship
+// neither. The probe is what keeps both working.
+func TestInitramfsScriptOmitsOnlyMissingModules(t *testing.T) {
+	s := initramfsScript(IsoInitramfsModules)
+	if strings.Contains(s, `--omit "tpm2-tss pcsc"`) {
+		t.Errorf("omit list must be probed per image, not baked in:\n%s", s)
+	}
+	for _, want := range []string{
+		"for m in tpm2-tss pcsc; do",
+		`/usr/lib/dracut/modules.d/[0-9][0-9]"$m"`,
+		`if [ -n "$omit" ]; then run_dracut --omit "$omit"; else run_dracut; fi`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("script missing %q:\n%s", want, s)
+		}
+	}
+}
+
+// TestInitramfsScriptIsValidShell catches quoting or Sprintf-escape damage
+// in the generated script before it reaches a container, where the only
+// symptom would be a build failing deep inside podman run.
+func TestInitramfsScriptIsValidShell(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh on PATH")
+	}
+	for name, mods := range map[string][]string{
+		"iso":   IsoInitramfsModules,
+		"block": BlockInitramfsModules,
+	} {
+		cmd := exec.Command(sh, "-n")
+		cmd.Stdin = strings.NewReader(initramfsScript(mods))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("%s script is not valid shell: %v\n%s\n%s", name, err, out, initramfsScript(mods))
+		}
 	}
 }
 

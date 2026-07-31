@@ -160,6 +160,15 @@ var embeddedModulesDigest = sync.OnceValue(func() string {
 //   - all modules already present → copy the stock initramfs out
 //     (cached so subsequent builds skip the container run entirely)
 //   - any missing → dracut rebuild with the modules added
+//
+// The tpm2-tss/pcsc omit list is computed inside the image, not baked in,
+// because a blanket --omit is fatal in one direction or the other. Gentoo
+// images ship neither module, and dracut aborts with "Module 'tpm2-tss'
+// cannot be installed" when the image's dracut config force-adds it.
+// Fedora/CentOS images do ship both, and force-add clevis,
+// systemd-cryptsetup and systemd-pcrphase on top of them — omitting
+// tpm2-tss there turns those dependents into hard errors instead
+// ("Module 'clevis' cannot be installed"). So omit only what is absent.
 func initramfsScript(modules []string) string {
 	modList := strings.Join(modules, " ")
 	return fmt.Sprintf(`set -eu
@@ -187,8 +196,19 @@ if ! command -v dracut >/dev/null 2>&1; then
   echo "image lacks dracut; cannot inject$missing — bake the modules into the image and set skip_initramfs_rebuild" >&2
   exit 3
 fi
-dracut --force --no-hostonly --reproducible --add "%s" --omit "tpm2-tss pcsc" --kver "$kver" /tbox-out/initramfs.img
-echo "TBOX_INITRAMFS=rebuilt, added:$missing"
+omit=""
+for m in tpm2-tss pcsc; do
+  present=""
+  for d in /usr/lib/dracut/modules.d/[0-9][0-9]"$m" /lib/dracut/modules.d/[0-9][0-9]"$m"; do
+    if [ -d "$d" ]; then present=1; fi
+  done
+  if [ -z "$present" ]; then omit="$omit $m"; fi
+done
+run_dracut() {
+  dracut --force --no-hostonly --reproducible --add "%s" --kver "$kver" "$@" /tbox-out/initramfs.img
+}
+if [ -n "$omit" ]; then run_dracut --omit "$omit"; else run_dracut; fi
+echo "TBOX_INITRAMFS=rebuilt, added:$missing${omit:+, omitted:$omit}"
 `, modList, modList, modList, modList)
 }
 
