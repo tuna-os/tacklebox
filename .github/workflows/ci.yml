@@ -120,6 +120,31 @@ jobs:
             systemd-boot systemd-boot-efi gdisk podman \
             qemu-system-x86 ovmf
 
+      # Runner image ubuntu24/20260726 bumped its Podman 4.9.3 -> 5.8.4 but
+      # left crun at noble's 1.14.1. Podman >= 5 stamps `ociVersion: 1.2.0`
+      # into config.json, and crun <= 1.14 rejects any version that is not
+      # 1.0.x, so every `podman run` dies before the container starts with
+      # "OCI runtime error: crun: unknown version specified" (exit 126).
+      # crun 1.15 dropped that check and runc never had it, so point podman
+      # at runc for exactly that pairing: a no-op on images whose crun and
+      # podman already agree.
+      - name: match podman's OCI runtime to its spec version
+        run: |
+          podman_ver=$(podman --version | awk '{print $3}')
+          crun_ver=$(crun --version 2>/dev/null | awk 'NR==1{print $3}')
+          echo ">>> podman=$podman_ver crun=${crun_ver:-absent}"
+          if dpkg --compare-versions "$podman_ver" ge 5 &&
+             [ -n "$crun_ver" ] && dpkg --compare-versions "$crun_ver" lt 1.15; then
+            command -v runc >/dev/null || {
+              echo "::error::crun $crun_ver cannot run podman $podman_ver's spec and there is no runc to fall back to"
+              exit 1
+            }
+            sudo install -d /etc/containers/containers.conf.d
+            printf '[engine]\nruntime = "runc"\n' |
+              sudo tee /etc/containers/containers.conf.d/10-tbox-runc.conf
+            podman info --format '>>> OCI runtime: {{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}'
+          fi
+
       - name: build tacklebox
         run: go build -o tacklebox ./cmd/tacklebox
 
@@ -286,6 +311,24 @@ jobs:
             xorriso mtools squashfs-tools dosfstools \
             systemd-boot systemd-boot-efi podman \
             qemu-system-x86 ovmf
+
+      # Same crun/podman spec-version mismatch as verify-smoke; see there.
+      - name: match podman's OCI runtime to its spec version
+        run: |
+          podman_ver=$(podman --version | awk '{print $3}')
+          crun_ver=$(crun --version 2>/dev/null | awk 'NR==1{print $3}')
+          echo ">>> podman=$podman_ver crun=${crun_ver:-absent}"
+          if dpkg --compare-versions "$podman_ver" ge 5 &&
+             [ -n "$crun_ver" ] && dpkg --compare-versions "$crun_ver" lt 1.15; then
+            command -v runc >/dev/null || {
+              echo "::error::crun $crun_ver cannot run podman $podman_ver's spec and there is no runc to fall back to"
+              exit 1
+            }
+            sudo install -d /etc/containers/containers.conf.d
+            printf '[engine]\nruntime = "runc"\n' |
+              sudo tee /etc/containers/containers.conf.d/10-tbox-runc.conf
+            podman info --format '>>> OCI runtime: {{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}'
+          fi
 
       - name: build tacklebox
         run: go build -o tacklebox ./cmd/tacklebox
