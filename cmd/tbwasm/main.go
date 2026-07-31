@@ -148,8 +148,17 @@ func introspect(_ js.Value, args []js.Value) any {
 			return nil, err
 		}
 		gStore = &hybridStore{arena: arena}
+		// Sample inside the layer loop, not just at the end. marlin:niri
+		// died here at 4.28 GB having reported 71 MB nine layers earlier,
+		// and a single end-of-phase sample cannot tell "grew steadily"
+		// from "one layer did it" — which is the difference between a
+		// leak and a single pathological entry. Every 8 layers keeps the
+		// log short while still bracketing any jump to one layer.
 		root, err := c.Unpack(ref, m, arena, func(i, n int) {
 			emitProgress("unpack", i+1, n)
+			if i%8 == 0 {
+				reportMem(fmt.Sprintf("unpack-layer-%d", i))
+			}
 		})
 		if err != nil {
 			return nil, err
