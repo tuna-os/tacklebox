@@ -206,9 +206,7 @@ func (c *Client) getRange(repo, path, accept string, offset int64) (*http.Respon
 	timedOut := !headerTimer.Stop()
 	if err != nil {
 		cancel()
-		if offset > 0 {
-			c.invalidateToken()
-		}
+		c.invalidateToken()
 		if timedOut {
 			return nil, fmt.Errorf("%w: GET %s: no response headers within %s", ErrStalled, path, c.headerTimeout())
 		}
@@ -221,8 +219,8 @@ func (c *Client) getRange(repo, path, accept string, offset int64) (*http.Respon
 	if resp.StatusCode != want {
 		resp.Body.Close()
 		cancel()
+		c.invalidateToken()
 		if offset > 0 {
-			c.invalidateToken()
 			if resp.StatusCode == http.StatusOK {
 				return nil, fmt.Errorf("GET %s: resume from %d unsupported (got 200, want 206)", path, offset)
 			}
