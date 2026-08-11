@@ -177,6 +177,23 @@ native CLI over that core; `cmd/tbwasm` compiles the same code to
 WebAssembly for the [browser builder](https://tunaos-iso-builder.trogdor30001.workers.dev)
 (see the tunaOS repo's `docs/iso-builder-guide.md` for its user guide).
 
+`purebuild --ddi <url-or-dir> [--ddi-stem <stem>]` is a second builder
+input alongside OCI images: a systemd-sysupdate v1 artifact set (mkosi
+`SplitArtifacts`, e.g. frostyard/snosi's native A/B channels) publishing a
+UKI plus the root partition as a raw EROFS image. That root is the live
+filesystem verbatim, so the pull → unpack → EROFS-author pipeline is
+skipped entirely — the build fetches the manifest, resolves the newest
+complete release, extracts the UKI's kernel/initrd, prepends the tbox
+live scripts, and wraps. **Verity is deliberately dropped for live media**:
+the live overlay makes the root writable anyway and the live path mounts
+the EROFS by file, not by GPT partition — a real integrity downgrade vs
+the installed system, and the reason live DDI boot uses tbox live kargs
+instead of the UKI's baked verity cmdline. `cmd/tbwasm` exposes the same
+path as `tboxBuildDdiIso(opts, onChunk)` for the browser builder. The
+DDI path is smoked against the live cayo channel by
+`scripts/ddi-smoke.sh` (build + structural verification); its CI wiring
+(daily schedule) is documented in `docs/ddi-smoke-ci.md`.
+
 ## 9. Troubleshooting
 
 | Symptom | Likely cause |
