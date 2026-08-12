@@ -27,6 +27,7 @@ command -v getarg > /dev/null || . /lib/dracut-lib.sh
 # nowhere to mount /sysroot and the boot hangs (tacklebox#180 attempt 1).
 if ! command -v getarg > /dev/null 2>&1; then
     getarg() {
+        # shellcheck disable=SC2046  # deliberate word-splitting of /proc/cmdline
         set -- $(cat /proc/cmdline 2>/dev/null)
         for _a; do
             case "$_a" in

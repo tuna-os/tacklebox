@@ -36,6 +36,7 @@ command -v getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
 # path to /run/tbox-live-root.dev by the time this script runs.
 if ! command -v getarg > /dev/null 2>&1; then
     getarg() {
+        # shellcheck disable=SC2046  # deliberate word-splitting of /proc/cmdline
         set -- $(cat /proc/cmdline 2>/dev/null)
         for _a; do
             case "$_a" in

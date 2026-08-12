@@ -7,6 +7,7 @@ type getarg >/dev/null 2>&1 || . /lib/dracut-lib.sh
 # initrds): provide getarg when dracut's library is absent.
 if ! command -v getarg >/dev/null 2>&1; then
     getarg() {
+        # shellcheck disable=SC2046  # deliberate word-splitting of /proc/cmdline
         set -- $(cat /proc/cmdline 2>/dev/null)
         for _a; do
             case "$_a" in
