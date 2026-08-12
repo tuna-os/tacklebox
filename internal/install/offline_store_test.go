@@ -354,3 +354,200 @@ func mockSudoMkdirMv(_ io.Reader, name string, args ...string) error {
 	}
 	return nil
 }
+
+// ─── BuildOfflineStorePayloads (full flow, no sudo/podman needed) ──────────
+//
+// BuildOfflineStorePayloads was effectively untested (3.5%): the existing
+// tests route through BuildOfflineStore and bail out at ClearEnvDir's
+// `sudo rm -rf` (RunCombined was never mocked, so the tests require sudo).
+// All three runner seams (RunFn, RunCombinedFn, OutputFn) are mockable, so
+// the whole flow — dir setup, storage.conf, per-payload skopeo copy, prune,
+// and the squashfs tail — can be exercised in a plain unit test.
+
+// runnerRecorder stubs the three runner vars and records every invocation.
+type runnerRecorder struct {
+	calls       [][]string // name+args of every RunFn call
+	scripts     []string   // last-arg of every podman unshare / sh -c call
+	outputCalls [][]string
+}
+
+func stubRunner(t *testing.T) *runnerRecorder {
+	t.Helper()
+	rec := &runnerRecorder{}
+	oldRun, oldOut, oldCombined := runner.RunFn, runner.OutputFn, runner.RunCombinedFn
+	t.Cleanup(func() {
+		runner.RunFn, runner.OutputFn, runner.RunCombinedFn = oldRun, oldOut, oldCombined
+	})
+
+	runner.RunFn = func(_ io.Reader, name string, args ...string) error {
+		rec.calls = append(rec.calls, append([]string{name}, args...))
+		switch {
+		case name == "podman" && len(args) >= 2 && args[0] == "image" && args[1] == "exists":
+			return nil // image present in the builder store
+		case name == "podman" && len(args) >= 2 && args[0] == "unshare":
+			rec.scripts = append(rec.scripts, args[len(args)-1])
+			return nil
+		case name == "sh" && len(args) >= 2 && args[0] == "-c":
+			rec.scripts = append(rec.scripts, args[1])
+			return nil
+		}
+		return nil
+	}
+	runner.OutputFn = func(name string, args ...string) ([]byte, error) {
+		rec.outputCalls = append(rec.outputCalls, append([]string{name}, args...))
+		return []byte("0\t" + strings.Join(args, " ")), nil
+	}
+	runner.RunCombinedFn = func(name string, args ...string) ([]byte, error) {
+		// ClearEnvDir requires the dir to actually be gone afterwards;
+		// simulate `sudo rm -rf <dir>`.
+		if name == "sudo" && len(args) >= 3 && args[0] == "rm" && args[1] == "-rf" {
+			return nil, os.RemoveAll(args[len(args)-1])
+		}
+		return nil, nil
+	}
+	return rec
+}
+
+// withFakeMksquashfs puts a no-op mksquashfs executable on PATH so the
+// squashfs assembly tail of BuildOfflineStorePayloads runs.
+func withFakeMksquashfs(t *testing.T) {
+	t.Helper()
+	fakeBin := t.TempDir()
+	bin := filepath.Join(fakeBin, "mksquashfs")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake mksquashfs: %v", err)
+	}
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatalf("chmod fake mksquashfs: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestBuildOfflineStorePayloads_FullFlowNoSudo(t *testing.T) {
+	tmp := t.TempDir()
+	stagingRoot := filepath.Join(tmp, "staging")
+	t.Setenv("SUDO_USER", "")
+	os.Unsetenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT")
+	withFakeMksquashfs(t)
+	rec := stubRunner(t)
+
+	payloads := []OfflinePayload{
+		{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"},
+		{Source: "localhost/base:dev", Ref: "ghcr.io/tuna-os/base:stable"},
+	}
+	dst := filepath.Join(tmp, "out", "store.squashfs.img")
+
+	if err := BuildOfflineStorePayloads(payloads, stagingRoot, dst, true); err != nil {
+		t.Fatalf("BuildOfflineStorePayloads: %v", err)
+	}
+
+	// storage.conf with the overlay driver was written into the store
+	// (silent-failure regression guard from tuna-os/tacklebox#93).
+	conf, err := os.ReadFile(filepath.Join(
+		stagingRoot, "tbox-offline-store", "etc", "containers", "storage.conf"))
+	if err != nil {
+		t.Fatalf("read storage.conf: %v", err)
+	}
+	if !strings.Contains(string(conf), "driver = \"overlay\"") {
+		t.Errorf("storage.conf missing overlay driver: %q", conf)
+	}
+
+	// Each payload was copied under its canonical Ref, not its local name.
+	joined := strings.Join(rec.scripts, "\n")
+	for _, p := range payloads {
+		if !strings.Contains(joined, p.Ref) {
+			t.Errorf("skopeo copy for %s missing canonical ref %q; scripts: %q",
+				p.Source, p.Ref, rec.scripts)
+		}
+	}
+
+	// prune=true removed each source image from the ephemeral builder store.
+	for _, p := range payloads {
+		var removed bool
+		for _, c := range rec.calls {
+			if len(c) >= 3 && c[0] == "podman" && c[1] == "image" && c[2] == "rm" && c[3] == p.Source {
+				removed = true
+			}
+		}
+		if !removed {
+			t.Errorf("prune did not remove source image %s", p.Source)
+		}
+	}
+
+	// The store was packed with mksquashfs and sudo-moved to dst.
+	var moved string
+	for _, c := range rec.calls {
+		if len(c) == 4 && c[0] == "sudo" && c[1] == "mv" {
+			moved = c[3]
+		}
+	}
+	if moved != dst {
+		t.Errorf("squashfs moved to %q, want %q", moved, dst)
+	}
+	if !strings.Contains(joined, "-noappend") {
+		t.Errorf("mksquashfs script missing -noappend: %q", rec.scripts)
+	}
+}
+
+func TestBuildOfflineStorePayloads_ReleaseCompression(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SUDO_USER", "")
+	t.Setenv("SUPERISO_COMPRESSION", "release")
+	os.Unsetenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT")
+	withFakeMksquashfs(t)
+	rec := stubRunner(t)
+
+	if err := BuildOfflineStorePayloads(
+		[]OfflinePayload{{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"}},
+		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false,
+	); err != nil {
+		t.Fatalf("BuildOfflineStorePayloads: %v", err)
+	}
+
+	joined := strings.Join(rec.scripts, "\n")
+	if !strings.Contains(joined, "-Xcompression-level 15") || !strings.Contains(joined, "-b 1048576") {
+		t.Errorf("release compression not applied: %q", rec.scripts)
+	}
+}
+
+func TestBuildOfflineStorePayloads_RejectsEmptyPayloadFields(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SUDO_USER", "")
+	os.Unsetenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT")
+	withFakeMksquashfs(t)
+	stubRunner(t)
+
+	for _, p := range []OfflinePayload{
+		{Source: "", Ref: "ghcr.io/tuna-os/app:stable"},
+		{Source: "localhost/app:dev", Ref: ""},
+	} {
+		err := BuildOfflineStorePayloads([]OfflinePayload{p},
+			filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false)
+		if err == nil {
+			t.Fatalf("payload %+v: expected error, got nil", p)
+		}
+		if !strings.Contains(err.Error(), "needs both source and ref") {
+			t.Errorf("payload %+v: error = %v, want 'needs both source and ref'", p, err)
+		}
+	}
+}
+
+func TestBuildOfflineStorePayloads_MissingMksquashfsIsHardError(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("SUDO_USER", "")
+	os.Unsetenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT")
+	rec := stubRunner(t)
+
+	err := BuildOfflineStorePayloads(
+		[]OfflinePayload{{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"}},
+		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "mksquashfs not found in PATH") {
+		t.Fatalf("error = %v, want 'mksquashfs not found in PATH'", err)
+	}
+
+	// The per-payload copy ran before the squashfs gate.
+	if len(rec.scripts) == 0 {
+		t.Error("payload copy did not run before the mksquashfs check")
+	}
+}
