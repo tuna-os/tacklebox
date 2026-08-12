@@ -6,7 +6,7 @@
 # so live ISO boots need no distro-specific packages like Fedora's
 # dracut-live. This fixture staying stock is the regression test for that
 # (tuna-os/tacklebox#90).
-FROM quay.io/fedora/fedora-bootc:45
+FROM quay.io/fedora/fedora-bootc:46
 
 # Per-env marker: the two fixture builds (alpha/beta) differ only by this
 # file — the verify distinctness checks need distinct content, and the
