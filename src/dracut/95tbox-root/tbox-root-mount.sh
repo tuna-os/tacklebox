@@ -3,6 +3,21 @@
 
 type getarg >/dev/null 2>&1 || . /lib/dracut-lib.sh
 
+# Fallback for non-dracut initrds (GNOME-OS-family / mkosi / systemd-only
+# initrds): provide getarg when dracut's library is absent.
+if ! command -v getarg >/dev/null 2>&1; then
+    getarg() {
+        set -- $(cat /proc/cmdline 2>/dev/null)
+        for _a; do
+            case "$_a" in
+                "${1}="*) printf '%s' "${_a#*=}"; return 0 ;;
+                "${1}") printf '1'; return 0 ;;
+            esac
+        done
+        return 1
+    }
+fi
+
 TBOX_ROOT=$(getarg tacklebox.root)
 TBOX_PERSIST=$(getarg tacklebox.persist)
 

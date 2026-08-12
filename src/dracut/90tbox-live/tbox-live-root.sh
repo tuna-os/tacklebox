@@ -30,6 +30,25 @@
 
 command -v getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
 
+# Fallback for non-dracut initrds (GNOME-OS-family / mkosi / systemd-only
+# initrds): provide getarg, die, and warn when dracut's library is absent.
+# The generator (tbox-live-generator.sh) has already written the device
+# path to /run/tbox-live-root.dev by the time this script runs.
+if ! command -v getarg > /dev/null 2>&1; then
+    getarg() {
+        set -- $(cat /proc/cmdline 2>/dev/null)
+        for _a; do
+            case "$_a" in
+                "${1}="*) printf '%s' "${_a#*=}"; return 0 ;;
+                "${1}") printf '1'; return 0 ;;
+            esac
+        done
+        return 1
+    }
+    die() { echo "Tacklebox: FATAL: $*" >&2; exit 1; }
+    warn() { echo "Tacklebox: WARNING: $*" >&2; }
+fi
+
 # --wait: poll for the device instead of bailing when it is absent, and
 # fail loudly if it never arrives. Used by tbox-live-prepare.service,
 # which is the only caller that has nothing behind it to retry — the

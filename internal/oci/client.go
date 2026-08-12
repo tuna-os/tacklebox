@@ -119,7 +119,17 @@ func (c *Client) authorize(repo string) error {
 		return nil
 	}
 	url := fmt.Sprintf("%s/token?scope=repository:%s:pull", c.Base, repo)
-	resp, err := c.HTTP.Get(url)
+	// Bound the token fetch by the same HeaderTimeout used for blob
+	// requests. A registry token endpoint that never responds wedges
+	// every layer fetch, and unlike blob bodies there is no resuming
+	// reader above this call to break the deadlock.
+	ctx, cancel := context.WithTimeout(context.Background(), c.headerTimeout())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("token: %w", err)
+	}
+	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("token: %w", err)
 	}

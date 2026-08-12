@@ -20,10 +20,47 @@
 
 command -v getarg > /dev/null || . /lib/dracut-lib.sh
 
+# Fallback for non-dracut initrds (GNOME-OS-family / mkosi / systemd-only
+# initrds): read the kernel command line directly when dracut's getarg is
+# unavailable. Without this the generator sees an empty $root and exits
+# silently, leaving root=tbox:CDLABEL=… unclaimed — the kernel has
+# nowhere to mount /sysroot and the boot hangs (tacklebox#180 attempt 1).
+if ! command -v getarg > /dev/null 2>&1; then
+    getarg() {
+        set -- $(cat /proc/cmdline 2>/dev/null)
+        for _a; do
+            case "$_a" in
+                "${1}="*) printf '%s' "${_a#*=}"; return 0 ;;
+                "${1}") printf '1'; return 0 ;;
+            esac
+        done
+        return 1
+    }
+fi
+
 [ -z "$root" ] && root=$(getarg root=)
 case "$root" in
 tbox:*) ;;
 *) exit 0 ;;
+esac
+
+# Write the device path so tbox-live-root --wait can find the CD, even
+# when parse-tbox-live.sh (a dracut cmdline hook) never ran. On the
+# dracut path parse-tbox-live.sh already wrote this; the file is a no-op
+# overwrite here. On the non-dracut path this is the sole source.
+case "$root" in
+tbox:CDLABEL=* | tbox:LABEL=*)
+    lbl="${root#tbox:}"
+    lbl="${lbl#*LABEL=}"
+    # udev escapes '/' and ' ' in /dev/disk/by-label names
+    lbl=$(echo "$lbl" | sed 's,/,\\x2f,g;s, ,\\x20,g')
+    mkdir -p /run
+    printf '%s' "/dev/disk/by-label/${lbl}" > /run/tbox-live-root.dev
+    ;;
+tbox:/dev/*)
+    mkdir -p /run
+    printf '%s' "${root#tbox:}" > /run/tbox-live-root.dev
+    ;;
 esac
 
 GENERATOR_DIR="$2"
