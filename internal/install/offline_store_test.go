@@ -536,6 +536,9 @@ func TestBuildOfflineStorePayloads_MissingMksquashfsIsHardError(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("SUDO_USER", "")
 	os.Unsetenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT")
+	// Force exec.LookPath("mksquashfs") to fail deterministically, regardless
+	// of whether the CI runner ships mksquashfs.
+	t.Setenv("PATH", t.TempDir())
 	rec := stubRunner(t)
 
 	err := BuildOfflineStorePayloads(
