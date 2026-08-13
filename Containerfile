@@ -12,7 +12,7 @@ ARG BUILDER_IMAGE=docker.io/library/golang:1.26-bookworm
 # packages whose signatures no longer match the image keyring, breaking
 # dnf install (tuna-os/tacklebox#205; same defect as bluefin-cli#167,
 # wootc#135, protota#226). Re-bump once the upstream image is fixed.
-ARG RUNTIME_IMAGE=registry.fedoraproject.org/fedora:45
+ARG RUNTIME_IMAGE=registry.fedoraproject.org/fedora:46
 
 # ─── Build stage ─────────────────────────────────────────────────────────────
 FROM ${BUILDER_IMAGE} AS build
