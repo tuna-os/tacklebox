@@ -153,14 +153,15 @@ editions.
 
 ## How to reproduce without a GitHub runner
 
-Runners are frequently saturated; do not debug this through CI.
+Runners are frequently saturated; do not debug this through CI. Use a workstation
+with podman + the playwright container available (`<host>` below).
 
 ```bash
 GOOS=js GOARCH=wasm go build -o iso-builder/app/public/tbox.wasm ./cmd/tbwasm
 
-rsync -az --exclude node_modules --exclude .git app e2e himachal:/var/tmp/isob/
+rsync -az --exclude node_modules --exclude .git app e2e <host>:/var/tmp/isob/
 
-ssh himachal 'mkdir -p /var/tmp/isob/home && cd /var/tmp/isob && podman run --rm --shm-size=2g \
+ssh <host> 'mkdir -p /var/tmp/isob/home && cd /var/tmp/isob && podman run --rm --shm-size=2g \
   -v /var/tmp/isob:/w:z -w /w/e2e \
   -e TBOX_E2E_FULL=1 -e TBOX_E2E_IMAGE=tuna-os/flounder:xfce \
   -e HOME=/w/home \
