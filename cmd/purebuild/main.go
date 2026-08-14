@@ -16,13 +16,13 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	tacklebox "github.com/tuna-os/tacklebox"
 	"github.com/tuna-os/tacklebox/internal/oci"
 	"github.com/tuna-os/tacklebox/internal/purefs"
+	"github.com/tuna-os/tacklebox/internal/runner"
 )
 
 var initrdOnDisk string
@@ -51,6 +51,22 @@ func mustStatSize(path string) int64 {
 	return st.Size()
 }
 
+// parseImageRef validates and splits an "--image" flag value of the form
+// <repo>:<tag> into its repo/tag halves, and derives the per-build env ID
+// (used for the ISO volume label's kernel cmdline, the pxeboot path, and the
+// live-root squashfs name). LastIndex splits on the *last* colon so a
+// registry host with an explicit port (e.g. "localhost:5000/ns/img:tag")
+// resolves correctly.
+func parseImageRef(image string) (repo, tag, envID string, err error) {
+	if image == "" || !strings.Contains(image, ":") {
+		return "", "", "", fmt.Errorf("--image <repo>:<tag> is required")
+	}
+	repo = image[:strings.LastIndex(image, ":")]
+	tag = image[strings.LastIndex(image, ":")+1:]
+	envID = filepath.Base(repo) + "-" + tag
+	return repo, tag, envID, nil
+}
+
 func main() {
 	var (
 		image      = flag.String("image", "", "image as <repo>:<tag>, e.g. tuna-os/sailfin:kde")
@@ -71,12 +87,10 @@ func main() {
 		buildFromDdi(*ddi, *ddiStem, *label, *workdir, *out)
 		return
 	}
-	if *image == "" || !strings.Contains(*image, ":") {
-		log.Fatal("--image <repo>:<tag> is required")
+	repo, tag, envID, err := parseImageRef(*image)
+	if err != nil {
+		log.Fatal(err)
 	}
-	repo := (*image)[:strings.LastIndex(*image, ":")]
-	tag := (*image)[strings.LastIndex(*image, ":")+1:]
-	envID := filepath.Base(repo) + "-" + tag
 
 	if err := os.MkdirAll(*workdir, 0o755); err != nil {
 		log.Fatal(err)
@@ -522,8 +536,12 @@ func assembleWithXorriso(workdir, out, label, envID, espPath, sfsPath, sfsName s
 	}
 
 	_ = os.Remove(out)
-	cmd := exec.Command("xorriso",
-		"-dev", "stdio:"+out,
+	// Same argument set as internal/target.IsoTarget.assembleIso (the
+	// production xorriso call this fallback mirrors); routed through the
+	// runner seam like the rest of the codebase, instead of exec.Command
+	// directly, so it picks up flatpak-spawn wrapping and is unit-testable.
+	args := []string{
+		"-dev", "stdio:" + out,
 		"-volid", label,
 		"-rockridge", "on",
 		"-joliet", "on",
@@ -532,10 +550,8 @@ func assembleWithXorriso(workdir, out, label, envID, espPath, sfsPath, sfsName s
 		"-boot_image", "any", "efi_path=EFI/efi.img",
 		"-boot_image", "any", "part_like_isohybrid=on",
 		"-commit",
-	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	}
+	if err := runner.Run("xorriso", args...); err != nil {
 		return fmt.Errorf("xorriso: %w", err)
 	}
 	_ = os.RemoveAll(isoRoot)
