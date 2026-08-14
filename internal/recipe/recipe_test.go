@@ -64,3 +64,51 @@ func TestOfflinePayloadSourceAndRef(t *testing.T) {
 		t.Errorf("payload = %+v", got)
 	}
 }
+
+func TestOfflinePayloadMarshal_StringShortcut(t *testing.T) {
+	// Source == Ref → marshals to a bare JSON string.
+	p := OfflinePayload{Source: "ghcr.io/a/b", Ref: "ghcr.io/a/b"}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if string(data) != `"ghcr.io/a/b"` {
+		t.Errorf("Marshal = %s, want bare string", data)
+	}
+}
+
+func TestOfflinePayloadMarshal_ObjectForm(t *testing.T) {
+	// Source != Ref → marshals to the full object.
+	p := OfflinePayload{Source: "localhost/os:dev", Ref: "ghcr.io/example/os:stable"}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if string(data) != `{"source":"localhost/os:dev","ref":"ghcr.io/example/os:stable"}` {
+		t.Errorf("Marshal = %s, want full object", data)
+	}
+}
+
+func TestOfflinePayloadMarshal_RoundTrip(t *testing.T) {
+	// Every unmarshal form must marshal back to an equivalent value.
+	for _, raw := range []string{
+		`"ghcr.io/a/b"`,
+		`{"source":"localhost/os:dev","ref":"ghcr.io/example/os:stable"}`,
+	} {
+		var p OfflinePayload
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			t.Fatalf("Unmarshal(%s): %v", raw, err)
+		}
+		back, err := json.Marshal(p)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var q OfflinePayload
+		if err := json.Unmarshal(back, &q); err != nil {
+			t.Fatalf("re-Unmarshal(%s): %v", back, err)
+		}
+		if q != p {
+			t.Errorf("round trip %s → %s → %+v != %+v", raw, back, q, p)
+		}
+	}
+}
