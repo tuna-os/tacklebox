@@ -1,8 +1,8 @@
 # Tacklebox — Architecture
 
 How the parts fit together. For features and known bugs see
-[`TODO.md`](TODO.md); for the SuperISO/tacklebox unification roadmap
-see [`../PLAN-merge.md`](../PLAN-merge.md).
+[`TODO.md`](TODO.md); for the SuperISO lineage that Tacklebox evolved
+from, see [`README.md`](README.md).
 
 ## What tacklebox does
 
