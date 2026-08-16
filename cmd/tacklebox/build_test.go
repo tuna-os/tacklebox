@@ -464,7 +464,7 @@ func TestAppendKargs(t *testing.T) {
 }
 
 func TestLiveKernelCmdlineEscapesSpaces(t *testing.T) {
-	got := liveKernelCmdline("env1", "TunaOS Yellowfin", "rootfs.sfs", "")
+	got := kernelcmdline.Live("env1", "TunaOS Yellowfin")
 	if !strings.Contains(got, `root=tbox:CDLABEL=TunaOS\x20Yellowfin`) {
 		t.Fatalf("label space not escaped: %q", got)
 	}
