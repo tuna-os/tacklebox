@@ -324,6 +324,6 @@ with no `R2_BUCKET`; build + verify always run.
 | Build dies during ISO assembly                   | `internal/target/iso.go`                |
 | BLS entry exists but kernel/initrd missing       | `cmd/tacklebox/build.go` (`installEnv`) |
 | Boot stalls at `ostree-prepare-root`             | `src/dracut/95tbox-root/*`              |
-| Boot stalls at `dracut-initqueue` on a live ISO  | `cmd/tacklebox/build.go` (`buildLiveKernelCmdline`) — overlay flag syntax |
+| Boot stalls at `dracut-initqueue` on a live ISO  | `internal/kernelcmdline` (`Live`) — overlay flag syntax |
 | Two envs end up with the same content            | bootc upstream bug; see TODO.md §Bugs   |
 | `tacklebox verify` flags something               | The check name maps 1:1 to a section of `cmd/tacklebox/verify.go` |

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/tuna-os/tacklebox/internal/install"
+	"github.com/tuna-os/tacklebox/internal/kernelcmdline"
 	"github.com/tuna-os/tacklebox/internal/recipe"
 )
 
@@ -87,7 +88,7 @@ func TestBuildKernelCmdline(t *testing.T) {
 	// into the test signature; the production function casts back.
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildKernelCmdline(tc.env, modeOf(tc.mode), backendOf(tc.backend), tc.usbSafe, "abc123")
+			got := kernelcmdline.Build(tc.env, modeOf(tc.mode), backendOf(tc.backend), tc.usbSafe, "abc123")
 			for _, s := range tc.contains {
 				if !strings.Contains(got, s) {
 					t.Errorf("missing %q in %q", s, got)
@@ -139,7 +140,7 @@ func TestBuildLiveKernelCmdline(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildLiveKernelCmdline(tc.envID, tc.label)
+			got := kernelcmdline.Live(tc.envID, tc.label)
 			for _, s := range tc.contains {
 				if !strings.Contains(got, s) {
 					t.Errorf("missing %q in %q", s, got)
@@ -354,7 +355,7 @@ func TestEnvTitle(t *testing.T) {
 }
 
 func TestBuildLiveKernelCmdlineCombined(t *testing.T) {
-	got := buildLiveKernelCmdlineCombined("bazzite", "TBX_ISO")
+	got := kernelcmdline.LiveCombined("bazzite", "TBX_ISO")
 	for _, want := range []string{
 		"root=tbox:CDLABEL=TBX_ISO",
 		"tacklebox.live.squashimg=combined.rootfs.sfs",
@@ -368,13 +369,13 @@ func TestBuildLiveKernelCmdlineCombined(t *testing.T) {
 	}
 	// The plain per-env variant must NOT carry the pivot arg — tbox-root
 	// would try to rebase /sysroot onto a subdir that doesn't exist.
-	if plain := buildLiveKernelCmdline("bazzite", "TBX_ISO"); strings.Contains(plain, "tacklebox.root=") {
+	if plain := kernelcmdline.Live("bazzite", "TBX_ISO"); strings.Contains(plain, "tacklebox.root=") {
 		t.Errorf("per-env cmdline must not set tacklebox.root: %s", plain)
 	}
 }
 
 func TestBuildLiveKernelCmdlineDelta(t *testing.T) {
-	base := buildLiveKernelCmdlineDelta("bluefin", "TBX_ISO", true)
+	base := kernelcmdline.LiveDelta("bluefin", "TBX_ISO", true)
 	for _, want := range []string{
 		"root=tbox:CDLABEL=TBX_ISO",
 		"tacklebox.live.squashimg=base.rootfs.sfs",
@@ -391,7 +392,7 @@ func TestBuildLiveKernelCmdlineDelta(t *testing.T) {
 		}
 	}
 
-	delta := buildLiveKernelCmdlineDelta("bazzite", "TBX_ISO", false)
+	delta := kernelcmdline.LiveDelta("bazzite", "TBX_ISO", false)
 	for _, want := range []string{
 		"tacklebox.live.squashimg=base.rootfs.sfs",
 		"tacklebox.live.delta=bazzite.delta.sfs",
@@ -452,12 +453,12 @@ func TestDeltaBaseEnv(t *testing.T) {
 }
 
 func TestAppendKargs(t *testing.T) {
-	got := appendKargs("root=live:CDLABEL=X quiet", []string{"console=ttyS0", "", "  ", "console=tty0"})
+	got := kernelcmdline.Append("root=live:CDLABEL=X quiet", []string{"console=ttyS0", "", "  ", "console=tty0"})
 	want := "root=live:CDLABEL=X quiet console=ttyS0 console=tty0"
 	if got != want {
-		t.Fatalf("appendKargs = %q, want %q", got, want)
+		t.Fatalf("Append = %q, want %q", got, want)
 	}
-	if appendKargs("a", nil) != "a" {
+	if kernelcmdline.Append("a", nil) != "a" {
 		t.Fatal("nil kargs must be a no-op")
 	}
 }

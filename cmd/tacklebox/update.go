@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/tacklebox/internal/blockdev"
 	"github.com/tuna-os/tacklebox/internal/install"
+	"github.com/tuna-os/tacklebox/internal/kernelcmdline"
 	"github.com/tuna-os/tacklebox/internal/recipe"
 	"github.com/tuna-os/tacklebox/internal/runner"
 )
@@ -306,7 +307,7 @@ func updateEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, storeM
 	// Re-write BLS entries; overwrite any existing ones for this env.
 	for _, mode := range env.Modes {
 		id := fmt.Sprintf("%s-%s", env.ID, mode)
-		options := buildKernelCmdline(env.ID, mode, backend, blockdev.UsbSafe, ostreeBootcsum)
+		options := kernelcmdline.Build(env.ID, mode, backend, blockdev.UsbSafe, ostreeBootcsum)
 		isDefault := env.ID == r.DefaultBoot
 		if err := install.WriteBLSEntry(espMount, id, envTitle(env, string(mode)), "/EFI/"+env.ID+"/vmlinuz", "/EFI/"+env.ID+"/initrd.img", options, isDefault); err != nil {
 			return err
