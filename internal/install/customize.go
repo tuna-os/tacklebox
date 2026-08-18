@@ -7,11 +7,25 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	tacklebox "github.com/tuna-os/tacklebox"
 	"github.com/tuna-os/tacklebox/internal/runner"
 )
+
+// customizeTimeoutSeconds is the podman --timeout applied to the customize
+// container: default 1800s, TBOX_CUSTOMIZE_TIMEOUT=<seconds> overrides,
+// 0 disables. Unparsable values keep the default rather than silently
+// disabling the cap.
+func customizeTimeoutSeconds() int {
+	if v := strings.TrimSpace(os.Getenv("TBOX_CUSTOMIZE_TIMEOUT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 1800
+}
 
 // CustomizeLive runs the recipe's live_customize scripts inside a container
 // of image and commits the result to a content-addressed derived image,
@@ -71,6 +85,19 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 		"--cap-add", "sys_admin",
 		"--security-opt", "label=disable",
 	)
+	// Hard cap on the customize container (tuna-os/tunaOS#1772): a customize
+	// script that wedges — flatpak against a blackholed network being the
+	// documented shape (see TBOX_CUSTOMIZE_NETWORK below) — used to sit
+	// silently until the CALLER's budget killed the whole job, reporting
+	// `cancelled` with no failing step. podman's --timeout has conmon SIGKILL
+	// the container instead, so the failure happens HERE, names this step,
+	// and leaves the streamed output as evidence. 30 minutes is generous —
+	// a healthy customize (dnf + flatpak preinstall) is minutes; override
+	// with TBOX_CUSTOMIZE_TIMEOUT=<seconds>, 0 to disable.
+	timeoutSecs := customizeTimeoutSeconds()
+	if timeoutSecs > 0 {
+		runArgs = append(runArgs, "--timeout", strconv.Itoa(timeoutSecs))
+	}
 	// The customize scripts need outbound network (flatpak install above all),
 	// and podman's default bridge is not always usable: on a host whose
 	// netavark/firewalld rules have gone stale, root-context containers get an
@@ -91,14 +118,25 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 		}
 		mnt := fmt.Sprintf("/run/tbox-customize/%d", i)
 		runArgs = append(runArgs, "-v", filepath.Dir(abs)+":"+mnt+":ro")
+		// Marker before each script so a hang or failure is attributable to
+		// ONE script from the streamed log alone — #1772's silent hang could
+		// only be blamed on "the pair".
+		fmt.Fprintf(&inner, "echo %s\n",
+			shellEsc(fmt.Sprintf(">>> [customize] (%d/%d) %s", i+1, len(scripts), filepath.Base(abs))))
 		fmt.Fprintf(&inner, "cd %s && bash ./%s\n", mnt, shellEsc(filepath.Base(abs)))
 	}
 	runArgs = append(runArgs, "--entrypoint", "/bin/bash", image, "-c", inner.String())
 
 	fmt.Printf(">>> [customize] running %d script(s) against %s\n", len(scripts), image)
-	if err := runner.Run(prefix[0], runArgs...); err != nil {
+	// Streamed, not runner.Run: these are consumer scripts doing package and
+	// flatpak installs — minutes of legitimate output that IS the diagnosis
+	// when something wedges. Quiet mode used to discard all of it (#1772).
+	if err := runner.RunStreamed(prefix[0], runArgs...); err != nil {
 		rmArgs := append(prefix[1:], "rm", "-f", "--ignore", ctr)
 		_ = runner.Run(prefix[0], rmArgs...)
+		if timeoutSecs > 0 {
+			return "", fmt.Errorf("live customize %s (killed if it exceeded the %ds cap — see TBOX_CUSTOMIZE_TIMEOUT): %w", image, timeoutSecs, err)
+		}
 		return "", fmt.Errorf("live customize %s: %w", image, err)
 	}
 
