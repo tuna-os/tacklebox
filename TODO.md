@@ -4,6 +4,11 @@ Tracked items not yet implemented. Roughly ordered by value / blocking-ness.
 
 ## Features
 
+### Multi-boot USB manager GUI: customization panels & signed bundles (#104)
+The cross-platform native GUI (`tuna-os/iso-builder` `native/`) delivers the core media manager (Milestones 1, 2, 4, 5). Remaining gaps from #104:
+- Port browser ISO Builder introspection, flatpak, and remora customization panels into the native app (Milestone 3).
+- Signed desktop application bundles for macOS and Windows.
+
 ### Per-stateroot greenboot / rollback
 Each env boots independently with its own stateroot, so health-check
 + auto-rollback should be wired per-env, not globally.
@@ -37,6 +42,13 @@ Root cause likely in bootc's install-source resolution. Not yet fixed
 upstream. ISO targets (Live mode) are unaffected.
 
 ## Done ✓
+
+### Cross-platform multi-boot USB manager GUI (`tuna-os/iso-builder`) ✓
+Shipped in `tuna-os/iso-builder`'s `native/` Go Fyne application, wrapping the Tacklebox core (#104):
+- **Milestone 1 (Inspector)**: Automatic drive discovery and status detection (`isManagedDrive`); lists installed environments, sizes, and shared-store dedup savings.
+- **Milestone 2 (Lifecycle)**: Full add / remove / update / build / verify / status workflow wired to Tacklebox core across Linux, macOS, and Windows.
+- **Milestone 4 (Cross-platform raw writing)**: QEMU+TCG helper VM on macOS and WSL2+usbipd-win on Windows to satisfy `bootc install to-filesystem` Linux kernel semantics (ostree, composefs, chattr +i).
+- **Milestone 5 (VM boot-gate)**: Throwaway QEMU/OVMF VM boot verification after writing on Linux to confirm userspace is reached before committing.
 
 ### `tacklebox add` / `tacklebox remove` ✓
 Mutate an existing media in place without reformatting or touching other

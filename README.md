@@ -15,6 +15,7 @@ Born from the `superiso` project, Tacklebox evolves the concept from static ISOs
 *   **📂 Shared Persistence:** Smart OverlayFS mounts allow sharing files in `/home/liveuser` across all OSes while isolating desktop-specific configurations (KDE vs GNOME).
 *   **📦 Distribution Ready:** Built-in support for creating sparse `.img.xz` files for easy sharing.
 *   **🛡️ Integrity First:** Automatically enables `fs-verity` on partitions to support modern container backends like Composefs.
+*   **🖥️ Cross-Platform Desktop GUI:** Native multi-boot manager for Linux, macOS, and Windows shipped via [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder) (`native/`), providing visual drive inspection, add/remove/update lifecycle, and VM boot verification.
 
 ## 🏗️ Architecture
 
@@ -94,6 +95,9 @@ tacklebox status
 tacklebox status /mnt/tbx
 tacklebox status /path/to/tacklebox.img
 ```
+
+### Multi-Boot USB Manager GUI
+A cross-platform desktop application (Linux, macOS, Windows) is available in [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder) (`native/`). Powered by Tacklebox's core orchestration, it discovers connected drives, inspects installed environments and shared-store dedup savings, manages the add/remove/update lifecycle, and supports post-write VM boot verification.
 
 ## 📋 Recipe Schema
 

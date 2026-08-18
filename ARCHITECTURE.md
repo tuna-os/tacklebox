@@ -254,6 +254,17 @@ Three pieces:
 into each env's deployment at install time (`provisionUpdateSystem`).
 Updates are best-effort and never block boot; failures log but exit 0.
 
+## Cross-platform GUI multi-boot manager integration
+
+Tacklebox core orchestration is wrapped by the native desktop manager in [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder) (`native/`):
+
+- **Single-language stack**: Implemented in Go using Fyne, directly embedding `internal/oci` and `internal/purefs` packages.
+- **Drive inspection**: Uses `internal/blockdev` and media layout probing to discover Tacklebox-managed USB partitions and calculate deduplication savings.
+- **Host virtualization**: Because `bootc install to-filesystem` requires real Linux kernel semantics (ostree, composefs, `chattr +i`), non-Linux hosts use lightweight helper virtualization:
+  - **macOS**: QEMU+TCG helper VM with block device pass-through via `authopen`.
+  - **Windows**: WSL2 with `usbipd-win` device attachment.
+- **Boot verification**: Integrates throwaway QEMU/OVMF VM boots on Linux to verify created or modified media reaches userspace prior to unmounting.
+
 ## The CI pipeline
 
 `.github/workflows/ci.yml` runs on every push/PR:

@@ -194,7 +194,16 @@ DDI path is smoked against the live cayo channel by
 `scripts/ddi-smoke.sh` (build + structural verification); its CI wiring
 (daily schedule) is documented in `docs/ddi-smoke-ci.md`.
 
-## 9. Troubleshooting
+## 9. Cross-platform GUI multi-boot manager
+
+For desktop environments without manual CLI invocations, the [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder) repo provides a Go Fyne native desktop application (`native/`) on Linux, macOS, and Windows.
+
+- **Inspection & Dedup**: Detects connected USB media and enumerates existing environments, storage breakdown, and shared-store dedup savings.
+- **Lifecycle Management**: Adds, removes, updates, verifies, and builds multi-boot media using Tacklebox orchestration under the hood.
+- **Cross-Platform Host Support**: Uses helper virtualization (QEMU+TCG on macOS, WSL2 on Windows) to execute bootc filesystem operations with full Linux kernel semantics.
+- **Boot Verification**: Offers optional post-write throwaway VM boot-verification (QEMU/OVMF) on Linux to confirm new media boots to userspace.
+
+## 10. Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
