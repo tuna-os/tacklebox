@@ -164,12 +164,15 @@ func TestCustomizeLiveStreamsWithTimeoutAndMarkers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(streamed) != 1 {
-		t.Fatalf("expected exactly the customize run to stream, got %d streamed calls", len(streamed))
+	if len(streamed) != 2 {
+		t.Fatalf("expected the customize run and its commit to stream, got %d streamed calls", len(streamed))
 	}
 	joined := strings.Join(streamed[0], " ")
 	if !strings.Contains(joined, "--timeout 1800") {
 		t.Fatalf("customize run must carry the default --timeout cap; args: %s", joined)
+	}
+	if !strings.Contains(strings.Join(streamed[1], " "), "commit") {
+		t.Fatalf("the customize commit must stream too; args: %s", strings.Join(streamed[1], " "))
 	}
 	inner := streamed[0][len(streamed[0])-1]
 	// baseline.sh is prepended, so two scripts and two markers.

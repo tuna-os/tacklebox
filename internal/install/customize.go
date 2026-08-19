@@ -140,8 +140,15 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 		return "", fmt.Errorf("live customize %s: %w", image, err)
 	}
 
-	commitArgs := append(prefix[1:], "commit", "--quiet", ctr, tag)
-	if err := runner.Run(prefix[0], commitArgs...); err != nil {
+	// The commit flattens the customize container's writable layer into the
+	// derived image. It can legitimately run for minutes on a large desktop
+	// layer, and --quiet made it silent in exactly the way #1772's customize
+	// hang was: a slow (or wedged) commit read as dead air until the CALLER's
+	// budget killed the job. Stream it and mark it so a hang is attributable
+	// to this step instead of invisible.
+	fmt.Printf(">>> [customize] committing %s -> %s\n", ctr, tag)
+	commitArgs := append(prefix[1:], "commit", ctr, tag)
+	if err := runner.RunStreamed(prefix[0], commitArgs...); err != nil {
 		return "", fmt.Errorf("commit customized %s: %w", image, err)
 	}
 	rmArgs = append(prefix[1:], "rm", "-f", "--ignore", ctr)
