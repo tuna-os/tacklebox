@@ -105,8 +105,8 @@ func TestCustomizeLiveNoScriptsPassthrough(t *testing.T) {
 
 func TestCustomizeTimeoutSeconds(t *testing.T) {
 	t.Setenv("TBOX_CUSTOMIZE_TIMEOUT", "")
-	if got := customizeTimeoutSeconds(); got != 1800 {
-		t.Fatalf("default = %d, want 1800", got)
+	if got := customizeTimeoutSeconds(); got != 0 {
+		t.Fatalf("default = %d, want 0 (disabled; tunaOS#1893)", got)
 	}
 	t.Setenv("TBOX_CUSTOMIZE_TIMEOUT", "300")
 	if got := customizeTimeoutSeconds(); got != 300 {
@@ -116,14 +116,14 @@ func TestCustomizeTimeoutSeconds(t *testing.T) {
 	if got := customizeTimeoutSeconds(); got != 0 {
 		t.Fatalf("0 must disable, got %d", got)
 	}
-	// Junk must keep the cap, not silently disable it.
+	// Junk keeps the disabled default rather than silently enabling a cap.
 	t.Setenv("TBOX_CUSTOMIZE_TIMEOUT", "soon")
-	if got := customizeTimeoutSeconds(); got != 1800 {
-		t.Fatalf("junk = %d, want the 1800 default", got)
+	if got := customizeTimeoutSeconds(); got != 0 {
+		t.Fatalf("junk = %d, want the 0 default", got)
 	}
 	t.Setenv("TBOX_CUSTOMIZE_TIMEOUT", "-5")
-	if got := customizeTimeoutSeconds(); got != 1800 {
-		t.Fatalf("negative = %d, want the 1800 default", got)
+	if got := customizeTimeoutSeconds(); got != 0 {
+		t.Fatalf("negative = %d, want the 0 default", got)
 	}
 }
 
@@ -168,11 +168,15 @@ func TestCustomizeLiveStreamsWithTimeoutAndMarkers(t *testing.T) {
 		t.Fatalf("expected the customize run and its commit to stream, got %d streamed calls", len(streamed))
 	}
 	joined := strings.Join(streamed[0], " ")
-	if !strings.Contains(joined, "--timeout 1800") {
-		t.Fatalf("customize run must carry the default --timeout cap; args: %s", joined)
+	if strings.Contains(joined, "--timeout") {
+		t.Fatalf("customize run must not carry --timeout by default (tunaOS#1893); args: %s", joined)
 	}
-	if !strings.Contains(strings.Join(streamed[1], " "), "commit") {
-		t.Fatalf("the customize commit must stream too; args: %s", strings.Join(streamed[1], " "))
+	commitJoined := strings.Join(streamed[1], " ")
+	if !strings.Contains(commitJoined, "timeout --foreground 600") {
+		t.Fatalf("commit must be bounded by timeout; args: %s", commitJoined)
+	}
+	if !strings.Contains(commitJoined, "commit") {
+		t.Fatalf("the customize commit must stream too; args: %s", commitJoined)
 	}
 	inner := streamed[0][len(streamed[0])-1]
 	// baseline.sh is prepended, so two scripts and two markers.
