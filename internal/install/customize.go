@@ -147,6 +147,15 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 	// budget killed the job. Stream it and mark it so a hang is attributable
 	// to this step instead of invisible.
 	fmt.Printf(">>> [customize] committing %s -> %s\n", ctr, tag)
+	// Ensure the container is fully stopped before commit: a `run` under
+	// `--timeout` can leave conmon holding the container in a half-reaped
+	// state, and `podman commit` of that state wedges for minutes instead of
+	// failing (tuna-os/tunaOS#1893 — the iso-smoke job reproduced a 56-minute
+	// commit hang on a trivial echo script). `stop --time=0` SIGKILLs any
+	// leftover process; on an already-exited container it is a fast no-op and
+	// its error is deliberately ignored.
+	stopArgs := append(append([]string{}, prefix[1:]...), "stop", "--time", "0", ctr)
+	_ = runner.Run(prefix[0], stopArgs...)
 	commitArgs := append(prefix[1:], "commit", ctr, tag)
 	if err := runner.RunStreamed(prefix[0], commitArgs...); err != nil {
 		return "", fmt.Errorf("commit customized %s: %w", image, err)
