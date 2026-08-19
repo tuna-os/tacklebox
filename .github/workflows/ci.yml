@@ -312,6 +312,16 @@ jobs:
             systemd-boot systemd-boot-efi podman \
             qemu-system-x86 ovmf
 
+      # podman 5.8.4 (the GitHub runner image) wedges `podman commit`/`stop`
+      # after a `--entrypoint` run (tuna-os/tunaOS#1893). Pin to the ubuntu
+      # archive podman until the runner image rotates to a fixed version.
+      # Best-effort: if this exact revision isn't available the step is a no-op
+      # and the wedge (now bounded to a 600s named failure) is still reported.
+      - name: pin podman to the ubuntu archive version
+        run: |
+          sudo apt-get install -y --allow-downgrades \
+            podman=4.9.3+ds1-1ubuntu0.1 || echo "podman pin unavailable — continuing"
+
       # Same crun/podman spec-version mismatch as verify-smoke; see there.
       - name: match podman's OCI runtime to its spec version
         run: |
