@@ -149,19 +149,12 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 	// budget killed the job. Stream it and mark it so a hang is attributable
 	// to this step instead of invisible.
 	fmt.Printf(">>> [customize] committing %s -> %s\n", ctr, tag)
-	// Ensure the container is fully stopped before commit: a `run` under
-	// `--timeout` can leave conmon holding the container in a half-reaped
-	// state, and `podman commit` of that state wedges for minutes instead of
-	// failing (tuna-os/tunaOS#1893 — the iso-smoke job reproduced a 56-minute
-	// commit hang on a trivial echo script). `stop --time=0` SIGKILLs any
-	// leftover process; on an already-exited container it is a fast no-op and
-	// its error is deliberately ignored.
-	stopArgs := append(append([]string{}, prefix[1:]...), "stop", "--time", "0", ctr)
-	_ = runner.Run(prefix[0], stopArgs...)
-	// Bound the commit too: if a runner's podman still wedges here, fail in
-	// 600s with a named error instead of hanging until the caller's job budget
-	// cancels the whole run (#1893). `timeout --foreground` wraps the full
-	// prefix so it works in both root and SUDO_USER contexts.
+	// Bound the commit: podman 5.8.4 on the GitHub runners wedges here
+	// (tuna-os/tunaOS#1893) — a `stop` before this did not help and itself
+	// wedged, so don't add one. `timeout --foreground` makes a persistent
+	// wedge fail in 600s with a named error instead of hanging until the
+	// caller's job budget cancels the run. It wraps the full prefix so it
+	// works in both root and SUDO_USER contexts.
 	commitArgs := append(append([]string{}, prefix...), "commit", ctr, tag)
 	bounded := append([]string{"timeout", "--foreground", "600"}, commitArgs...)
 	if err := runner.RunStreamed(bounded[0], bounded[1:]...); err != nil {
