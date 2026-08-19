@@ -317,31 +317,23 @@ jobs:
       # archive podman until the runner image rotates to a fixed version.
       # Best-effort: if this exact revision isn't available the step is a no-op
       # and the wedge (now bounded to a 600s named failure) is still reported.
-      - name: pin podman to the ubuntu archive version
+      - name: pin podman to a known-good version (Kubic 6.x)
         run: |
           set -euo pipefail
-          # podman 5.8.4 (the GitHub runner image) wedges `podman commit`/`stop`
-          # after a `--entrypoint` run (tuna-os/tunaOS#1893). The ubuntu archive
-          # 4.9.3 does not, so pin to it. The runner image may shadow the apt
-          # binary from /usr/local/bin; remove ONLY that non-apt shadow, never
-          # the apt-owned binary, and reinstall if podman is missing.
-          sudo apt-get install -y --allow-downgrades \
-            podman=4.9.3+ds1-1ubuntu0.1
+          # The runner image's podman 5.8.4 wedges `podman commit`/`stop`
+          # (tuna-os/tunaOS#1893), and the ubuntu archive 4.9.3 mismatches the
+          # image's crun 1.28 (conmon fails to start the customize container).
+          # Install podman 6.x from the upstream Kubic stable repo: it matches
+          # modern crun and does not have the commit wedge (6.0.2 verified).
+          sudo install -d /etc/apt/keyrings
+          curl -fsSL https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_24.04/Release.key \
+            | gpg --dearmor | sudo tee /etc/apt/keyrings/kubic-libcontainers.gpg >/dev/null
+          echo 'deb [signed-by=/etc/apt/keyrings/kubic-libcontainers.gpg] https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_24.04/ /' \
+            | sudo tee /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
+          sudo apt-get update
+          sudo apt-get install -y podman
           hash -r
-          ver="$(podman --version 2>/dev/null | awk '{print $3}' || true)"
-          echo ">>> podman after apt: ${ver:-not-found}"
-          if [ -e /usr/local/bin/podman ] && ! dpkg -S /usr/local/bin/podman >/dev/null 2>&1; then
-            echo ">>> removing /usr/local/bin/podman shadow"
-            sudo rm -f /usr/local/bin/podman
-            hash -r
-            ver="$(podman --version 2>/dev/null | awk '{print $3}' || true)"
-          fi
-          if [ -z "$ver" ]; then
-            sudo apt-get install -y podman
-            hash -r
-            ver="$(podman --version 2>/dev/null | awk '{print $3}' || true)"
-          fi
-          echo ">>> pinned podman: ${ver:-not-found}"
+          echo ">>> pinned podman: $(podman --version)"
 
       # Same crun/podman spec-version mismatch as verify-smoke; see there.
       - name: match podman's OCI runtime to its spec version
