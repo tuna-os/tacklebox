@@ -322,20 +322,26 @@ jobs:
           set -euo pipefail
           # podman 5.8.4 (the GitHub runner image) wedges `podman commit`/`stop`
           # after a `--entrypoint` run (tuna-os/tunaOS#1893). The ubuntu archive
-          # 4.9.3 does not, so pin to it. The runner image ships its own podman
-          # that SHADOWS the apt one (observed: apt downgrades to 4.9.3 but
-          # `podman --version` still says 5.8.4), so remove any podman binary
-          # not owned by an apt package, then verify.
+          # 4.9.3 does not, so pin to it. The runner image may shadow the apt
+          # binary from /usr/local/bin; remove ONLY that non-apt shadow, never
+          # the apt-owned binary, and reinstall if podman is missing.
           sudo apt-get install -y --allow-downgrades \
             podman=4.9.3+ds1-1ubuntu0.1
-          for p in $(which -a podman 2>/dev/null | sort -u); do
-            if ! dpkg -S "$p" >/dev/null 2>&1; then
-              echo ">>> removing non-apt podman shadow: $p"
-              sudo rm -f "$p"
-            fi
-          done
           hash -r
-          echo ">>> pinned podman: $(podman --version)"
+          ver="$(podman --version 2>/dev/null | awk '{print $3}' || true)"
+          echo ">>> podman after apt: ${ver:-not-found}"
+          if [ -e /usr/local/bin/podman ] && ! dpkg -S /usr/local/bin/podman >/dev/null 2>&1; then
+            echo ">>> removing /usr/local/bin/podman shadow"
+            sudo rm -f /usr/local/bin/podman
+            hash -r
+            ver="$(podman --version 2>/dev/null | awk '{print $3}' || true)"
+          fi
+          if [ -z "$ver" ]; then
+            sudo apt-get install -y podman
+            hash -r
+            ver="$(podman --version 2>/dev/null | awk '{print $3}' || true)"
+          fi
+          echo ">>> pinned podman: ${ver:-not-found}"
 
       # Same crun/podman spec-version mismatch as verify-smoke; see there.
       - name: match podman's OCI runtime to its spec version
