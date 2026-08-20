@@ -1,0 +1,17 @@
+# RunsOn runner groups for tuna-os/tacklebox.
+#
+# The iso-smoke job builds a live ISO with tacklebox (podman) and boots it
+# under QEMU/KVM. The GitHub-hosted runner's podman 5.8.4 wedges `podman
+# commit` (tuna-os/tunaOS#1893) and its crun/conmon cannot be re-pinned, so
+# the ISO verification runs on RunsOn's controlled ubuntu24-full-x64 image
+# instead, provisioned on demand as a spot instance (sparse by design).
+runners:
+  build-amd64:
+    family: ["c6a", "c6i", "c5a", "c5"]
+    cpu: [8]
+    image: ubuntu24-full-x64
+    volume: 80gb:gp3
+    spot: capacity-optimized
+
+tags:
+  team: tunaos
