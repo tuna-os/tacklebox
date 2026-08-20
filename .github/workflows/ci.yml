@@ -349,6 +349,12 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/kubic.list
           sudo apt-get update -qq
           sudo apt-get install -y podman
+          # conmon 2.1.10 on this image lacks journald support and dies on the
+          # customize run ("[conmon:e]: Include journald in compilation path").
+          # Force a file log driver so conmon never touches journald.
+          sudo install -d /etc/containers/containers.conf.d
+          printf '[engine]\nlog_driver = "k8s-file"\n' | \
+            sudo tee /etc/containers/containers.conf.d/10-tbox-log.conf
           for p in /usr/local/bin/podman /usr/local/sbin/podman; do
             if [ -e "$p" ] && ! dpkg -S "$p" >/dev/null 2>&1; then
               echo ">>> removing non-apt podman shadow: $p"
