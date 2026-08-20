@@ -348,6 +348,10 @@ jobs:
           echo 'deb [signed-by=/etc/apt/keyrings/kubic.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/ /' \
             | sudo tee /etc/apt/sources.list.d/kubic.list
           sudo apt-get update -qq
+          # Force the Kubic stack: apt kept the image's 4.9.3+conmon2.1.10
+          # (conmon journald failure). Remove the old podman/conmon so the
+          # Kubic podman 6.x + matching conmon/crun come in fresh.
+          sudo apt-get remove -y podman conmon crun || true
           sudo apt-get install -y podman
           # conmon 2.1.10 on this image lacks journald support and dies on the
           # customize run ("[conmon:e]: Include journald in compilation path").
@@ -362,7 +366,7 @@ jobs:
             fi
           done
           hash -r
-          echo ">>> podman now: $(podman --version)"
+          echo ">>> podman now: $(podman --version) / conmon $(conmon --version 2>/dev/null | head -1 || echo none)"
 
       - name: build tacklebox
         run: go build -o tacklebox ./cmd/tacklebox
