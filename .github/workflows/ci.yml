@@ -285,8 +285,9 @@ jobs:
   iso-smoke:
     # RunsOn build-amd64 (controlled ubuntu24-full-x64 image): the GitHub
     # runner's podman 5.8.4 wedges the customize commit and its crun/conmon
-    # cannot be re-pinned (tuna-os/tunaOS#1893). See .github/runs-on.yml.
-    runs-on: build-amd64
+    # cannot be re-pinned (tuna-os/tunaOS#1893). The `runs-on=` marker + `runner=`
+    # group is RunsOn's label format (see docs/runners/labels).
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     needs: lint-test
     timeout-minutes: 60
     steps:
