@@ -317,23 +317,24 @@ jobs:
       # archive podman until the runner image rotates to a fixed version.
       # Best-effort: if this exact revision isn't available the step is a no-op
       # and the wedge (now bounded to a 600s named failure) is still reported.
-      - name: pin podman to a known-good version (Kubic 6.x)
+      - name: pin podman + crun to the ubuntu noble pair
         run: |
           set -euo pipefail
-          # The runner image's podman 5.8.4 wedges `podman commit`/`stop`
-          # (tuna-os/tunaOS#1893), and the ubuntu archive 4.9.3 mismatches the
-          # image's crun 1.28 (conmon fails to start the customize container).
-          # Install podman 6.x from the upstream Kubic stable repo: it matches
-          # modern crun and does not have the commit wedge (6.0.2 verified).
-          sudo install -d /etc/apt/keyrings
-          curl -fsSL https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_24.04/Release.key \
-            | gpg --dearmor | sudo tee /etc/apt/keyrings/kubic-libcontainers.gpg >/dev/null
-          echo 'deb [signed-by=/etc/apt/keyrings/kubic-libcontainers.gpg] https://download.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_24.04/ /' \
-            | sudo tee /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list
-          sudo apt-get update
-          sudo apt-get install -y podman
+          # podman 5.8.4 (runner image) wedges `podman commit`/`stop`
+          # (tuna-os/tunaOS#1893); podman 4.9.3 alone mismatches the image's
+          # crun 1.28 (conmon fails to start the customize container). Pin the
+          # ubuntu noble PAIR (podman 4.9.3 + crun 1.14.1-1) and drop the
+          # runner-image shadows from /usr/local/bin.
+          sudo apt-get install -y --allow-downgrades \
+            podman=4.9.3+ds1-1ubuntu0.1 crun=1.14.1-1
+          for p in /usr/local/bin/podman /usr/local/bin/crun /usr/local/sbin/crun; do
+            if [ -e "$p" ] && ! dpkg -S "$p" >/dev/null 2>&1; then
+              echo ">>> removing shadow: $p"
+              sudo rm -f "$p"
+            fi
+          done
           hash -r
-          echo ">>> pinned podman: $(podman --version)"
+          echo ">>> pinned: $(podman --version) / $(crun --version 2>/dev/null | head -1)"
 
       # Same crun/podman spec-version mismatch as verify-smoke; see there.
       - name: match podman's OCI runtime to its spec version
