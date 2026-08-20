@@ -334,6 +334,23 @@ jobs:
             podman info --format '>>> OCI runtime: {{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}'
           fi
 
+      # podman 5.8.4 (what both the GitHub runner and the ubuntu24 RunsOn image
+      # ship) is broken for this workload: the customize commit wedges and
+      # `podman build` fails with "cannot re-exec process". Install the Kubic
+      # unstable podman (6.x) which works with the modern crun/conmon.
+      - name: install podman 6.x from Kubic unstable
+        run: |
+          set -euo pipefail
+          sudo install -d /etc/apt/keyrings
+          curl -fsSL https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/Release.key \
+            | gpg --dearmor | sudo tee /etc/apt/keyrings/kubic.gpg >/dev/null
+          echo 'deb [signed-by=/etc/apt/keyrings/kubic.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/ /' \
+            | sudo tee /etc/apt/sources.list.d/kubic.list
+          sudo apt-get update -qq
+          sudo apt-get install -y podman
+          hash -r
+          echo ">>> podman now: $(podman --version)"
+
       - name: build tacklebox
         run: go build -o tacklebox ./cmd/tacklebox
 
