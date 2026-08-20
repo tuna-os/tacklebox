@@ -365,17 +365,19 @@ jobs:
       # store, which is where the live pipeline reads from.
       - name: build fixture live images
         run: |
-          podman build -f fixtures/iso-smoke.Containerfile \
+          # sudo (root) podman: the RunsOn image's rootless re-exec is broken
+          # ("cannot re-exec process"); the tacklebox build below is root too.
+          sudo podman build -f fixtures/iso-smoke.Containerfile \
             --build-arg MARKER=alpha -t localhost/tbox-iso-alpha:latest fixtures
-          podman build -f fixtures/iso-smoke.Containerfile \
+          sudo podman build -f fixtures/iso-smoke.Containerfile \
             --build-arg MARKER=beta -t localhost/tbox-iso-beta:latest fixtures
-          podman build -f fixtures/iso-smoke.Containerfile \
+          sudo podman build -f fixtures/iso-smoke.Containerfile \
             --build-arg MARKER=gamma -t localhost/tbox-iso-gamma:latest fixtures
-          podman build -f fixtures/iso-smoke.Containerfile \
+          sudo podman build -f fixtures/iso-smoke.Containerfile \
             --build-arg MARKER=delta -t localhost/tbox-iso-delta:latest fixtures
-          podman build -f fixtures/iso-smoke.Containerfile \
+          sudo podman build -f fixtures/iso-smoke.Containerfile \
             --build-arg MARKER=epsilon -t localhost/tbox-iso-epsilon:latest fixtures
-          podman build -f fixtures/iso-smoke.Containerfile \
+          sudo podman build -f fixtures/iso-smoke.Containerfile \
             --build-arg MARKER=zeta -t localhost/tbox-iso-zeta:latest fixtures
 
       - name: build per-env ISO
