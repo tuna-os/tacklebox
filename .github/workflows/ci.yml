@@ -373,6 +373,8 @@ jobs:
 
       # Plain podman (no sudo): the images must land in the runner user's
       # store, which is where the live pipeline reads from.
+      # k8s-file log driver for all podman runs resolves the runner journald
+      # gap (tuna-os/tunaOS#1893).
       - name: build fixture live images
         run: |
           # sudo (root) podman: the RunsOn image's rootless re-exec is broken
