@@ -337,7 +337,8 @@ jobs:
       # podman 5.8.4 (what both the GitHub runner and the ubuntu24 RunsOn image
       # ship) is broken for this workload: the customize commit wedges and
       # `podman build` fails with "cannot re-exec process". Install the Kubic
-      # unstable podman (6.x) which works with the modern crun/conmon.
+      # unstable podman (6.x) and drop the image's 5.8.4 shadow from
+      # /usr/local/bin so the pinned podman wins on PATH.
       - name: install podman 6.x from Kubic unstable
         run: |
           set -euo pipefail
@@ -348,6 +349,12 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/kubic.list
           sudo apt-get update -qq
           sudo apt-get install -y podman
+          for p in /usr/local/bin/podman /usr/local/sbin/podman; do
+            if [ -e "$p" ] && ! dpkg -S "$p" >/dev/null 2>&1; then
+              echo ">>> removing non-apt podman shadow: $p"
+              sudo rm -f "$p"
+            fi
+          done
           hash -r
           echo ">>> podman now: $(podman --version)"
 
