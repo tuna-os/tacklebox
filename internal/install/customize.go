@@ -86,6 +86,12 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 		"run", "--name", ctr,
 		"--cap-add", "sys_admin",
 		"--security-opt", "label=disable",
+		// File logging, not journald: the GitHub/RunsOn runner images lack a
+		// usable systemd-journald for the container, and conmon dies with
+		// "[conmon:e]: Include journald in compilation path" otherwise
+		// (tuna-os/tunaOS#1893). Build-time customize output is read from the
+		// stream anyway; a file log driver loses nothing.
+		"--log-driver", "k8s-file",
 	)
 	// Hard cap on the customize container (tuna-os/tunaOS#1772): a customize
 	// script that wedges — flatpak against a blackholed network being the
