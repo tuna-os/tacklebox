@@ -142,6 +142,7 @@ func PullAndInstall(image string, targetDir string, stateroot string, backend Ba
 	podmanArgs := []string{
 		"run", "--rm", "--privileged",
 		"--pid=host",
+		"--log-driver", "k8s-file",
 		"-v", "/dev:/dev",
 		"-v", targetDir + ":/target",
 		"--mount", "type=bind,src=/var/lib/containers,dst=/var/lib/containers",

@@ -623,6 +623,7 @@ func fetchToStaging(image string) (stagedFiles, error) {
 	runArgs := append(upodman[1:],
 		"run", "--rm",
 		"--security-opt", "label=disable",
+		"--log-driver", "k8s-file",
 		"-v", tmpDir+":/dest",
 		"--entrypoint", "/bin/sh",
 		image, "-c", extractScript)

@@ -84,6 +84,7 @@ func RemoraCustomize(image string, manifest *RemoraManifest) (string, error) {
 		"run", "--name", ctr,
 		"--cap-add", "sys_admin",
 		"--security-opt", "label=disable",
+		"--log-driver", "k8s-file",
 	)
 	runArgs = append(runArgs, runArgsExtra...)
 	// Honour the same network escape hatch as customize (netavark/firewalld

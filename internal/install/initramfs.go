@@ -93,6 +93,7 @@ func PrepareInitramfs(image string, modules []string, skip bool) (string, error)
 	runArgs := append(prefix[1:],
 		"run", "--rm", "--privileged",
 		"--security-opt", "label=disable",
+		"--log-driver", "k8s-file",
 		"-v", outDir+":/tbox-out",
 	)
 	for name, dir := range moduleDirs {
