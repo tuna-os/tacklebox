@@ -5,17 +5,45 @@ Thanks for your interest in contributing! This project is part of the [TunaOS](h
 ## Getting Started
 
 1. Fork the repo and clone it locally.
-2. Read the project README and docs on [tunaos.org](https://tunaos.org).
-3. Open an issue to discuss your change before submitting a PR.
+2. Install the Go version declared in [`go.mod`](go.mod) and the
+   [`just`](https://just.systems) command runner.
+3. Read the project [README](README.md), [user guide](docs/USER-GUIDE.md), and
+   [architecture overview](ARCHITECTURE.md).
+4. Open an issue to discuss your change before submitting a PR.
+
+## Validate Your Changes
+
+Run the fast checks used for every pull request:
+
+```bash
+just build
+just test
+go vet ./...
+go test -tags=integration -run='Help' ./...
+```
+
+If you change an example or fixture recipe, ensure every JSON file still
+parses:
+
+```bash
+for recipe in examples/*.json fixtures/*.json; do
+  python3 -m json.tool "$recipe" >/dev/null
+done
+```
+
+Media builds and boot tests need additional host tools, elevated privileges,
+and substantial disk space. Run the relevant script under `scripts/` when your
+change affects image assembly, bootloader entries, or the live boot path; the
+pull-request CI runs the broader smoke suite.
 
 ## Pull Requests
 
 - Keep PRs focused — one change per PR.
 - Follow the existing code style and conventions.
 - Update docs if your change affects usage.
+- Include the validation commands you ran in the PR description.
 
 ## Questions?
 
 - [TunaOS Documentation](https://tunaos.org)
 - [GitHub Issues](https://github.com/tuna-os/tunaOS/issues)
-

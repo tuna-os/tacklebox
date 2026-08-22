@@ -69,6 +69,32 @@ Tacklebox automatically handles the unique requirements of the Composefs backend
 
 ## 🛠 Usage
 
+### Installation
+
+Tagged releases provide static Linux binaries for AMD64 and ARM64 on the
+[GitHub Releases page](https://github.com/tuna-os/tacklebox/releases). Download
+the binary and matching `.sha256` file for your architecture, verify it, and
+install it on your `PATH`:
+
+```bash
+sha256sum --check tacklebox-linux-amd64.sha256
+sudo install -m 0755 tacklebox-linux-amd64 /usr/local/bin/tacklebox
+```
+
+To build from source, install the Go version declared by [`go.mod`](go.mod),
+then run:
+
+```bash
+git clone https://github.com/tuna-os/tacklebox.git
+cd tacklebox
+go build -o tacklebox ./cmd/tacklebox
+sudo install -m 0755 tacklebox /usr/local/bin/tacklebox
+```
+
+A container image is also published as `ghcr.io/tuna-os/tacklebox:latest` for
+CI and other container-based workflows. Pin a version or `sha-*` tag when you
+need reproducible builds.
+
 ### Build a Multi-Boot Image
 ```bash
 sudo tacklebox build recipe.json --xz
@@ -220,7 +246,9 @@ the squashfs cache is keyed by *all* image IDs together. See
 
 ## 🏗 Requirements
 
-*   Go 1.22+
+Go is needed only when building Tacklebox from source; use the version declared
+by [`go.mod`](go.mod). Creating media with the installed CLI also requires:
+
 *   `podman` & `bootc`
 *   `sgdisk` (gdisk)
 *   `mkfs.vfat`, `mkfs.ext4` (with verity support)
