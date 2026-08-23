@@ -1237,7 +1237,6 @@ func init() {
 func provisionUpdateSystem(envRoot, envID string, r recipe.MediaRecipe) error {
 	destBin := filepath.Join(envRoot, "usr", "local", "bin", "tacklebox")
 	destUnitDir := filepath.Join(envRoot, "etc", "systemd", "system")
-	destRecipeDir := filepath.Join(envRoot, "etc", "tacklebox")
 
 	// 1. tacklebox binary
 	self, err := os.Executable()
@@ -1250,16 +1249,20 @@ func provisionUpdateSystem(envRoot, envID string, r recipe.MediaRecipe) error {
 	}
 
 	// 2. recipe.json
-	runner.Run("sudo", "mkdir", "-p", destRecipeDir)
-	recipeData, err := json.MarshalIndent(r, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal recipe: %w", err)
-	}
-	if err := os.WriteFile("/tmp/tbox-recipe.json", recipeData, 0644); err != nil {
+	//
+	// Delegated to writeEnvRecipe rather than inlined. This used to stage
+	// through a fixed /tmp/tbox-recipe.json at mode 0644 and `sudo cp` it into
+	// place, which gave any local user a predictable, world-writable path to
+	// swap between the write and the privileged copy — and the file it lands
+	// as, /etc/tacklebox/recipe.json, is what the root update-all timer reads
+	// to decide which images to pull and deploy.
+	//
+	// writeEnvRecipe is documented as "the recipe-only slice of
+	// provisionUpdateSystem" and already does exactly this step through
+	// sudoWriteFile (os.CreateTemp: O_EXCL, mode 0600, unpredictable name,
+	// removed afterwards). Calling it keeps the two paths from drifting again.
+	if err := writeEnvRecipe(envRoot, r); err != nil {
 		return err
-	}
-	if err := runner.Run("sudo", "cp", "/tmp/tbox-recipe.json", filepath.Join(destRecipeDir, "recipe.json")); err != nil {
-		return fmt.Errorf("copy recipe to %s: %w", destRecipeDir, err)
 	}
 
 	// 3. systemd units
