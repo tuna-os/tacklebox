@@ -494,31 +494,6 @@ func runEnvs(r recipe.MediaRecipe, tgt target.Target, storeMount, espMount strin
 	return nil
 }
 
-// validateDedupLayout fails fast on nonsense shared_store dedup settings
-// so a typo dies at parse time, not after a multi-minute squash.
-func validateDedupLayout(r recipe.MediaRecipe) error {
-	switch r.SharedStore.DedupLayout {
-	case "", "combined", "delta":
-	default:
-		return fmt.Errorf("shared_store.dedup_layout %q: must be \"combined\" or \"delta\"", r.SharedStore.DedupLayout)
-	}
-	if r.SharedStore.DedupLayout != "" && !r.SharedStore.Dedup {
-		return fmt.Errorf("shared_store.dedup_layout is set but dedup is false")
-	}
-	if r.SharedStore.DeltaBase != "" {
-		if r.SharedStore.DedupLayout != "delta" {
-			return fmt.Errorf("shared_store.delta_base is only meaningful with dedup_layout \"delta\"")
-		}
-		for _, e := range r.BootableEnvironments {
-			if e.ID == r.SharedStore.DeltaBase {
-				return nil
-			}
-		}
-		return fmt.Errorf("shared_store.delta_base %q does not name a bootable environment", r.SharedStore.DeltaBase)
-	}
-	return nil
-}
-
 // resolveRemora resolves env.Remora into an install.RemoraManifest.
 // Returns nil when env.Remora is empty (no remora customization).
 // String form is resolved relative to recipeDir; object form is parsed
@@ -552,15 +527,6 @@ func resolveRemora(env recipe.BootableEnvironment, recipeDir string) (*install.R
 		return nil, fmt.Errorf("remora: must be a path/URL string or an inline object with packages/remove/configs: %w", err)
 	}
 	return &rm, nil
-}
-
-// deltaBaseEnv resolves the delta layout's base env: delta_base if set,
-// else the first env in the recipe.
-func deltaBaseEnv(r recipe.MediaRecipe) string {
-	if r.SharedStore.DeltaBase != "" {
-		return r.SharedStore.DeltaBase
-	}
-	return r.BootableEnvironments[0].ID
 }
 
 // installEnv runs the per-env install pipeline. Dispatches on the
