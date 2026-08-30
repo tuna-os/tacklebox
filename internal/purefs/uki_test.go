@@ -157,10 +157,10 @@ ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff  snow-ab_7.0.14
 
 func TestResolveDdiReleaseAmbiguousStem(t *testing.T) {
 	manifest := `
-snow-ab_1.efi
-snow-ab_1_1f2e3d4c-0000-4000-8000-000000000001.root.raw.xz
-cayo-ab_2.efi
-cayo-ab_2_1f2e3d4c-0000-4000-8000-000000000002.root.raw.xz
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  snow-ab_1.efi
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  snow-ab_1_1f2e3d4c-0000-4000-8000-000000000001.root.raw.xz
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc  cayo-ab_2.efi
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd  cayo-ab_2_1f2e3d4c-0000-4000-8000-000000000002.root.raw.xz
 `
 	if _, err := ResolveDdiRelease(manifest, ""); err == nil || !strings.Contains(err.Error(), "multiple artifact stems") {
 		t.Fatalf("err = %v", err)
@@ -171,6 +171,16 @@ cayo-ab_2_1f2e3d4c-0000-4000-8000-000000000002.root.raw.xz
 	}
 	if rel.Version != "2" {
 		t.Fatalf("version = %s", rel.Version)
+	}
+}
+
+func TestResolveDdiReleaseRejectsUnsignedArtifacts(t *testing.T) {
+	manifest := `
+snow-ab_1.efi
+snow-ab_1_1f2e3d4c-0000-4000-8000-000000000001.root.raw.xz
+`
+	if _, err := ResolveDdiRelease(manifest, "snow-ab"); err == nil || !strings.Contains(err.Error(), "missing a SHA-256") {
+		t.Fatalf("err = %v, want missing SHA-256", err)
 	}
 }
 

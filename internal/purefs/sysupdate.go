@@ -28,7 +28,7 @@ type DdiRelease struct {
 	Version string
 	UKI     string // artifact filename
 	Root    string // artifact filename (possibly .xz)
-	UKISHA  string // sha256 from the manifest, "" if listing had none
+	UKISHA  string // required SHA-256 from the manifest
 	RootSHA string
 }
 
@@ -38,8 +38,7 @@ var (
 )
 
 // ResolveDdiRelease parses a SHA256SUMS manifest (sysupdate's version
-// source: "<sha256>  <filename>" lines; bare filename lines are accepted
-// too, for indexes without checksums) and returns the newest version
+// source: "<sha256>  <filename>" lines) and returns the newest version
 // that publishes BOTH a UKI and a root artifact. base filters to one
 // artifact stem ("snow-ab"); empty matches any single stem present —
 // ambiguity between stems is an error rather than a guess.
@@ -106,6 +105,12 @@ func ResolveDdiRelease(manifest, base string) (*DdiRelease, error) {
 	sort.Slice(versions, func(i, j int) bool { return versionLess(versions[i], versions[j]) })
 	v := versions[len(versions)-1]
 	h := byVersion[v]
+	// The DDI path turns these artifacts into a bootable ISO.  A listing that
+	// names files but does not bind them to a digest makes a compromised artifact
+	// host equivalent to a release signer, so do not accept it as an index.
+	if h.ukiSHA == "" || h.rootSHA == "" {
+		return nil, fmt.Errorf("DDI release %s is missing a SHA-256 for its UKI or root artifact", v)
+	}
 	return &DdiRelease{Version: v, UKI: h.uki, Root: h.root, UKISHA: h.ukiSHA, RootSHA: h.rootSHA}, nil
 }
 
