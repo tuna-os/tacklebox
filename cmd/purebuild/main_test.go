@@ -209,3 +209,125 @@ func TestAssembleWithXorriso_PropagatesRunnerError(t *testing.T) {
 		t.Errorf("error = %v, want it to mention xorriso", err)
 	}
 }
+
+// consumingStore/deleteOnClose (tacklebox#222 follow-up): the rolling
+// disk-profile wrapper around oci.DirStore for the EROFS pass. Untested
+// before this — a wrong refcount here either leaks blobs (disk pressure
+// on constrained runners) or deletes one still needed by a later read.
+
+func newTestDirStore(t *testing.T) *oci.DirStore {
+	t.Helper()
+	return &oci.DirStore{Dir: t.TempDir()}
+}
+
+func TestConsumingStore_KeptRefSurvivesClose(t *testing.T) {
+	inner := newTestDirStore(t)
+	ref, _, err := inner.Put(strings.NewReader("kept blob"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	cs := &consumingStore{
+		inner: inner,
+		keep:  map[string]bool{ref: true},
+		refs:  map[string]int{ref: 1},
+	}
+
+	rc, err := cs.Open(ref)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	data, _ := io.ReadAll(rc)
+	if string(data) != "kept blob" {
+		t.Errorf("data = %q, want %q", data, "kept blob")
+	}
+	if err := rc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := os.Stat(ref); err != nil {
+		t.Errorf("kept blob %s was removed on Close: %v", ref, err)
+	}
+}
+
+func TestConsumingStore_UnkeptRefDeletedAtZeroRefs(t *testing.T) {
+	inner := newTestDirStore(t)
+	ref, _, err := inner.Put(strings.NewReader("consumed blob"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	cs := &consumingStore{
+		inner: inner,
+		keep:  map[string]bool{},
+		refs:  map[string]int{ref: 1},
+	}
+
+	rc, err := cs.Open(ref)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := io.ReadAll(rc); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if err := rc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := os.Stat(ref); !os.IsNotExist(err) {
+		t.Errorf("blob %s at refcount 0 should be removed, stat err = %v", ref, err)
+	}
+}
+
+func TestConsumingStore_UnkeptRefSurvivesUntilLastRef(t *testing.T) {
+	inner := newTestDirStore(t)
+	ref, _, err := inner.Put(strings.NewReader("shared blob"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	cs := &consumingStore{
+		inner: inner,
+		keep:  map[string]bool{},
+		refs:  map[string]int{ref: 2},
+	}
+
+	for i, wantExist := range []bool{true, false} {
+		rc, err := cs.Open(ref)
+		if err != nil {
+			t.Fatalf("Open #%d: %v", i, err)
+		}
+		if _, err := io.ReadAll(rc); err != nil {
+			t.Fatalf("ReadAll #%d: %v", i, err)
+		}
+		if err := rc.Close(); err != nil {
+			t.Fatalf("Close #%d: %v", i, err)
+		}
+
+		_, statErr := os.Stat(ref)
+		exists := statErr == nil
+		if exists != wantExist {
+			t.Errorf("after close #%d: blob exists = %v, want %v (statErr=%v)", i, exists, wantExist, statErr)
+		}
+	}
+}
+
+func TestConsumingStore_Put_DelegatesToInner(t *testing.T) {
+	inner := newTestDirStore(t)
+	cs := &consumingStore{inner: inner, keep: map[string]bool{}, refs: map[string]int{}}
+
+	ref, size, err := cs.Put(strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if size != 5 {
+		t.Errorf("size = %d, want 5", size)
+	}
+	data, err := os.ReadFile(ref)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", ref, err)
+	}
+	if string(data) != "hello" {
+		t.Errorf("data = %q, want %q", data, "hello")
+	}
+}
