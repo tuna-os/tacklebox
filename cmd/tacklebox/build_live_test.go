@@ -78,7 +78,7 @@ func TestInstallEnvLiveWritesTBXLiveEntry(t *testing.T) {
 	r := liveRecipe(env)
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX_ISO"}
-	if err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack); err != nil {
+	if err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack, nil); err != nil {
 		t.Fatalf("installEnvLive: %v", err)
 	}
 
@@ -115,7 +115,7 @@ func TestInstallEnvLiveDefaultsLabelWhenTargetNotLabelled(t *testing.T) {
 
 	// Plain fakeTarget: implements Target but not the `labelled` interface.
 	tgt := &fakeTarget{mode: target.InstallModeLive}
-	if err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack); err != nil {
+	if err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack, nil); err != nil {
 		t.Fatalf("installEnvLive: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(espMount, "loader", "entries", "plain.conf"))
@@ -136,7 +136,7 @@ func TestInstallEnvLiveAppendsRecipeKargs(t *testing.T) {
 	r.Kargs = []string{"console=ttyS0", "quiet"}
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX"}
-	if err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack); err != nil {
+	if err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack, nil); err != nil {
 		t.Fatalf("installEnvLive: %v", err)
 	}
 	data, _ := os.ReadFile(filepath.Join(espMount, "loader", "entries", "kargy.conf"))
@@ -161,7 +161,7 @@ func TestInstallEnvLiveRunsCustomizeThenUsesDerivedImage(t *testing.T) {
 	r := liveRecipe(env)
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX"}
-	if err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack); err != nil {
+	if err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack, nil); err != nil {
 		t.Fatalf("installEnvLive: %v", err)
 	}
 	// CustomizeLive's derived-image cache probe must have fired, and the
@@ -186,7 +186,7 @@ func TestInstallEnvLiveBootDirFailurePropagates(t *testing.T) {
 	m.runErr["sudo mkdir -p "+bootDir] = fmt.Errorf("read-only filesystem")
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX"}
-	err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack)
+	err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack, nil)
 	if err == nil {
 		t.Fatal("expected the boot-dir failure to propagate")
 	}
@@ -207,7 +207,7 @@ func TestInstallEnvLiveInitramfsFailurePropagates(t *testing.T) {
 	failPodmanInspect(m, env.Image)
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX"}
-	err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack)
+	err := installEnvLive(env, r, tgt, storeMount, espMount, noopTrack, nil)
 	if err == nil {
 		t.Fatal("expected the initramfs failure to propagate")
 	}
@@ -236,7 +236,7 @@ func TestInstallEnvsLiveCombinedSingleSquashAndPivotEntries(t *testing.T) {
 	r.SharedStore = recipe.SharedStore{Dedup: true, DedupLayout: "combined", Compression: "zstd"}
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX_ISO"}
-	if err := installEnvsLiveCombined(r, tgt, storeMount, espMount, noopTrack); err != nil {
+	if err := installEnvsLiveCombined(r, tgt, storeMount, espMount, noopTrack, nil); err != nil {
 		t.Fatalf("installEnvsLiveCombined: %v", err)
 	}
 
@@ -285,7 +285,7 @@ func TestInstallEnvsLiveCombinedInitramfsFailurePropagates(t *testing.T) {
 	failPodmanInspect(m, envs[0].Image)
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX"}
-	err := installEnvsLiveCombined(r, tgt, storeMount, espMount, noopTrack)
+	err := installEnvsLiveCombined(r, tgt, storeMount, espMount, noopTrack, nil)
 	if err == nil {
 		t.Fatal("expected the initramfs failure to propagate")
 	}
@@ -305,7 +305,7 @@ func TestInstallEnvsLiveDeltaBaseAndDeltaEntries(t *testing.T) {
 	r.SharedStore = recipe.SharedStore{Dedup: true, DedupLayout: "delta", DeltaBase: "alpha"}
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX_ISO"}
-	if err := installEnvsLiveDelta(r, tgt, storeMount, espMount, noopTrack); err != nil {
+	if err := installEnvsLiveDelta(r, tgt, storeMount, espMount, noopTrack, nil); err != nil {
 		t.Fatalf("installEnvsLiveDelta: %v", err)
 	}
 
@@ -351,7 +351,7 @@ func TestInstallEnvsLiveDeltaImplicitBaseIsFirstEnv(t *testing.T) {
 	r.SharedStore = recipe.SharedStore{Dedup: true, DedupLayout: "delta"}
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX"}
-	if err := installEnvsLiveDelta(r, tgt, storeMount, espMount, noopTrack); err != nil {
+	if err := installEnvsLiveDelta(r, tgt, storeMount, espMount, noopTrack, nil); err != nil {
 		t.Fatalf("installEnvsLiveDelta: %v", err)
 	}
 	first, err := os.ReadFile(filepath.Join(espMount, "loader", "entries", "first.conf"))
@@ -381,7 +381,7 @@ func TestInstallEnvsLiveDeltaBootDirFailurePropagates(t *testing.T) {
 	m.runErr["sudo mkdir -p "+filepath.Join(espMount, "images", "pxeboot", "alpha")] = fmt.Errorf("no space left on device")
 
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX"}
-	err := installEnvsLiveDelta(r, tgt, storeMount, espMount, noopTrack)
+	err := installEnvsLiveDelta(r, tgt, storeMount, espMount, noopTrack, nil)
 	if err == nil {
 		t.Fatal("expected the boot-dir failure to propagate")
 	}
@@ -400,7 +400,7 @@ func TestRunEnvsLiveWithoutDedupInstallsPerEnv(t *testing.T) {
 	r := liveRecipe(envs...)
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX_ISO"}
 
-	if err := runEnvs(r, tgt, storeMount, espMount, 1, noopTrack); err != nil {
+	if err := runEnvs(r, tgt, storeMount, espMount, 1, noopTrack, nil); err != nil {
 		t.Fatalf("runEnvs: %v", err)
 	}
 	for _, id := range []string{"one", "two"} {
@@ -423,7 +423,7 @@ func TestRunEnvsLiveDedupCombinedDispatch(t *testing.T) {
 	r.SharedStore = recipe.SharedStore{Dedup: true, DedupLayout: "combined"}
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX_ISO"}
 
-	if err := runEnvs(r, tgt, storeMount, espMount, 1, noopTrack); err != nil {
+	if err := runEnvs(r, tgt, storeMount, espMount, 1, noopTrack, nil); err != nil {
 		t.Fatalf("runEnvs: %v", err)
 	}
 	// One combined squash, and both entries pivot into subtrees — NOT the
@@ -451,7 +451,7 @@ func TestRunEnvsLiveDedupDeltaDispatch(t *testing.T) {
 	r.SharedStore = recipe.SharedStore{Dedup: true, DedupLayout: "delta"}
 	tgt := &fakeIsoTarget{fakeTarget: fakeTarget{mode: target.InstallModeLive}, label: "TBX_ISO"}
 
-	if err := runEnvs(r, tgt, storeMount, espMount, 1, noopTrack); err != nil {
+	if err := runEnvs(r, tgt, storeMount, espMount, 1, noopTrack, nil); err != nil {
 		t.Fatalf("runEnvs: %v", err)
 	}
 	one, err := os.ReadFile(filepath.Join(espMount, "loader", "entries", "one.conf"))
