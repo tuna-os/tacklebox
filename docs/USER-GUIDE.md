@@ -84,7 +84,7 @@ A recipe is one JSON file describing the media:
       "id": "kde",                          // unique, used in paths + BLS
       "image": "ghcr.io/you/your-os:kde",   // bootable container image
       "title": "Your OS KDE (live)",        // boot menu title
-      "modes": ["live"],                    // live | install
+      "modes": ["live"],                    // live | persistent (see below)
       "live_customize": ["customize.sh"],   // scripts run in a container
                                             // of the image before squashing
       "initrd": "path/or/url.img"           // optional initramfs override
@@ -95,6 +95,26 @@ A recipe is one JSON file describing the media:
 
 `tacklebox recipe-gen` produces one from a simple env list if you'd
 rather not start from scratch.
+
+### modes
+
+Each environment lists one or both boot modes; every mode becomes its own
+systemd-boot entry (`<id>-<mode>`), so an env with both shows up twice in the
+boot menu.
+
+| Mode | Kernel cmdline it adds (block/USB media) | Effect |
+|---|---|---|
+| `live` | `rd.live.overlay=tmpfs` | Ephemeral: writes go to a tmpfs overlay and are discarded at power-off. |
+| `persistent` | `tacklebox.persist=LABEL=TBOX_PERSIST` | Writes land on the media's `TBOX_PERSIST` partition and survive reboots. |
+
+`live` is the only meaningful mode for ISO targets — an ISO has no persist
+partition, and `--iso` installs every env in live mode regardless. Omitting
+`modes` on an env produced by `recipe-gen` defaults to `["live"]`.
+
+These two strings are the only recognised values. Anything else is **not**
+rejected: an unknown mode is treated as `persistent` while still naming the boot
+entry after the string you wrote, so a typo yields a mislabelled entry rather
+than an error.
 
 ### live_customize
 
