@@ -13,3 +13,7 @@
 
 # Agent runtime artifacts
 .pi/goals/
+
+# Per-developer Claude Code permissions. settings.json is the shared file;
+# settings.local.json is personal and should never have been committed.
+.claude/settings.local.json
