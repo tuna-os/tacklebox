@@ -14,6 +14,16 @@
 # Agent runtime artifacts
 .pi/goals/
 
+# Compiled binaries at the repo root. `go build ./cmd/<name>` drops its output
+# here, and these have been committed by accident before: the 10MB `purebuild`
+# binary landed in d860815 (#172) and had to be removed again in b0f18a1
+# ("chore: drop stray purebuild binary from the tree"). Nothing stopped it
+# recurring, because the tree was cleaned but no ignore rule was added — and
+# the blob is still in every clone's history regardless.
+/purebuild
+/tacklebox
+/tbwasm
+
 # Per-developer Claude Code permissions. settings.json is the shared file;
 # settings.local.json is personal and should never have been committed.
 .claude/settings.local.json
