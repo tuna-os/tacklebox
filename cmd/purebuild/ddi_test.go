@@ -27,6 +27,20 @@ func TestDdiFetcher_LocalDirRead(t *testing.T) {
 	}
 }
 
+func TestDdiFetcher_RejectsPlaintextHTTP(t *testing.T) {
+	// SHA256SUMS is unsigned and travels the same channel as the artifacts,
+	// so a plaintext source lets one attacker supply both sides of the
+	// checksum comparison.
+	f := newDdiFetcher("http://artifacts.example/snow")
+	_, err := f.open("SHA256SUMS")
+	if err == nil {
+		t.Fatal("open over http://: expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "https://") {
+		t.Errorf("error should point at the supported forms, got: %v", err)
+	}
+}
+
 func TestDdiFetcher_MissingFile(t *testing.T) {
 	f := newDdiFetcher(t.TempDir())
 	if _, err := f.bytes("nope"); err == nil {
