@@ -13,6 +13,8 @@ import (
 )
 
 func TestCopyLocalImageToOfflineStoreUsesLocalContainersStorage(t *testing.T) {
+	// The expected `podman unshare` call only happens in user context.
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
 	t.Setenv("SUDO_USER", "")
 	t.Setenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT", "42")
 
@@ -84,6 +86,7 @@ func TestCopyLocalImageToOfflineStoreRejectsInvalidTimeout(t *testing.T) {
 }
 
 func TestRemoveSourceImageUsesInvokingUserStore(t *testing.T) {
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
 	t.Setenv("SUDO_USER", "builder")
 
 	oldRunFn := runner.RunFn
