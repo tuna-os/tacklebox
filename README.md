@@ -254,6 +254,14 @@ by [`go.mod`](go.mod). Creating media with the installed CLI also requires:
 *   `mkfs.vfat`, `mkfs.ext4` (with verity support)
 *   `xz` (for compressed outputs)
 
+## 📦 Releases & Operations
+
+`.github/workflows/release-image.yml` publishes `ghcr.io/tuna-os/tacklebox`
+on every `main` push and `v*` tag. If a bad image reaches `:latest`, see
+[`runbooks/rollback-a-bad-tacklebox-image.md`](runbooks/rollback-a-bad-tacklebox-image.md).
+Boot/update and build/ISO-generation failures have their own runbooks in
+[`runbooks/`](runbooks/).
+
 ## 👩‍💻 Development
 
 Tacklebox uses `just` for common development tasks:
