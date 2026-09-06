@@ -8,14 +8,29 @@ Born from the `superiso` project, Tacklebox evolves the concept from static ISOs
 
 ## ✨ Key Features
 
-*   **🚀 Multi-Boot Dictatorship:** Automatically installs and manages `systemd-boot` on a unified ESP, resolving conflicts between Ostree and Composefs backends.
-*   **🧠 Intelligent Deduplication:** Leverages a shared `containers/storage` and `ostree` repo across all bootable environments on a single disk. For ISOs, `"shared_store": {"dedup": true}` packs every env into one combined squashfs so files shared between images (e.g. the Fedora base of Bluefin + Bazzite) are stored once.
-*   **🔄 Integrated Update Lifecycle:** Update any OS on the drive in-place with `tacklebox update`. It safely rotates BLS entries and extracts new kernels/initrd files.
-*   **💾 Modal Booting:** Supports both **Live (ephemeral)** and **Persistent** boot entries for the same OS image via smart kernel argument manipulation.
-*   **📂 Shared Persistence:** Smart OverlayFS mounts allow sharing files in `/home/liveuser` across all OSes while isolating desktop-specific configurations (KDE vs GNOME).
-*   **📦 Distribution Ready:** Built-in support for creating sparse `.img.xz` files for easy sharing.
-*   **🛡️ Integrity First:** Automatically enables `fs-verity` on partitions to support modern container backends like Composefs.
-*   **🖥️ Cross-Platform Desktop GUI:** Native multi-boot manager for Linux, macOS, and Windows shipped via [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder) (`native/`), providing visual drive inspection, add/remove/update lifecycle, and VM boot verification.
+* **🚀 Multi-Boot Control:** Automatically installs and manages `systemd-boot`
+  on one ESP. It resolves conflicts between the Ostree and Composefs backends.
+* **🧠 Intelligent Deduplication:** Uses one `containers/storage` and Ostree
+  repository for all bootable environments on a disk. For ISOs, set
+  `"shared_store": {"dedup": true}` to put every environment in one combined
+  squashfs. The squashfs contains only one copy of common files, such as a
+  shared Fedora base.
+* **🔄 Integrated Update Lifecycle:** Use `tacklebox update` to update any OS
+  on the drive. It rotates entries in BLS and extracts new kernel and initrd
+  files.
+* **💾 Boot Modes:** Supports **Live (ephemeral)** and **Persistent** entries
+  for one OS image. Tacklebox changes the kernel arguments for each mode.
+* **📂 Shared Persistence:** Users can share files in `/home/liveuser` across
+  all operating systems through OverlayFS mounts. Desktop configurations stay
+  separate.
+* **📦 Distribution Ready:** Creates sparse `.img.xz` files that are easy to
+  share.
+* **🛡️ Integrity First:** Automatically enables `fs-verity` on partitions for
+  container backends such as Composefs.
+* **🖥️ Desktop GUI for Multiple Platforms:** The native multi-boot manager in
+  [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder) supports
+  Linux, macOS, and Windows. It gives a visual drive inspection, lifecycle
+  operations, and verification through a virtual machine.
 
 ## 🏗️ Architecture
 
@@ -25,13 +40,12 @@ Tacklebox ships with a custom dracut module (`src/dracut/95tbox-root/`) that han
 2.  Bind-mounts it to `/sysroot`.
 3.  Sets up the persistent home overlay if requested.
 
-Before placing the initramfs on the ESP, Tacklebox checks whether the image's
-initramfs already contains the required modules. If not, it rebuilds it
-automatically by running `dracut` inside a privileged container derived from
-the source image — no pre-processing of your images required. The rebuilt
-initramfs is cached by image ID, so the overhead only occurs on the
-first build or after an image update. The dracut module source is embedded
-in the tacklebox binary, so this works without the repo checkout.
+Before it puts the initramfs on the ESP, Tacklebox checks for the required
+modules. If they are absent, it runs `dracut` inside a privileged container
+from the source image. You do not have to prepare your images. A cache stores
+the rebuilt initramfs by image ID. The rebuild occurs only on the first build
+or after an image update. The Tacklebox binary contains the source of the
+dracut module, so this works without a repository checkout.
 
 **Modules injected automatically:**
 
@@ -40,32 +54,34 @@ in the tacklebox binary, so this works without the repo checkout.
 | ISO (`--iso`) | `tbox-live`, `tbox-root` |
 | Block / USB | `tbox-root` |
 
-Both modules are tacklebox's own, embedded in the binary and injected with
-the image's stock dracut — so live ISOs work from **any** distro's bootc
-image (Fedora, Debian, Arch, Gentoo, …) with no distro-specific packages
-like Fedora's `dracut-live` required.
+Tacklebox provides both modules in its binary. The stock dracut from the image
+adds them to the initramfs. Thus, live ISOs work with a bootc image from any
+distribution, such as Fedora, Debian, Arch, or Gentoo. The image does not need
+a package specific to the distribution, such as Fedora `dracut-live`.
 
-If your image already ships the required modules (e.g. pre-built `superiso-live`
-images), add `"skip_initramfs_rebuild": true` to the environment in your recipe
-to skip the rebuild and use the image's initramfs as-is.
+If your image has the required modules, set
+`"skip_initramfs_rebuild": true` for its environment in the recipe. Tacklebox
+then uses the initramfs from the image without a rebuild.
 
 ### Build caches
-Everything expensive is cached under `<output-base>/` keyed by image ID,
-so incremental rebuilds only pay for what actually changed:
+Caches under `<output-base>/` use the image ID as a key. Incremental builds
+repeat only the work for an image that changed:
 
 | Cache | What it saves |
 |---|---|
 | `initramfs-cache/` | The per-image dracut probe/rebuild (~2-3 min) |
 | `squashfs-cache/` | The per-env `mksquashfs` for ISO targets (minutes per env) |
 
-Rebuilding a three-env ISO where one image ref changed re-squashes only
-that env. Delete the cache directories to force a full rebuild.
+For example, if one image reference changes in a three-environment ISO,
+Tacklebox creates a new squashfs only for that environment. Delete the cache
+directories to force a full rebuild.
 
 ### Composefs Support
-Tacklebox automatically handles the unique requirements of the Composefs backend, including:
-*   Enabling `fs-verity` during partition formatting.
-*   Managing the required bootloader metadata that `bootc` expects.
-*   Generating specialized BLS entries with `rootflags=subvol=...` mapping.
+Tacklebox automatically handles these requirements of the Composefs backend:
+
+* Enable `fs-verity` when Tacklebox formats the partition.
+* Manage the bootloader metadata that `bootc` needs.
+* Generate BLS entries with `rootflags=subvol=...` mappings.
 
 ## 🛠 Usage
 
@@ -123,11 +139,15 @@ tacklebox status /path/to/tacklebox.img
 ```
 
 ### Multi-Boot USB Manager GUI
-A cross-platform desktop application (Linux, macOS, Windows) is available in [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder) (`native/`). Powered by Tacklebox's core orchestration, it discovers connected drives, inspects installed environments and shared-store dedup savings, manages the add/remove/update lifecycle, and supports post-write VM boot verification.
+The `native/` directory in [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder)
+has a desktop application for Linux, macOS, and Windows. The application uses
+the Tacklebox core. It finds connected drives and inspects installed
+environments, storage use, and savings from deduplication. It also manages the
+lifecycle and verifies boot in a virtual machine after a write.
 
 ## 📋 Recipe Schema
 
-Tacklebox is driven by simple JSON recipes:
+Configure Tacklebox with simple JSON recipes:
 
 ```json
 {
@@ -167,20 +187,23 @@ The `partitions` block is optional. By default Tacklebox uses ESP=1 GiB,
 Persist=2 GiB, and Store=remainder. Provide explicit sizes when you need a
 larger ESP (more kernels), more persistent space, or want to leave headroom.
 
-`skip_initramfs_rebuild` is optional (default `false`). Set it to `true` for
-images that already include `tbox-live` and `tbox-root` in their initramfs
-(e.g. images that pre-bake tacklebox's dracut modules) to skip the rebuild
-step and save 2–3 minutes per environment on the first build.
+`skip_initramfs_rebuild` is optional (default `false`). Set it to `true` if
+an image already includes `tbox-live` and `tbox-root` in its initramfs. For
+example, some images include Tacklebox's dracut modules. This option skips the
+rebuild and saves 2–3 minutes per environment on the first build.
 
-`live_customize` (optional, live/ISO builds only) lists scripts that run
-inside a container of the env's image before it is squashed — the
+`live_customize` (optional, live/ISO builds only) lists scripts for Tacklebox
+to run inside a container of the environment image. Tacklebox runs them before
+it creates the squashfs. This process follows the
 [dakota-iso](https://github.com/projectbluefin/dakota-iso) `configure-live.sh`
-pattern. Use it to pre-install Flatpaks into the live squashfs, set up
-autologin/installer autostart, write polkit rules, etc. Scripts run as root
-with `CAP_SYS_ADMIN` and network; each script's directory is mounted
-read-only as its working directory so it can reference sibling assets.
-Relative paths resolve against the recipe file. The result is committed to a
-content-addressed derived image, so unchanged image+scripts skip both the
+pattern. Use these scripts to pre-install Flatpaks or configure automatic
+login and installer autostart. They can also write polkit rules. Scripts run
+as root with `CAP_SYS_ADMIN` and network access.
+
+Tacklebox mounts each script directory as read-only and uses it as the current
+directory. Thus, a script can refer to other assets in that directory. Relative
+paths resolve against the recipe file. Tacklebox commits the result to a
+content-addressed derived image. Unchanged images and scripts skip the
 customize run and the re-squash:
 
 ```json
@@ -195,43 +218,45 @@ customize run and the re-squash:
 `title` is optional and sets the human-facing boot menu entry name
 (e.g. "Bluefin (GNOME)"); the env `id` is used when omitted.
 
-`shared_store.compression` controls squashfs quality for ISO targets:
-the default favours build speed (zstd level 3); set `"release"` (or
-`"max"`) for distribution-quality compression (zstd level 15, ~10-15%
-smaller, slower to build). The `SUPERISO_COMPRESSION=release` env var
+`shared_store.compression` controls squashfs quality for ISO targets. The
+default uses zstd level 3 for fast builds. Set `"release"` (or `"max"`) to use
+zstd level 15. This level creates files that are about 10–15% smaller, but
+takes more time. The `SUPERISO_COMPRESSION=release` environment variable
 overrides the recipe.
 
-`shared_store.dedup` (ISO targets only, default `false`) packs every env
-into **one** combined squashfs — one subtree per env — instead of one
-squashfs per env. mksquashfs then stores files shared across images
-exactly once, which can shrink a multi-env ISO dramatically when the
-images share a base (Bluefin + Bazzite, or two variants of your own
-image). At boot, tbox-live mounts the combined squashfs and the
-`tbox-root` dracut module pivots into the env's subtree
-(`tacklebox.root=<env>` on the kernel cmdline). Trade-offs: changing any
-one image rebuilds (and re-downloads) the whole combined squashfs, and
-the squashfs cache is keyed by *all* image IDs together. See
-`examples/iso-dedup.json`.
+`shared_store.dedup` applies only to ISO targets and defaults to `false`. It
+packs every environment into **one** combined squashfs, with one subtree per
+environment. `mksquashfs` stores only one copy of files that the images share.
+This can greatly decrease an ISO when its images share a base. Examples include
+Bluefin with Bazzite or two variants of your own image.
 
-`shared_store.dedup_layout` picks how a dedup'd store is packed:
+At boot, `tbox-live` mounts the combined squashfs. The `tbox-root` dracut module
+then moves into the environment subtree (`tacklebox.root=<env>` on the kernel
+command line).
 
-- `"combined"` (default): the single-squashfs layout described above.
-  Best dedup; any image change rebuilds the whole store.
-- `"delta"`: one `base.rootfs.sfs` (the full rootfs of the
-  `shared_store.delta_base` env — defaults to the first env) plus a
-  small `<env>.delta.sfs` per other env, computed as a file-level diff
-  against the base (with overlayfs whiteouts, so deletions apply too).
-  At boot the delta stacks as an extra overlay lowerdir
-  (`tacklebox.live.delta=<env>.delta.sfs`). Slightly weaker dedup than
-  combined, but **per-env caching survives single-image updates**:
-  changing one env's image re-diffs only that env's delta. Pick the env
-  the others were built from as `delta_base`. See
-  `examples/iso-delta.json`.
+This layout has two trade-offs. A change to one image rebuilds and downloads
+the complete combined squashfs. Also, the key for the squashfs cache includes
+every image ID. See `examples/iso-dedup.json`.
 
-> **Sizing rule of thumb:** ostree-backed bootc deployments occupy ~10 GiB
-> each, composefs-backed ones ~5 GiB. A 30 GiB recipe is enough for one
-> ostree env; three need ~60 GiB. Tacklebox prints a warning before
-> partitioning when the math doesn't add up — see `estimateStoreUsage`.
+`shared_store.dedup_layout` selects the layout of a deduplicated store:
+
+- `"combined"` (default): Uses the single-squashfs layout described above.
+  It gives the best deduplication, but an image change rebuilds the full store.
+- `"delta"`: Uses one `base.rootfs.sfs` and a small `<env>.delta.sfs` for each
+  other environment. The base contains the full rootfs of the
+  `shared_store.delta_base` environment, or the first environment by default.
+  Each delta is a file-level difference against the base. OverlayFS whiteouts
+  make deletions apply too. At boot, the delta becomes an additional lower
+  directory for the overlay (`tacklebox.live.delta=<env>.delta.sfs`). This
+  layout has slightly weaker deduplication than the combined layout. However,
+  **the cache for each environment survives an update to one image**. An update
+  to one image recalculates only its delta. Select the source environment of the
+  other images as `delta_base`. See `examples/iso-delta.json`.
+
+> **Rule of thumb for size:** Each bootc deployment backed by Ostree uses
+> about 10 GiB. One backed by Composefs uses about 5 GiB. A 30 GiB recipe is
+> enough for one Ostree environment; three need about 60 GiB. Tacklebox prints
+> a warning before it partitions the media if the sizes do not add up. See `estimateStoreUsage`.
 
 ## ⚡ Flags
 
@@ -246,8 +271,8 @@ the squashfs cache is keyed by *all* image IDs together. See
 
 ## 🏗 Requirements
 
-Go is needed only when building Tacklebox from source; use the version declared
-by [`go.mod`](go.mod). Creating media with the installed CLI also requires:
+You need Go only to build Tacklebox from source. Use the version in
+[`go.mod`](go.mod). To create media with the installed CLI, you also need:
 
 *   `podman` & `bootc`
 *   `sgdisk` (gdisk)
@@ -274,4 +299,4 @@ just build-xz
 
 ---
 
-Part of the [TunaOS](https://tunaos.org) ecosystem. [Docs](https://tunaos.org) · [Contributing](CONTRIBUTING.md)
+Part of the [TunaOS](https://tunaos.org) ecosystem. [Docs](https://tunaos.org) · [Contribution guide](CONTRIBUTING.md)
