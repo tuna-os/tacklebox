@@ -1,3 +1,4 @@
+<!-- ste-disable-file: this postmortem is a historical record with exact diagnostic output and identifiers -->
 # OPFS streaming and the wasm32 4 GiB ceiling (#156)
 
 Status: **cause found, fixed, measured.** The earlier revision of this doc
