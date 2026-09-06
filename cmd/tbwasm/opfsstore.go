@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -157,7 +156,7 @@ func (a *opfsArena) Put(r io.Reader) (string, int64, error) {
 		}
 	}
 	a.off += n
-	return fmt.Sprintf("%s:%d:%d", a.prefix, start, n), n, nil
+	return formatArenaRef(a.prefix, start, n), n, nil
 }
 
 // Seal flushes the writer so reads see all content. Put becomes invalid
@@ -206,12 +205,10 @@ func (a *opfsArena) reopenLocked() error {
 }
 
 func (a *opfsArena) Open(ref string) (io.ReadCloser, error) {
-	parts := strings.Split(ref, ":")
-	if len(parts) != 3 || parts[0] != a.prefix {
+	prefix, off, ln, err := parseArenaRef(ref)
+	if err != nil || prefix != a.prefix {
 		return nil, fmt.Errorf("bad %s-arena ref %q", a.prefix, ref)
 	}
-	off, _ := strconv.ParseInt(parts[1], 10, 64)
-	ln, _ := strconv.ParseInt(parts[2], 10, 64)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.sealed {

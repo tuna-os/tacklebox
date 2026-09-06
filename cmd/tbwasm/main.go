@@ -271,7 +271,7 @@ func buildIso(_ js.Value, args []js.Value) any {
 			return nil, err
 		}
 		sfsSource := func() (io.ReadCloser, error) {
-			return sfsArena.Open(fmt.Sprintf("s:0:%d", sfsSize))
+			return sfsArena.Open(formatArenaRef("s", 0, sfsSize))
 		}
 		emitProgress("erofs", 1, 1)
 
@@ -474,21 +474,4 @@ func (w *jsChunkWriter) Write(p []byte) (int, error) {
 	w.cb.Invoke(u8)
 	w.written += len(p)
 	return len(p), nil
-}
-
-func splitRef(s string) (repo, tag string, ok bool) {
-	i := -1
-	for j := len(s) - 1; j >= 0; j-- {
-		if s[j] == ':' {
-			i = j
-			break
-		}
-		if s[j] == '/' {
-			break
-		}
-	}
-	if i <= 0 || i == len(s)-1 {
-		return "", "", false
-	}
-	return s[:i], s[i+1:], true
 }
