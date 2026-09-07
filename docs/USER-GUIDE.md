@@ -105,6 +105,13 @@ autologin, networking) are already handled by the embedded baseline
 that runs before your scripts; `TBOX_LIVE_USER` / `TBOX_DESKTOP`
 override its defaults.
 
+`TBOX_CUSTOMIZE_TIMEOUT=<seconds>` optionally bounds the script container (the
+default is disabled). After the scripts finish, Tacklebox commits that
+container with a 600-second deadline. Set
+`TBOX_CUSTOMIZE_COMMIT_TIMEOUT=<seconds>` to change that deadline for large
+images, or set it to `0` to disable the inner deadline. The caller's build or
+job timeout should still provide an outer bound.
+
 ## 3. Media targets
 
 | Target | Flag | What it is |
