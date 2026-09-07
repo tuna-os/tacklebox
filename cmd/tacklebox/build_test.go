@@ -276,6 +276,80 @@ func TestComputePartitions(t *testing.T) {
 		}
 	})
 
+	t.Run("estimateStoreUsage rejects unparsable size", func(t *testing.T) {
+		if _, _, ok := estimateStoreUsage(recipe.MediaRecipe{Size: "huge"}); ok {
+			t.Error("want ok=false for unparsable recipe size")
+		}
+	})
+
+	t.Run("estimateStoreUsage honours ESP override", func(t *testing.T) {
+		// Bigger ESP override leaves less store, so the same 3-env estimate
+		// now exceeds it even though the default-ESP case above fit.
+		needed, store, ok := estimateStoreUsage(recipe.MediaRecipe{
+			Size:       "60G",
+			Partitions: recipe.Partitions{ESP: "40G"},
+			BootableEnvironments: []recipe.BootableEnvironment{
+				{ID: "a", Image: "x"},
+				{ID: "b", Image: "y"},
+				{ID: "c", Image: "z"},
+			},
+		})
+		if !ok {
+			t.Fatal("estimate failed")
+		}
+		if needed <= store {
+			t.Errorf("expected estimated %d > store %d once ESP override eats most of the disk", needed, store)
+		}
+	})
+
+	t.Run("estimateStoreUsage honours explicit store override", func(t *testing.T) {
+		needed, store, ok := estimateStoreUsage(recipe.MediaRecipe{
+			Size:       "60G",
+			Partitions: recipe.Partitions{Store: "5G"},
+			BootableEnvironments: []recipe.BootableEnvironment{
+				{ID: "a", Image: "x"},
+			},
+		})
+		if !ok {
+			t.Fatal("estimate failed")
+		}
+		if store != 5<<30 {
+			t.Errorf("store = %d, want explicit 5G override (%d)", store, uint64(5)<<30)
+		}
+		if needed <= store {
+			t.Errorf("expected estimated %d > explicit 5G store %d", needed, store)
+		}
+	})
+
+	t.Run("estimateStoreUsage honours persist override", func(t *testing.T) {
+		// A large persist override shrinks the remainder-derived store enough
+		// to trip the undersized warning for a single ostree env.
+		needed, store, ok := estimateStoreUsage(recipe.MediaRecipe{
+			Size:       "20G",
+			Partitions: recipe.Partitions{Persist: "15G"},
+			BootableEnvironments: []recipe.BootableEnvironment{
+				{ID: "a", Image: "x"},
+			},
+		})
+		if !ok {
+			t.Fatal("estimate failed")
+		}
+		if needed <= store {
+			t.Errorf("expected estimated %d > store %d once persist override eats most of the disk", needed, store)
+		}
+	})
+
+	t.Run("estimateStoreUsage rejects recipe smaller than esp+persist", func(t *testing.T) {
+		if _, _, ok := estimateStoreUsage(recipe.MediaRecipe{
+			Size: "2G",
+			BootableEnvironments: []recipe.BootableEnvironment{
+				{ID: "a", Image: "x"},
+			},
+		}); ok {
+			t.Error("want ok=false when total size doesn't even cover ESP+persist defaults")
+		}
+	})
+
 	t.Run("partition overrides honoured", func(t *testing.T) {
 		parts, err := computePartitions(recipe.MediaRecipe{
 			Size:        "40G",
