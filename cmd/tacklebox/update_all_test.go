@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,59 @@ import (
 	"testing"
 
 	"github.com/tuna-os/tacklebox/internal/recipe"
+	"github.com/tuna-os/tacklebox/internal/runner"
 )
+
+func TestFindStoreMount(t *testing.T) {
+	origOutput := runner.OutputFn
+	t.Cleanup(func() { runner.OutputFn = origOutput })
+
+	runner.OutputFn = func(name string, args ...string) ([]byte, error) {
+		if name != "findmnt" {
+			t.Fatalf("command = %q, want findmnt", name)
+		}
+		wantArgs := []string{"-n", "-o", "TARGET", "LABEL=TBOX_STORE"}
+		if strings.Join(args, " ") != strings.Join(wantArgs, " ") {
+			t.Fatalf("args = %q, want %q", args, wantArgs)
+		}
+		return []byte("  /run/media/tbox  \n"), nil
+	}
+
+	got, err := findStoreMount()
+	if err != nil {
+		t.Fatalf("findStoreMount: %v", err)
+	}
+	if got != "/run/media/tbox" {
+		t.Fatalf("findStoreMount = %q, want /run/media/tbox", got)
+	}
+}
+
+func TestFindStoreMountErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		output  []byte
+		err     error
+		wantErr string
+	}{
+		{name: "command failure", err: errors.New("findmnt unavailable"), wantErr: "findmnt LABEL=TBOX_STORE"},
+		{name: "empty output", output: []byte(" \n"), wantErr: "TBOX_STORE not mounted"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origOutput := runner.OutputFn
+			t.Cleanup(func() { runner.OutputFn = origOutput })
+			runner.OutputFn = func(string, ...string) ([]byte, error) {
+				return tt.output, tt.err
+			}
+
+			_, err := findStoreMount()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("findStoreMount error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
 
 func TestReadKernelArg(t *testing.T) {
 	// Stub /proc/cmdline by pointing the function at a fixture in tmp.
@@ -144,6 +197,11 @@ func TestRunUpdateAllRecipeParseError(t *testing.T) {
 
 func TestRunUpdateAllStoreMountNotFound(t *testing.T) {
 	newMockRunner(t)
+	origOutput := runner.OutputFn
+	t.Cleanup(func() { runner.OutputFn = origOutput })
+	runner.OutputFn = func(name string, args ...string) ([]byte, error) {
+		return nil, errors.New("TBOX_STORE mount absent")
+	}
 
 	env := baseTestEnv("aurora")
 	r := recipe.MediaRecipe{
