@@ -304,8 +304,23 @@ func (c *Client) ResolveManifest(ref Ref, arch string) (*Manifest, error) {
 		return nil, err
 	}
 	defer resp2.Body.Close()
+	// The platform manifest is asked for BY digest, so the bytes that come
+	// back have to be checked against it. Layer blobs are digest-verified
+	// (see Blob), but those digests are read out of this document: without
+	// this check a substituted manifest names substituted layers and every
+	// downstream verification passes on the attacker's own numbers. Base is
+	// allowed to be a CORS shim rather than the registry itself, so this is
+	// not a hypothetical middlebox.
+	body, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		return nil, fmt.Errorf("platform manifest read: %w", err)
+	}
+	sum := sha256.Sum256(body)
+	if got := "sha256:" + hex.EncodeToString(sum[:]); got != pick.Digest {
+		return nil, fmt.Errorf("platform manifest digest mismatch: got %s want %s", got, pick.Digest)
+	}
 	var pm Manifest
-	if err := json.NewDecoder(resp2.Body).Decode(&pm); err != nil {
+	if err := json.Unmarshal(body, &pm); err != nil {
 		return nil, fmt.Errorf("platform manifest decode: %w", err)
 	}
 	return &pm, nil
