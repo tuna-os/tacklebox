@@ -29,6 +29,19 @@ func customizeTimeoutSeconds() int {
 	return 0
 }
 
+// customizeCommitTimeoutSeconds bounds the podman commit after customization.
+// Keep the existing ten-minute default, but let callers raise it for images
+// whose large writable layers legitimately take longer to commit. Zero
+// disables this inner deadline; the caller's outer deadline still applies.
+func customizeCommitTimeoutSeconds() int {
+	if v := strings.TrimSpace(os.Getenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 600
+}
+
 // CustomizeLive runs the recipe's live_customize scripts inside a container
 // of image and commits the result to a content-addressed derived image,
 // returning its ref. The derived ref is what gets squashed/extracted, so the
@@ -159,11 +172,19 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 	// (tuna-os/tunaOS#1893) — a `stop` before this did not help and itself
 	// wedged, so don't add one. `timeout --foreground` makes a persistent
 	// wedge fail in 600s with a named error instead of hanging until the
-	// caller's job budget cancels the run. It wraps the full prefix so it
-	// works in both root and SUDO_USER contexts.
+	// caller's job budget cancels the run. TBOX_CUSTOMIZE_COMMIT_TIMEOUT can
+	// raise the cap for large images (or disable it with 0). The timeout wraps
+	// the full prefix so it works in both root and SUDO_USER contexts.
 	commitArgs := append(append([]string{}, prefix...), "commit", ctr, tag)
-	bounded := append([]string{"timeout", "--foreground", "600"}, commitArgs...)
+	commitTimeoutSecs := customizeCommitTimeoutSeconds()
+	bounded := commitArgs
+	if commitTimeoutSecs > 0 {
+		bounded = append([]string{"timeout", "--foreground", strconv.Itoa(commitTimeoutSecs)}, commitArgs...)
+	}
 	if err := runner.RunStreamed(bounded[0], bounded[1:]...); err != nil {
+		if commitTimeoutSecs > 0 {
+			return "", fmt.Errorf("commit customized %s (killed if it exceeded the %ds cap — see TBOX_CUSTOMIZE_COMMIT_TIMEOUT): %w", image, commitTimeoutSecs, err)
+		}
 		return "", fmt.Errorf("commit customized %s: %w", image, err)
 	}
 	rmArgs = append(prefix[1:], "rm", "-f", "--ignore", ctr)

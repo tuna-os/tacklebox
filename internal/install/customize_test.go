@@ -127,6 +127,27 @@ func TestCustomizeTimeoutSeconds(t *testing.T) {
 	}
 }
 
+func TestCustomizeCommitTimeoutSeconds(t *testing.T) {
+	t.Setenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT", "")
+	if got := customizeCommitTimeoutSeconds(); got != 600 {
+		t.Fatalf("default = %d, want 600", got)
+	}
+	t.Setenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT", "1200")
+	if got := customizeCommitTimeoutSeconds(); got != 1200 {
+		t.Fatalf("override = %d, want 1200", got)
+	}
+	t.Setenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT", "0")
+	if got := customizeCommitTimeoutSeconds(); got != 0 {
+		t.Fatalf("0 must disable, got %d", got)
+	}
+	for _, invalid := range []string{"soon", "-5"} {
+		t.Setenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT", invalid)
+		if got := customizeCommitTimeoutSeconds(); got != 600 {
+			t.Fatalf("invalid value %q = %d, want the 600 default", invalid, got)
+		}
+	}
+}
+
 // tuna-os/tunaOS#1772: a wedged customize script produced 87 minutes of
 // silence ending in a bare job cancellation, because (a) quiet mode discarded
 // the container's output, (b) nothing bounded the container, and (c) the two
@@ -136,6 +157,7 @@ func TestCustomizeTimeoutSeconds(t *testing.T) {
 func TestCustomizeLiveStreamsWithTimeoutAndMarkers(t *testing.T) {
 	dir := t.TempDir()
 	s := writeScript(t, dir, "customize-live.sh", "echo hi\n")
+	t.Setenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT", "1200")
 
 	origOut, origRun, origStreamed := runner.OutputFn, runner.RunFn, runner.RunStreamedFn
 	t.Cleanup(func() {
@@ -172,8 +194,8 @@ func TestCustomizeLiveStreamsWithTimeoutAndMarkers(t *testing.T) {
 		t.Fatalf("customize run must not carry --timeout by default (tunaOS#1893); args: %s", joined)
 	}
 	commitJoined := strings.Join(streamed[1], " ")
-	if !strings.Contains(commitJoined, "timeout --foreground 600") {
-		t.Fatalf("commit must be bounded by timeout; args: %s", commitJoined)
+	if !strings.Contains(commitJoined, "timeout --foreground 1200") {
+		t.Fatalf("commit must use the configured timeout; args: %s", commitJoined)
 	}
 	if !strings.Contains(commitJoined, "commit") {
 		t.Fatalf("the customize commit must stream too; args: %s", commitJoined)
