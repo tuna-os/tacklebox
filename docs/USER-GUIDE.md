@@ -132,12 +132,13 @@ container with a 600-second deadline. Set
 images, or set it to `0` to disable the inner deadline. The caller's build or
 job timeout should still provide an outer bound.
 
-Scripts run as root with `CAP_SYS_ADMIN`. Workloads that configure network
-interfaces themselves need more: flatpak's bwrap deploy sandbox fails with
-`loopback: Failed RTM_NEWADDR` without `CAP_NET_ADMIN`, so a Flatpak bake
-cannot run in `live_customize` by default. Set
-`TBOX_CUSTOMIZE_CAPS=<cap>[,<cap>...]` (e.g. `net_admin`) to append
-`--cap-add` entries to the customize container; unset keeps the historical
+Scripts run as root with `CAP_SYS_ADMIN`. That is not enough for all
+workloads. Flatpak deploys in a sandbox. The sandbox configures loopback.
+That step fails without `CAP_NET_ADMIN` (`loopback: Failed RTM_NEWADDR`).
+So a Flatpak bake cannot run in `live_customize` by default.
+
+Set `TBOX_CUSTOMIZE_CAPS=<cap>[,<cap>...]` (e.g. `net_admin`) to append
+`--cap-add` entries to the customize container. Unset keeps the historical
 fixed set.
 
 ## 3. Media targets
