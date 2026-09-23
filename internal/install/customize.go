@@ -29,6 +29,19 @@ func customizeTimeoutSeconds() int {
 	return 0
 }
 
+// customizeExtraCaps lists the caller's extra Linux capabilities for the
+// customize container, from comma-separated TBOX_CUSTOMIZE_CAPS. Empties
+// are dropped; podman itself rejects unknown names, so no validation here.
+func customizeExtraCaps() []string {
+	var caps []string
+	for _, c := range strings.Split(os.Getenv("TBOX_CUSTOMIZE_CAPS"), ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			caps = append(caps, c)
+		}
+	}
+	return caps
+}
+
 // customizeCommitTimeoutSeconds bounds the podman commit after customization.
 // Keep the existing ten-minute default, but let callers raise it for images
 // whose large writable layers legitimately take longer to commit. Zero
@@ -54,7 +67,9 @@ func customizeCommitTimeoutSeconds() int {
 //
 // Each script runs as root with CAP_SYS_ADMIN and network (the dakota-iso
 // configure-live environment: enough for flatpak install, dbus-daemon,
-// dconf update). Script i's directory is mounted read-only at
+// dconf update), plus any TBOX_CUSTOMIZE_CAPS extras — flatpak's bwrap
+// deploy sandbox needs CAP_NET_ADMIN for loopback, which the fixed set
+// lacks. Script i's directory is mounted read-only at
 // /run/tbox-customize/<i> and is the script's working directory, so scripts
 // can reference sibling assets relatively.
 func CustomizeLive(image string, scripts []string) (string, error) {
@@ -129,6 +144,17 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 	// default, so nothing changes for hosts that are fine.
 	if net := strings.TrimSpace(os.Getenv("TBOX_CUSTOMIZE_NETWORK")); net != "" {
 		runArgs = append(runArgs, "--network", net)
+	}
+	// Extra Linux capabilities for the customize container: the fixed set
+	// above is root + CAP_SYS_ADMIN,
+	// which is not enough for workloads that configure network interfaces
+	// themselves — flatpak's bwrap deploy sandbox fails with
+	// "loopback: Failed RTM_NEWADDR" without CAP_NET_ADMIN, so a Flatpak
+	// bake cannot run in live_customize. Comma-separated, appended as
+	// --cap-add in order; unset keeps the historical fixed set so nothing
+	// changes for hosts that are fine.
+	for _, cap := range customizeExtraCaps() {
+		runArgs = append(runArgs, "--cap-add", cap)
 	}
 	var inner strings.Builder
 	inner.WriteString("set -eu\n")

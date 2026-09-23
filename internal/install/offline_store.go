@@ -20,6 +20,17 @@ type OfflinePayload struct {
 	Ref    string
 }
 
+// runRootBase is the parent for podman runroot scratch dirs. TMPDIR is
+// honored so hosts with a small or full /tmp can point scratch at roomier
+// storage; /tmp stays the default, and either stays well under podman's
+// 50-character max runroot path.
+func runRootBase() string {
+	if d := strings.TrimSpace(os.Getenv("TMPDIR")); d != "" {
+		return d
+	}
+	return "/tmp"
+}
+
 // BuildOfflineStore pulls images into an isolated podman containers-storage
 // graphroot and packs the result into a read-only squashfs at dstSquashfs.
 //
@@ -59,8 +70,8 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 
 	storeRoot := filepath.Join(stagingRoot, "tbox-offline-store")
 	// Podman enforces a 50-character max runroot path on some runner builds.
-	// Keep runroot in /tmp to stay within that limit even when stagingRoot is long.
-	storeRunRoot, err := os.MkdirTemp("/tmp", "tbox-offrun-")
+	// Keep runroot short (TMPDIR, default /tmp) even when stagingRoot is long.
+	storeRunRoot, err := os.MkdirTemp(runRootBase(), "tbox-offrun-")
 	if err != nil {
 		return fmt.Errorf("create offline runroot: %w", err)
 	}
@@ -180,7 +191,7 @@ func BuildVFSStorePayloads(payloads []OfflinePayload, stagingRoot string) (strin
 	}
 
 	vfsRoot := filepath.Join(stagingRoot, "tbox-vfs-store")
-	vfsRunRoot, err := os.MkdirTemp("/tmp", "tbox-vfsrun-")
+	vfsRunRoot, err := os.MkdirTemp(runRootBase(), "tbox-vfsrun-")
 	if err != nil {
 		return "", fmt.Errorf("create VFS runroot: %w", err)
 	}

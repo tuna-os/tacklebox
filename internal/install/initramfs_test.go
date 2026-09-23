@@ -62,6 +62,9 @@ func TestInitramfsScriptOmitsOnlyMissingModules(t *testing.T) {
 	for _, want := range []string{
 		"for m in tpm2-tss pcsc; do",
 		`/usr/lib/dracut/modules.d/[0-9][0-9]"$m"`,
+		`command -v tpm2 >/dev/null 2>&1 || omit="$omit tpm2-tss"`,
+		`command -v pcscd >/dev/null 2>&1 || omit="$omit pcsc"`,
+		"mkdir -p /var/roothome",
 		`if [ -n "$omit" ]; then run_dracut --omit "$omit"; else run_dracut; fi`,
 	} {
 		if !strings.Contains(s, want) {
