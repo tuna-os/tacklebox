@@ -557,3 +557,18 @@ func TestBuildOfflineStorePayloads_MissingMksquashfsIsHardError(t *testing.T) {
 		t.Error("payload copy did not run before the mksquashfs check")
 	}
 }
+
+func TestRunRootBaseHonorsTmpdir(t *testing.T) {
+	t.Setenv("TMPDIR", "")
+	if got := runRootBase(); got != "/tmp" {
+		t.Fatalf("unset = %q, want /tmp", got)
+	}
+	t.Setenv("TMPDIR", "   ")
+	if got := runRootBase(); got != "/tmp" {
+		t.Fatalf("blank = %q, want /tmp", got)
+	}
+	t.Setenv("TMPDIR", " /var/tmp ")
+	if got := runRootBase(); got != "/var/tmp" {
+		t.Fatalf("set = %q, want /var/tmp", got)
+	}
+}

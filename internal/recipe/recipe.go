@@ -78,7 +78,9 @@ type BootableEnvironment struct {
 	// installs ignore it). Each script runs as root inside the container
 	// with CAP_SYS_ADMIN and network — enough for `flatpak install`,
 	// dbus-daemon, dconf update, etc. (the dakota-iso configure-live
-	// pattern). The container is committed to a content-addressed derived
+	// pattern) — plus TBOX_CUSTOMIZE_CAPS extras for workloads like
+	// flatpak's bwrap sandbox that need CAP_NET_ADMIN. The container is
+	// committed to a content-addressed derived
 	// image which is then squashed/extracted instead of the original, so
 	// unchanged image+scripts hit the existing squashfs cache.
 	//

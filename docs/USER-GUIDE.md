@@ -96,8 +96,8 @@ do not want to start from an empty file.
 
 ### modes
 
-Each environment lists one or both boot modes; every mode becomes its own
-systemd-boot entry (`<id>-<mode>`), so an env with both shows up twice in the
+Each environment lists one or both boot modes. Every mode becomes its own
+systemd-boot entry (`<id>-<mode>`). So an env with both shows up twice in the
 boot menu.
 
 | Mode | Kernel cmdline it adds (block/USB media) | Effect |
@@ -106,13 +106,13 @@ boot menu.
 | `persistent` | `tacklebox.persist=LABEL=TBOX_PERSIST` | Writes land on the media's `TBOX_PERSIST` partition and survive reboots. |
 
 `live` is the only meaningful mode for ISO targets — an ISO has no persist
-partition, and `--iso` installs every env in live mode regardless. Omitting
-`modes` on an env produced by `recipe-gen` defaults to `["live"]`.
+partition, and `--iso` installs every env in live mode regardless. If an env
+from `recipe-gen` omits `modes`, it defaults to `["live"]`.
 
-These two strings are the only recognised values. Anything else is **not**
-rejected: an unknown mode is treated as `persistent` while still naming the boot
-entry after the string you wrote, so a typo yields a mislabelled entry rather
-than an error.
+These two strings are the only recognised values. Tacklebox does not reject
+anything else. It treats an unknown mode as `persistent` and still names the
+boot entry after the string you wrote. So a typo yields a mislabelled entry,
+not an error.
 
 ### live_customize
 
@@ -131,6 +131,15 @@ container with a 600-second deadline. Set
 `TBOX_CUSTOMIZE_COMMIT_TIMEOUT=<seconds>` to change that deadline for large
 images, or set it to `0` to disable the inner deadline. The caller's build or
 job timeout should still provide an outer bound.
+
+Scripts run as root with `CAP_SYS_ADMIN`. That is not enough for all
+workloads. Flatpak deploys in a sandbox. The sandbox configures loopback.
+That step fails without `CAP_NET_ADMIN` (`loopback: Failed RTM_NEWADDR`).
+So a Flatpak bake cannot run in `live_customize` by default.
+
+Set `TBOX_CUSTOMIZE_CAPS=<cap>[,<cap>...]` (e.g. `net_admin`) to append
+`--cap-add` entries to the customize container. Unset keeps the historical
+fixed set.
 
 ## 3. Media targets
 

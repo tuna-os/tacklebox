@@ -127,6 +127,65 @@ func TestCustomizeTimeoutSeconds(t *testing.T) {
 	}
 }
 
+func TestCustomizeExtraCaps(t *testing.T) {
+	t.Setenv("TBOX_CUSTOMIZE_CAPS", "")
+	if got := customizeExtraCaps(); len(got) != 0 {
+		t.Fatalf("unset = %v, want no extras", got)
+	}
+	t.Setenv("TBOX_CUSTOMIZE_CAPS", "net_admin")
+	if got := customizeExtraCaps(); len(got) != 1 || got[0] != "net_admin" {
+		t.Fatalf("single = %v, want [net_admin]", got)
+	}
+	// Spacing and empty segments are caller sloppiness, not extra caps.
+	t.Setenv("TBOX_CUSTOMIZE_CAPS", " net_admin ,,sys_time ")
+	if got := customizeExtraCaps(); len(got) != 2 || got[0] != "net_admin" || got[1] != "sys_time" {
+		t.Fatalf("list = %v, want [net_admin sys_time]", got)
+	}
+}
+
+func TestCustomizeExtraCapsReachPodmanRun(t *testing.T) {
+	dir := t.TempDir()
+	s := writeScript(t, dir, "customize-live.sh", "echo hi\n")
+	t.Setenv("TBOX_CUSTOMIZE_CAPS", "net_admin")
+	t.Setenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT", "0")
+
+	origOut, origRun, origStreamed := runner.OutputFn, runner.RunFn, runner.RunStreamedFn
+	t.Cleanup(func() {
+		runner.OutputFn, runner.RunFn, runner.RunStreamedFn = origOut, origRun, origStreamed
+	})
+
+	runner.OutputFn = func(name string, args ...string) ([]byte, error) {
+		return []byte("sha256:testimageid\n"), nil
+	}
+	runner.RunFn = func(stdin io.Reader, name string, args ...string) error {
+		if len(args) > 0 && args[0] == "image" { // `image exists` → cache miss
+			return errUncached
+		}
+		return nil
+	}
+	var streamed [][]string
+	runner.RunStreamedFn = func(stdin io.Reader, name string, args ...string) error {
+		streamed = append(streamed, append([]string{name}, args...))
+		return nil
+	}
+
+	if _, err := CustomizeLive("ghcr.io/example/image:latest", []string{s}); err != nil {
+		t.Fatal(err)
+	}
+	if len(streamed) < 1 {
+		t.Fatalf("expected a streamed customize run, got %d calls", len(streamed))
+	}
+	joined := strings.Join(streamed[0], " ")
+	if !strings.Contains(joined, "--cap-add sys_admin") {
+		t.Fatalf("fixed cap set must stay first; args: %s", joined)
+	}
+	idx := strings.Index(joined, "--cap-add sys_admin")
+	rest := joined[idx+len("--cap-add sys_admin"):]
+	if !strings.Contains(rest, "--cap-add net_admin") {
+		t.Fatalf("TBOX_CUSTOMIZE_CAPS must append --cap-add after the fixed set; args: %s", joined)
+	}
+}
+
 func TestCustomizeCommitTimeoutSeconds(t *testing.T) {
 	t.Setenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT", "")
 	if got := customizeCommitTimeoutSeconds(); got != 600 {
