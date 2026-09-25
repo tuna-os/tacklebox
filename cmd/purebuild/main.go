@@ -160,9 +160,15 @@ func main() {
 	// exercised them and the two paths could drift unobserved — this shared
 	// call is what makes a native build byte-comparable with a browser one.
 	//
-	// Best-effort by design. The overlay is produced *by* the live customize
-	// step, so requiring one would deadlock every new variant; absence just
-	// means the plain baseline below.
+	// Best-effort only for absence: applied=false, err=nil means no overlay
+	// was published for this variant, which is the common case and not an
+	// error — requiring one would deadlock every new variant, since the
+	// overlay is produced by the very build that would then require it. A
+	// non-nil err means an overlay exists but failed to apply, which is
+	// fatal here (and in cmd/tbwasm, which used to swallow this case —
+	// tacklebox#307): shipping the plain baseline when a real overlay
+	// failed to apply is exactly the drift this shared call exists to
+	// prevent.
 	if applied, err := purefs.GraftLiveOverlay(root, store, client, *image, manifest,
 		func(i, n int) { fmt.Printf("\r    overlay layer %d/%d", i+1, n) }); err != nil {
 		log.Fatal(err)
