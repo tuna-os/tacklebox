@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/diskfs/go-diskfs v1.9.4
-	github.com/klauspost/compress v1.20.0
+	github.com/klauspost/compress v1.20.1
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.17
 	golang.org/x/sys v0.48.0
