@@ -252,6 +252,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	// squashfs. The store lands at /var/lib/containers/storage inside the
 	// squashfs — no separate store.squashfs.img, no additionalimagestores,
 	// no driver matching required (tuna-os/tacklebox#92).
+	if err := install.SetSquashCompressor(r.SharedStore.Compressor); err != nil {
+		return err
+	}
+	defer func() { _ = install.SetSquashCompressor("") }()
+
 	useVFS := false
 	if len(r.OfflinePayloads) > 0 && tgt.InstallMode() == target.InstallModeLive && allComposefs(r) {
 		payloads := make([]install.OfflinePayload, 0, len(r.OfflinePayloads))

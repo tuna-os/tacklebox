@@ -104,6 +104,76 @@ func TestSquashCacheName(t *testing.T) {
 	}
 }
 
+func TestSquashCompArgs(t *testing.T) {
+	t.Setenv("TACKLEBOX_SQUASHFS_COMPRESSOR", "")
+	t.Cleanup(func() { _ = SetSquashCompressor("") })
+
+	for _, tc := range []struct {
+		compressor, level, want string
+	}{
+		{"", "3", "-comp zstd -Xcompression-level 3"},
+		{"zstd", "15", "-comp zstd -Xcompression-level 15"},
+		{"xz", "3", "-comp xz"},
+		{"xz", "15", "-comp xz"},
+		{"gzip", "3", "-comp gzip -Xcompression-level 6"},
+		{"gzip", "15", "-comp gzip -Xcompression-level 9"},
+		{"lz4", "3", "-comp lz4"},
+		{"lz4", "15", "-comp lz4 -Xhc"},
+		{"lzo", "3", "-comp lzo"},
+	} {
+		if err := SetSquashCompressor(tc.compressor); err != nil {
+			t.Fatalf("SetSquashCompressor(%q): %v", tc.compressor, err)
+		}
+		if got := squashCompArgs(tc.level); got != tc.want {
+			t.Errorf("compressor=%q level=%s: got %q, want %q", tc.compressor, tc.level, got, tc.want)
+		}
+	}
+
+	if err := SetSquashCompressor("zst"); err == nil {
+		t.Error("unknown compressor must be rejected")
+	}
+
+	// The env var overrides the recipe.
+	_ = SetSquashCompressor("zstd")
+	t.Setenv("TACKLEBOX_SQUASHFS_COMPRESSOR", "xz")
+	if got := squashCompArgs("3"); got != "-comp xz" {
+		t.Errorf("env override: got %q", got)
+	}
+}
+
+// Changing the compressor must change the cache key, or a cached zstd
+// squashfs would be reused for a recipe that asked for xz. The default
+// (zstd) key must stay what it was so existing caches keep hitting.
+func TestSquashCacheName_Compressor(t *testing.T) {
+	t.Setenv("TACKLEBOX_SQUASHFS_COMPRESSOR", "")
+	t.Cleanup(func() { _ = SetSquashCompressor("") })
+
+	_ = SetSquashCompressor("")
+	def := squashCacheName([]string{"sha1"}, "3", "131072")
+	_ = SetSquashCompressor("zstd")
+	if squashCacheName([]string{"sha1"}, "3", "131072") != def {
+		t.Error("explicit zstd must match the default cache key")
+	}
+	_ = SetSquashCompressor("xz")
+	if squashCacheName([]string{"sha1"}, "3", "131072") == def {
+		t.Error("xz must not share the zstd cache key")
+	}
+}
+
+func TestCombinedSquashScript_Compressor(t *testing.T) {
+	t.Setenv("TACKLEBOX_SQUASHFS_COMPRESSOR", "")
+	t.Cleanup(func() { _ = SetSquashCompressor("") })
+	_ = SetSquashCompressor("xz")
+
+	s := combinedSquashScript([]LiveEnv{{ID: "a", Image: "img"}}, "/usr/bin/mksquashfs", "/tmp/out.sfs", "3", "131072")
+	if !strings.Contains(s, "-noappend -comp xz -b 131072") {
+		t.Errorf("want xz flags in script:\n%s", s)
+	}
+	if strings.Contains(s, "zstd") {
+		t.Errorf("xz script still mentions zstd:\n%s", s)
+	}
+}
+
 func TestCombinedSquashScript(t *testing.T) {
 	envs := []LiveEnv{
 		{ID: "bluefin", Image: "ghcr.io/ublue-os/bluefin:stable"},

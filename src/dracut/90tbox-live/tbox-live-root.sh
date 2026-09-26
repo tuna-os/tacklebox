@@ -112,6 +112,11 @@ echo ">>> Tacklebox: live root from $dev ($livedir/$squashimg, overlay ${ovlsize
 
 mkdir -p /run/initramfs/live /run/rootfsbase /run/tbox-overlay
 
+# fail: under --wait nothing retries, so die. From the initqueue, warn and
+# exit non-zero so the next settled pass retries. This is the script's top
+# level, not a function, so it must be `exit`: a top-level `return` is an
+# error in bash that does NOT stop the script (tuna-os/tunaOS#2705), so
+# every failure fell through to the next step.
 fail() {
     if [ "$wait" = "1" ]; then
         die "$1"
@@ -121,36 +126,60 @@ fail() {
     fi
 }
 
-mount -o ro "$dev" /run/initramfs/live \
-    || fail "Tacklebox: cannot mount live device $dev" || return 1
+# Retried passes must not trip over the previous pass's mount. Plain shell
+# over /proc/mounts: a minimal initramfs may carry neither mountpoint(1)
+# nor grep.
+_mounted() {
+    while read -r _ _mp _; do
+        [ "$_mp" = "$1" ] && return 0
+    done < /proc/mounts
+    return 1
+}
+
+if ! _mounted /run/initramfs/live; then
+    mount -o ro "$dev" /run/initramfs/live \
+        || fail "Tacklebox: cannot mount live device $dev" || exit 1
+fi
 
 sfs="/run/initramfs/live/$livedir/$squashimg"
 if [ ! -f "$sfs" ]; then
-    fail "Tacklebox: $sfs not found on live device" || return 1
+    fail "Tacklebox: $sfs not found on live device" || exit 1
 fi
 
 # -t auto: the rootfs image may be squashfs (mksquashfs path) or erofs
 # (pure-Go writer path) — the kernel probes; both modules are installed.
-mount -o ro,loop "$sfs" /run/rootfsbase \
-    || fail "Tacklebox: cannot loop-mount $sfs" || return 1
+#
+# A loop-mount failure here is not transient: the medium is mounted and the
+# file exists, so the kernel cannot read the image (most often a squashfs
+# compressor the kernel was built without, e.g. zstd on Arch Linux ARM's
+# linux-aarch64). Retrying on every initqueue pass only hangs the boot
+# until the initqueue timeout, so die straight away.
+if ! _mounted /run/rootfsbase; then
+    mount -o ro,loop "$sfs" /run/rootfsbase \
+        || die "Tacklebox: cannot loop-mount $sfs (check the kernel supports its squashfs compressor; see shared_store.compressor)"
+fi
 
 delta=$(getarg tacklebox.live.delta)
 if [ -n "$delta" ]; then
     dsfs="/run/initramfs/live/$livedir/$delta"
     if [ ! -f "$dsfs" ]; then
-        fail "Tacklebox: $dsfs not found on live device" || return 1
+        fail "Tacklebox: $dsfs not found on live device" || exit 1
     fi
     mkdir -p /run/tbox-delta
-    mount -o ro,loop "$dsfs" /run/tbox-delta \
-        || fail "Tacklebox: cannot loop-mount $dsfs" || return 1
+    if ! _mounted /run/tbox-delta; then
+        mount -o ro,loop "$dsfs" /run/tbox-delta \
+            || die "Tacklebox: cannot loop-mount $dsfs (check the kernel supports its squashfs compressor; see shared_store.compressor)"
+    fi
 fi
 
 # Dedicated tmpfs for the writable upper layer: /run itself is capped at
 # half of RAM and shared with everything else; the live overlay needs its
 # own (recipe-tunable) budget — see liveKernelCmdline in build.go for why
 # the default is 8 GiB.
-mount -t tmpfs -o "mode=0755,size=${ovlsize}m" tbox-overlay /run/tbox-overlay \
-    || fail "Tacklebox: cannot mount overlay tmpfs" || return 1
+if ! _mounted /run/tbox-overlay; then
+    mount -t tmpfs -o "mode=0755,size=${ovlsize}m" tbox-overlay /run/tbox-overlay \
+        || fail "Tacklebox: cannot mount overlay tmpfs" || exit 1
+fi
 mkdir -p /run/tbox-overlay/upper /run/tbox-overlay/work
 
 : > /run/tacklebox-live-done
