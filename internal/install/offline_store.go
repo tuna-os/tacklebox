@@ -398,19 +398,62 @@ func copyLocalImageToOfflineStoreAs(source, ref, storeRoot, storeRunRoot string)
 		timeoutSeconds = parsed
 	}
 
-	dest := fmt.Sprintf("containers-storage:[overlay@%s+%s]%s", storeRoot, storeRunRoot, ref)
-	fmt.Printf(">>> [offline-store] copying %s -> %s in embedded store\n", source, ref)
+	storeName := offlineStoreName(ref)
+	storePrefix := fmt.Sprintf("containers-storage:[overlay@%s+%s]", storeRoot, storeRunRoot)
+	if storeName != ref {
+		fmt.Printf(">>> [offline-store] copying %s -> %s in embedded store (stored as %s)\n", source, ref, storeName)
+	} else {
+		fmt.Printf(">>> [offline-store] copying %s -> %s in embedded store\n", source, ref)
+	}
 
 	script := fmt.Sprintf(
 		"timeout %d skopeo copy --remove-signatures %s %s",
 		timeoutSeconds,
 		shellEsc("containers-storage:"+source),
-		shellEsc(dest),
+		shellEsc(storePrefix+storeName),
 	)
+	if storeName != ref {
+		// Prove the digest ref the installer will use resolves in the store.
+		script += " && skopeo inspect --raw " + shellEsc(storePrefix+ref) + " >/dev/null"
+	}
 	if err := RunUnshare(script); err != nil {
 		return fmt.Errorf("copy %s into offline store from local containers-storage: %w", source, err)
 	}
 	return nil
+}
+
+// offlineStoreName returns the name an offline payload is written under.
+//
+// A digest-pinned ref (name@sha256:..., name:tag@sha256:...) cannot be the
+// skopeo destination: containers-storage keeps layers unpacked, not as the
+// registry's compressed blobs (zstd:chunked, gzip), so copying out of it
+// must rewrite the manifest's layer digests, and c/image refuses that for a
+// destination that names a digest ("Destination specifies a digest";
+// --preserve-digests fails the same way).  Writing under a tag instead
+// works, and containers-storage also records the source's original manifest
+// under its digest, so containers-storage:name@sha256:... still resolves
+// (by digest within the same repository) for the installer and bootc.
+//
+// The tag is the ref's own tag when it has one, otherwise "<algo>-<hex>"
+// derived from the digest. Non-digest refs are returned unchanged.
+func offlineStoreName(ref string) string {
+	at := strings.LastIndex(ref, "@")
+	if at < 0 {
+		return ref
+	}
+	name, digest := ref[:at], ref[at+1:]
+	algo, hex, ok := strings.Cut(digest, ":")
+	if !ok || name == "" {
+		return ref
+	}
+	if slash := strings.LastIndex(name, "/"); strings.Contains(name[slash+1:], ":") {
+		return name
+	}
+	tag := algo + "-" + hex
+	if len(tag) > 128 {
+		tag = tag[:128]
+	}
+	return name + ":" + tag
 }
 
 // ProvisionStoreMountBlock writes two files into envRoot so that the deployed
