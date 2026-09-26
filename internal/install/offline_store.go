@@ -151,10 +151,10 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 	}
 
 	// mksquashfs inside podman unshare for correct UID mappings.
-	sqScript := fmt.Sprintf("%s %s %s -noappend -comp zstd -Xcompression-level %s -b %s -processors 4",
-		mksquashfsPath, shellEsc(storeRoot), shellEsc(tmpPath), level, block)
+	sqScript := fmt.Sprintf("%s %s %s -noappend %s -b %s -processors 4",
+		mksquashfsPath, shellEsc(storeRoot), shellEsc(tmpPath), squashCompArgs(level), block)
 
-	fmt.Printf(">>> [offline-store] mksquashfs %s -> %s (zstd-%s, podman unshare)\n", storeRoot, dstSquashfs, level)
+	fmt.Printf(">>> [offline-store] mksquashfs %s -> %s (%s, podman unshare)\n", storeRoot, dstSquashfs, squashCompArgs(level))
 	if err := RunUnshare(sqScript); err != nil {
 		return fmt.Errorf("mksquashfs offline store: %w", err)
 	}
