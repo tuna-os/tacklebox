@@ -37,6 +37,10 @@ COPY . .
 # Static-as-possible binary so the runtime image only needs glibc.
 # `-s -w` strips debug symbols; saves ~5 MiB.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/tacklebox ./cmd/tacklebox
+# purebuild: the unprivileged pure-Go live-ISO builder (no sudo, podman or
+# dracut). Shipped so consumers such as corral's bootc extension can build a
+# live ISO from a published image without cloning this repo.
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/purebuild ./cmd/purebuild
 
 # ─── Runtime stage ───────────────────────────────────────────────────────────
 FROM ${RUNTIME_IMAGE}
@@ -62,6 +66,7 @@ RUN dnf -y install --setopt=install_weak_deps=False \
     && rm -rf /var/cache/dnf
 
 COPY --from=build /out/tacklebox /usr/local/bin/tacklebox
+COPY --from=build /out/purebuild /usr/local/bin/purebuild
 
 LABEL org.opencontainers.image.source="https://github.com/tuna-os/tacklebox"
 LABEL org.opencontainers.image.description="Tacklebox — bootc → bootable media orchestrator"
