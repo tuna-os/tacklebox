@@ -572,3 +572,57 @@ func TestRunRootBaseHonorsTmpdir(t *testing.T) {
 		t.Fatalf("set = %q, want /var/tmp", got)
 	}
 }
+
+func TestOfflineStoreName(t *testing.T) {
+	const hex = "4b95c13bcf24e7f19c5a8be64262f5f291a54b125b998af343751b3117a70304"
+	cases := map[string]string{
+		"ghcr.io/example/os:stable":                "ghcr.io/example/os:stable",
+		"localhost:5000/os":                        "localhost:5000/os",
+		"ghcr.io/example/os@sha256:" + hex:         "ghcr.io/example/os:sha256-" + hex,
+		"ghcr.io/example/os:testing@sha256:" + hex: "ghcr.io/example/os:testing",
+		"localhost:5000/os@sha256:" + hex:          "localhost:5000/os:sha256-" + hex,
+		"localhost:5000/team/os:v1@sha256:" + hex:  "localhost:5000/team/os:v1",
+	}
+	for in, want := range cases {
+		if got := offlineStoreName(in); got != want {
+			t.Errorf("offlineStoreName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A digest-pinned payload ref cannot be skopeo's containers-storage
+// destination (the layers are re-encoded, so c/image refuses with
+// "Destination specifies a digest"). It must be stored under a tag, and the
+// digest ref the installer uses must be verified to resolve in the store.
+func TestCopyLocalImageToOfflineStoreDigestRefStoredUnderTag(t *testing.T) {
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
+	t.Setenv("SUDO_USER", "")
+	t.Setenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT", "42")
+
+	oldRunFn := runner.RunFn
+	defer func() { runner.RunFn = oldRunFn }()
+
+	var calls [][]string
+	runner.RunFn = func(_ io.Reader, name string, args ...string) error {
+		calls = append(calls, append([]string{name}, args...))
+		return nil
+	}
+
+	const ref = "ghcr.io/example/os@sha256:4b95c13bcf24e7f19c5a8be64262f5f291a54b125b998af343751b3117a70304"
+	if err := copyLocalImageToOfflineStoreAs(ref, ref, "/tmp/store", "/tmp/run"); err != nil {
+		t.Fatalf("copyLocalImageToOfflineStoreAs returned error: %v", err)
+	}
+
+	want := [][]string{
+		{"podman", "image", "exists", ref},
+		{
+			"podman", "unshare", "--", "sh", "-c",
+			"timeout 42 skopeo copy --remove-signatures 'containers-storage:" + ref + "' " +
+				"'containers-storage:[overlay@/tmp/store+/tmp/run]ghcr.io/example/os:sha256-4b95c13bcf24e7f19c5a8be64262f5f291a54b125b998af343751b3117a70304'" +
+				" && skopeo inspect --raw 'containers-storage:[overlay@/tmp/store+/tmp/run]" + ref + "' >/dev/null",
+		},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls mismatch\n got: %#v\nwant: %#v", calls, want)
+	}
+}
