@@ -71,9 +71,13 @@ type ImageFacts struct {
 	FileCount  int    `json:"fileCount"`
 	PkgManager string `json:"pkgManager"`
 	RepoFamily string `json:"repoFamily"`
+	// SuggestedFlatpaks is the image's own flatpak preinstall.d set
+	// (see PreinstallRefs), so the builder can show what the live
+	// session is expected to carry.
+	SuggestedFlatpaks []string `json:"suggestedFlatpaks"`
 }
 
-func Introspect(root *oci.Node) ImageFacts {
+func Introspect(root *oci.Node, store oci.BlobStore) ImageFacts {
 	facts := ImageFacts{Desktop: DetectDesktop(root)}
 	if mods := root.Lookup("usr/lib/modules"); mods != nil {
 		for name := range mods.Children {
@@ -93,6 +97,7 @@ func Introspect(root *oci.Node) ImageFacts {
 		}
 	}
 	facts.PkgManager, facts.RepoFamily = DetectPackaging(root)
+	facts.SuggestedFlatpaks = SuggestedFlatpaks(root, store)
 	root.Walk(func(_ string, n *oci.Node) error {
 		if n.Type == oci.TypeFile {
 			facts.FileCount++

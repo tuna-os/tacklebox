@@ -57,6 +57,18 @@ It confirms assembly of the live root with the same gate that CI runs daily.
 with the session from the image. It enables NetworkManager when present and
 masks suspend during the live session.
 
+The baseline also installs the flatpaks that the image itself declares. Flatpak
+1.16 and later read these declarations from `/usr/share/flatpak/preinstall.d`
+and `/etc/flatpak/preinstall.d`. The baseline runs
+`flatpak preinstall --system -y --noninteractive` and pins each new runtime. The
+installer copies the live `/var/lib/flatpak` to the target, so the installed
+system gets the same set. If the install fails, the build stops.
+
+Flatpak needs `CAP_NET_ADMIN` to deploy on some hosts. If `bwrap` reports
+`loopback: Failed RTM_NEWADDR`, set `TBOX_CUSTOMIZE_CAPS=NET_ADMIN`. Set
+`TBOX_FLATPAK_PREINSTALL=0` to skip this step. Keep flatpaks for the live
+session only, such as the installer, in your own `live_customize` script.
+
 ## 2. Recipes
 
 The media has one JSON recipe:
@@ -212,6 +224,11 @@ Torito. Kernel and firmware tests validate all output.
 `cmd/purebuild` is the native CLI for this core. `cmd/tbwasm` compiles the same
 code to WebAssembly for the [browser builder](https://tunaos-iso-builder.trogdor30001.workers.dev).
 See `docs/iso-builder-guide.md` in the tunaOS repository for its user guide.
+
+`purebuild` cannot run `flatpak preinstall`. The live overlay gives the ISO its
+flatpaks. When the image declares a flatpak that the overlay does not supply,
+`purebuild` shows a warning. With `--strict`, the build stops instead. The
+browser builder shows the declared list after it reads the image.
 
 `purebuild --ddi <url-or-dir> [--ddi-stem <stem>]` accepts a second input type
 beside OCI images. It accepts a systemd-sysupdate v1 artifact set, such as
