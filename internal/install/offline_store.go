@@ -57,13 +57,16 @@ func BuildOfflineStore(images []string, stagingRoot, dstSquashfs string, pruneSo
 	for _, image := range images {
 		payloads = append(payloads, OfflinePayload{Source: image, Ref: image})
 	}
-	return BuildOfflineStorePayloads(payloads, stagingRoot, dstSquashfs, pruneSourceImages...)
+	prune := len(pruneSourceImages) > 0 && pruneSourceImages[0]
+	return BuildOfflineStorePayloads(payloads, stagingRoot, dstSquashfs, "", prune)
 }
 
 // BuildOfflineStorePayloads copies each payload Source into the embedded
 // store under payload Ref. Ref is therefore the stable name visible to the
 // live installer, independent of whether the builder used localhost/ images.
-func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquashfs string, pruneSourceImages ...bool) error {
+// compression is the recipe's compression setting; the store squashfs uses
+// the same mksquashfs parameters as the environment squashfs images.
+func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquashfs, compression string, prune bool) error {
 	if len(payloads) == 0 {
 		return nil
 	}
@@ -109,7 +112,6 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 
 	// Pull each image inside podman unshare: user-namespace overlay gives
 	// correct UID mappings and deduplication across shared base layers.
-	prune := len(pruneSourceImages) > 0 && pruneSourceImages[0]
 	for _, payload := range payloads {
 		if payload.Source == "" || payload.Ref == "" {
 			return fmt.Errorf("offline payload needs both source and ref")
@@ -134,10 +136,7 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 		return fmt.Errorf("mksquashfs not found in PATH: %w", err)
 	}
 
-	level, block := "3", "131072"
-	if os.Getenv("SUPERISO_COMPRESSION") == "release" {
-		level, block = "15", "1048576"
-	}
+	level, block := squashParams(compression)
 
 	// User-writable temp file; sudo-move to final dest after squashfs completes.
 	tmpF, err := os.CreateTemp("", "tbox-store-*.squashfs")

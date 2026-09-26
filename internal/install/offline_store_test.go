@@ -440,7 +440,7 @@ func TestBuildOfflineStorePayloads_FullFlowNoSudo(t *testing.T) {
 	}
 	dst := filepath.Join(tmp, "out", "store.squashfs.img")
 
-	if err := BuildOfflineStorePayloads(payloads, stagingRoot, dst, true); err != nil {
+	if err := BuildOfflineStorePayloads(payloads, stagingRoot, dst, "", true); err != nil {
 		t.Fatalf("BuildOfflineStorePayloads: %v", err)
 	}
 
@@ -502,7 +502,7 @@ func TestBuildOfflineStorePayloads_ReleaseCompression(t *testing.T) {
 
 	if err := BuildOfflineStorePayloads(
 		[]OfflinePayload{{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"}},
-		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false,
+		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), "", false,
 	); err != nil {
 		t.Fatalf("BuildOfflineStorePayloads: %v", err)
 	}
@@ -510,6 +510,40 @@ func TestBuildOfflineStorePayloads_ReleaseCompression(t *testing.T) {
 	joined := strings.Join(rec.scripts, "\n")
 	if !strings.Contains(joined, "-Xcompression-level 15") || !strings.Contains(joined, "-b 1048576") {
 		t.Errorf("release compression not applied: %q", rec.scripts)
+	}
+}
+
+// The recipe's shared_store.compression applies to the offline store just
+// as it does to the environment squashfs images.
+func TestBuildOfflineStorePayloads_RecipeCompression(t *testing.T) {
+	for _, tc := range []struct {
+		compression, level, block string
+	}{
+		{"", "3", "131072"},
+		{"release", "15", "1048576"},
+		{"max", "15", "1048576"},
+	} {
+		t.Run("compression="+tc.compression, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("SUDO_USER", "")
+			t.Setenv("SUPERISO_COMPRESSION", "")
+			os.Unsetenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT")
+			withFakeMksquashfs(t)
+			rec := stubRunner(t)
+
+			if err := BuildOfflineStorePayloads(
+				[]OfflinePayload{{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"}},
+				filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), tc.compression, false,
+			); err != nil {
+				t.Fatalf("BuildOfflineStorePayloads: %v", err)
+			}
+
+			joined := strings.Join(rec.scripts, "\n")
+			want := "-Xcompression-level " + tc.level + " -b " + tc.block + " "
+			if !strings.Contains(joined, want) {
+				t.Errorf("mksquashfs params: want %q in %q", want, rec.scripts)
+			}
+		})
 	}
 }
 
@@ -525,7 +559,7 @@ func TestBuildOfflineStorePayloads_RejectsEmptyPayloadFields(t *testing.T) {
 		{Source: "localhost/app:dev", Ref: ""},
 	} {
 		err := BuildOfflineStorePayloads([]OfflinePayload{p},
-			filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false)
+			filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), "", false)
 		if err == nil {
 			t.Fatalf("payload %+v: expected error, got nil", p)
 		}
@@ -546,7 +580,7 @@ func TestBuildOfflineStorePayloads_MissingMksquashfsIsHardError(t *testing.T) {
 
 	err := BuildOfflineStorePayloads(
 		[]OfflinePayload{{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"}},
-		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false,
+		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), "", false,
 	)
 	if err == nil || !strings.Contains(err.Error(), "mksquashfs not found in PATH") {
 		t.Fatalf("error = %v, want 'mksquashfs not found in PATH'", err)
