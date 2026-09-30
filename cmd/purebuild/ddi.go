@@ -153,7 +153,16 @@ func newDdiFetcher(base string) *ddiFetcher {
 }
 
 func (f *ddiFetcher) open(name string) (io.ReadCloser, error) {
-	if strings.HasPrefix(f.base, "http://") || strings.HasPrefix(f.base, "https://") {
+	// Plaintext is refused, not downgraded to a warning. SHA256SUMS travels
+	// the same channel as the artifacts it covers and carries no signature,
+	// so on http:// an attacker who can rewrite the artifacts rewrites the
+	// digests to match and the check in ResolveDdiRelease passes on their
+	// own numbers — for a kernel and root filesystem that go straight into
+	// a bootable ISO.
+	if strings.HasPrefix(f.base, "http://") {
+		return nil, fmt.Errorf("DDI source %s is plaintext http:// — use https:// or a local directory path (the SHA256SUMS manifest is unsigned, so a plaintext fetch verifies nothing)", f.base)
+	}
+	if strings.HasPrefix(f.base, "https://") {
 		resp, err := http.Get(f.base + "/" + name)
 		if err != nil {
 			return nil, err

@@ -4,11 +4,11 @@ This document carries the workflow that turns `scripts/ddi-smoke.sh` into
 the **cayo native `purebuild --ddi` smoke in tacklebox CI** called for by
 [tacklebox#172](https://github.com/tuna-os/tacklebox/issues/172).
 
-It lives here rather than at `.github/workflows/ddi-smoke.yml` because the
-automation app that authors agent PRs in this repo does not carry the
-GitHub App `workflows` permission, so a push touching `.github/workflows/`
-is rejected server-side. Everything else — the smoke script itself, the
-checks, this wiring — ships in the PR.
+This document contains the workflow instead of
+`.github/workflows/ddi-smoke.yml`. The automation app that authors agent PRs
+does not have the GitHub App `workflows` permission. Thus, the server rejects
+a push that changes `.github/workflows/`. The PR contains the smoke script,
+checks, and this workflow definition.
 
 **To adopt:** save the YAML below as `.github/workflows/ddi-smoke.yml`,
 commit, and push with a token that has `workflows` permission. That is the
@@ -17,17 +17,19 @@ which is already in the tree.
 
 ## Why this smoke
 
-- It exercises the **live** frostyard/snosi cayo channel end-to-end:
-  SHA256SUMS manifest resolution, UKI PE section extraction, tbox
-  scripts-only initrd overlay, host systemd-boot BLS entry, ISO wrap.
-- cayo is snosi's designated small CI-smoke channel (UKI + ~1.4 GB
-  `root.raw.xz`); the build is a fetch, two xz streams and an ISO wrap
-  (~7 min) versus the multi-GB snowfield desktop cell.
-- It runs **daily** (like ci.yml's 04:20 live-ISO signal) so silent
-  upstream drift — mkosi renames, manifest format changes, EROFS →
-  squashfs switch, dropped artifacts — pages this repo instead of a
-  downstream. Deliberately **not** on every PR: it pulls ~1.4 GB and
-  writes a multi-GB ISO.
+- It tests the **live** frostyard/snosi cayo channel from start to finish. The
+  steps resolve the SHA256SUMS manifest and extract sections of the UKI PE.
+  They add the scripts-only tbox overlay to the initrd. They create a BLS entry
+  for systemd-boot on the host and wrap the ISO.
+- cayo is the small smoke channel in CI for snosi. It has a UKI and an about
+  1.4 GB `root.raw.xz`. Its build fetches data, runs two xz streams, and wraps
+  an ISO in about seven minutes. The snowfield
+  desktop cell is multiple gigabytes.
+- It runs **daily**, similar to the live ISO signal in ci.yml at 04:20. Thus,
+  this repository reports silent upstream drift before a downstream project.
+  Drift includes mkosi renames, manifest changes, filesystem changes, and lost
+  artifacts. It does not run on every PR. It gets about 1.4 GB and writes an
+  ISO of multiple gigabytes.
 - No boot gate: the DDI boot proof (browser-built snowfield → LUKS
   install → reboot under QEMU) is the iso-builder full-matrix's DDI cell.
 

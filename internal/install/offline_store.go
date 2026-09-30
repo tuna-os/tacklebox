@@ -20,6 +20,17 @@ type OfflinePayload struct {
 	Ref    string
 }
 
+// runRootBase is the parent for podman runroot scratch dirs. TMPDIR is
+// honored so hosts with a small or full /tmp can point scratch at roomier
+// storage; /tmp stays the default, and either stays well under podman's
+// 50-character max runroot path.
+func runRootBase() string {
+	if d := strings.TrimSpace(os.Getenv("TMPDIR")); d != "" {
+		return d
+	}
+	return "/tmp"
+}
+
 // BuildOfflineStore pulls images into an isolated podman containers-storage
 // graphroot and packs the result into a read-only squashfs at dstSquashfs.
 //
@@ -46,21 +57,24 @@ func BuildOfflineStore(images []string, stagingRoot, dstSquashfs string, pruneSo
 	for _, image := range images {
 		payloads = append(payloads, OfflinePayload{Source: image, Ref: image})
 	}
-	return BuildOfflineStorePayloads(payloads, stagingRoot, dstSquashfs, pruneSourceImages...)
+	prune := len(pruneSourceImages) > 0 && pruneSourceImages[0]
+	return BuildOfflineStorePayloads(payloads, stagingRoot, dstSquashfs, "", prune)
 }
 
 // BuildOfflineStorePayloads copies each payload Source into the embedded
 // store under payload Ref. Ref is therefore the stable name visible to the
 // live installer, independent of whether the builder used localhost/ images.
-func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquashfs string, pruneSourceImages ...bool) error {
+// compression is the recipe's compression setting; the store squashfs uses
+// the same mksquashfs parameters as the environment squashfs images.
+func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquashfs, compression string, prune bool) error {
 	if len(payloads) == 0 {
 		return nil
 	}
 
 	storeRoot := filepath.Join(stagingRoot, "tbox-offline-store")
 	// Podman enforces a 50-character max runroot path on some runner builds.
-	// Keep runroot in /tmp to stay within that limit even when stagingRoot is long.
-	storeRunRoot, err := os.MkdirTemp("/tmp", "tbox-offrun-")
+	// Keep runroot short (TMPDIR, default /tmp) even when stagingRoot is long.
+	storeRunRoot, err := os.MkdirTemp(runRootBase(), "tbox-offrun-")
 	if err != nil {
 		return fmt.Errorf("create offline runroot: %w", err)
 	}
@@ -98,7 +112,6 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 
 	// Pull each image inside podman unshare: user-namespace overlay gives
 	// correct UID mappings and deduplication across shared base layers.
-	prune := len(pruneSourceImages) > 0 && pruneSourceImages[0]
 	for _, payload := range payloads {
 		if payload.Source == "" || payload.Ref == "" {
 			return fmt.Errorf("offline payload needs both source and ref")
@@ -123,10 +136,7 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 		return fmt.Errorf("mksquashfs not found in PATH: %w", err)
 	}
 
-	level, block := "3", "131072"
-	if os.Getenv("SUPERISO_COMPRESSION") == "release" {
-		level, block = "15", "1048576"
-	}
+	level, block := squashParams(compression)
 
 	// User-writable temp file; sudo-move to final dest after squashfs completes.
 	tmpF, err := os.CreateTemp("", "tbox-store-*.squashfs")
@@ -141,10 +151,10 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 	}
 
 	// mksquashfs inside podman unshare for correct UID mappings.
-	sqScript := fmt.Sprintf("%s %s %s -noappend -comp zstd -Xcompression-level %s -b %s -processors 4",
-		mksquashfsPath, shellEsc(storeRoot), shellEsc(tmpPath), level, block)
+	sqScript := fmt.Sprintf("%s %s %s -noappend %s -b %s -processors 4",
+		mksquashfsPath, shellEsc(storeRoot), shellEsc(tmpPath), squashCompArgs(level), block)
 
-	fmt.Printf(">>> [offline-store] mksquashfs %s -> %s (zstd-%s, podman unshare)\n", storeRoot, dstSquashfs, level)
+	fmt.Printf(">>> [offline-store] mksquashfs %s -> %s (%s, podman unshare)\n", storeRoot, dstSquashfs, squashCompArgs(level))
 	if err := RunUnshare(sqScript); err != nil {
 		return fmt.Errorf("mksquashfs offline store: %w", err)
 	}
@@ -180,7 +190,7 @@ func BuildVFSStorePayloads(payloads []OfflinePayload, stagingRoot string) (strin
 	}
 
 	vfsRoot := filepath.Join(stagingRoot, "tbox-vfs-store")
-	vfsRunRoot, err := os.MkdirTemp("/tmp", "tbox-vfsrun-")
+	vfsRunRoot, err := os.MkdirTemp(runRootBase(), "tbox-vfsrun-")
 	if err != nil {
 		return "", fmt.Errorf("create VFS runroot: %w", err)
 	}
@@ -387,19 +397,62 @@ func copyLocalImageToOfflineStoreAs(source, ref, storeRoot, storeRunRoot string)
 		timeoutSeconds = parsed
 	}
 
-	dest := fmt.Sprintf("containers-storage:[overlay@%s+%s]%s", storeRoot, storeRunRoot, ref)
-	fmt.Printf(">>> [offline-store] copying %s -> %s in embedded store\n", source, ref)
+	storeName := offlineStoreName(ref)
+	storePrefix := fmt.Sprintf("containers-storage:[overlay@%s+%s]", storeRoot, storeRunRoot)
+	if storeName != ref {
+		fmt.Printf(">>> [offline-store] copying %s -> %s in embedded store (stored as %s)\n", source, ref, storeName)
+	} else {
+		fmt.Printf(">>> [offline-store] copying %s -> %s in embedded store\n", source, ref)
+	}
 
 	script := fmt.Sprintf(
 		"timeout %d skopeo copy --remove-signatures %s %s",
 		timeoutSeconds,
 		shellEsc("containers-storage:"+source),
-		shellEsc(dest),
+		shellEsc(storePrefix+storeName),
 	)
+	if storeName != ref {
+		// Prove the digest ref the installer will use resolves in the store.
+		script += " && skopeo inspect --raw " + shellEsc(storePrefix+ref) + " >/dev/null"
+	}
 	if err := RunUnshare(script); err != nil {
 		return fmt.Errorf("copy %s into offline store from local containers-storage: %w", source, err)
 	}
 	return nil
+}
+
+// offlineStoreName returns the name an offline payload is written under.
+//
+// A digest-pinned ref (name@sha256:..., name:tag@sha256:...) cannot be the
+// skopeo destination: containers-storage keeps layers unpacked, not as the
+// registry's compressed blobs (zstd:chunked, gzip), so copying out of it
+// must rewrite the manifest's layer digests, and c/image refuses that for a
+// destination that names a digest ("Destination specifies a digest";
+// --preserve-digests fails the same way).  Writing under a tag instead
+// works, and containers-storage also records the source's original manifest
+// under its digest, so containers-storage:name@sha256:... still resolves
+// (by digest within the same repository) for the installer and bootc.
+//
+// The tag is the ref's own tag when it has one, otherwise "<algo>-<hex>"
+// derived from the digest. Non-digest refs are returned unchanged.
+func offlineStoreName(ref string) string {
+	at := strings.LastIndex(ref, "@")
+	if at < 0 {
+		return ref
+	}
+	name, digest := ref[:at], ref[at+1:]
+	algo, hex, ok := strings.Cut(digest, ":")
+	if !ok || name == "" {
+		return ref
+	}
+	if slash := strings.LastIndex(name, "/"); strings.Contains(name[slash+1:], ":") {
+		return name
+	}
+	tag := algo + "-" + hex
+	if len(tag) > 128 {
+		tag = tag[:128]
+	}
+	return name + ":" + tag
 }
 
 // ProvisionStoreMountBlock writes two files into envRoot so that the deployed

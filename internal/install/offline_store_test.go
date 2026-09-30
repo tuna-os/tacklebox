@@ -13,6 +13,8 @@ import (
 )
 
 func TestCopyLocalImageToOfflineStoreUsesLocalContainersStorage(t *testing.T) {
+	// The expected `podman unshare` call only happens in user context.
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
 	t.Setenv("SUDO_USER", "")
 	t.Setenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT", "42")
 
@@ -84,6 +86,7 @@ func TestCopyLocalImageToOfflineStoreRejectsInvalidTimeout(t *testing.T) {
 }
 
 func TestRemoveSourceImageUsesInvokingUserStore(t *testing.T) {
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
 	t.Setenv("SUDO_USER", "builder")
 
 	oldRunFn := runner.RunFn
@@ -437,7 +440,7 @@ func TestBuildOfflineStorePayloads_FullFlowNoSudo(t *testing.T) {
 	}
 	dst := filepath.Join(tmp, "out", "store.squashfs.img")
 
-	if err := BuildOfflineStorePayloads(payloads, stagingRoot, dst, true); err != nil {
+	if err := BuildOfflineStorePayloads(payloads, stagingRoot, dst, "", true); err != nil {
 		t.Fatalf("BuildOfflineStorePayloads: %v", err)
 	}
 
@@ -499,7 +502,7 @@ func TestBuildOfflineStorePayloads_ReleaseCompression(t *testing.T) {
 
 	if err := BuildOfflineStorePayloads(
 		[]OfflinePayload{{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"}},
-		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false,
+		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), "", false,
 	); err != nil {
 		t.Fatalf("BuildOfflineStorePayloads: %v", err)
 	}
@@ -507,6 +510,40 @@ func TestBuildOfflineStorePayloads_ReleaseCompression(t *testing.T) {
 	joined := strings.Join(rec.scripts, "\n")
 	if !strings.Contains(joined, "-Xcompression-level 15") || !strings.Contains(joined, "-b 1048576") {
 		t.Errorf("release compression not applied: %q", rec.scripts)
+	}
+}
+
+// The recipe's shared_store.compression applies to the offline store just
+// as it does to the environment squashfs images.
+func TestBuildOfflineStorePayloads_RecipeCompression(t *testing.T) {
+	for _, tc := range []struct {
+		compression, level, block string
+	}{
+		{"", "3", "131072"},
+		{"release", "15", "1048576"},
+		{"max", "15", "1048576"},
+	} {
+		t.Run("compression="+tc.compression, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("SUDO_USER", "")
+			t.Setenv("SUPERISO_COMPRESSION", "")
+			os.Unsetenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT")
+			withFakeMksquashfs(t)
+			rec := stubRunner(t)
+
+			if err := BuildOfflineStorePayloads(
+				[]OfflinePayload{{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"}},
+				filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), tc.compression, false,
+			); err != nil {
+				t.Fatalf("BuildOfflineStorePayloads: %v", err)
+			}
+
+			joined := strings.Join(rec.scripts, "\n")
+			want := "-Xcompression-level " + tc.level + " -b " + tc.block + " "
+			if !strings.Contains(joined, want) {
+				t.Errorf("mksquashfs params: want %q in %q", want, rec.scripts)
+			}
+		})
 	}
 }
 
@@ -522,7 +559,7 @@ func TestBuildOfflineStorePayloads_RejectsEmptyPayloadFields(t *testing.T) {
 		{Source: "localhost/app:dev", Ref: ""},
 	} {
 		err := BuildOfflineStorePayloads([]OfflinePayload{p},
-			filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false)
+			filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), "", false)
 		if err == nil {
 			t.Fatalf("payload %+v: expected error, got nil", p)
 		}
@@ -543,7 +580,7 @@ func TestBuildOfflineStorePayloads_MissingMksquashfsIsHardError(t *testing.T) {
 
 	err := BuildOfflineStorePayloads(
 		[]OfflinePayload{{Source: "localhost/app:dev", Ref: "ghcr.io/tuna-os/app:stable"}},
-		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), false,
+		filepath.Join(tmp, "staging"), filepath.Join(tmp, "out.squashfs"), "", false,
 	)
 	if err == nil || !strings.Contains(err.Error(), "mksquashfs not found in PATH") {
 		t.Fatalf("error = %v, want 'mksquashfs not found in PATH'", err)
@@ -552,5 +589,74 @@ func TestBuildOfflineStorePayloads_MissingMksquashfsIsHardError(t *testing.T) {
 	// The per-payload copy ran before the squashfs gate.
 	if len(rec.scripts) == 0 {
 		t.Error("payload copy did not run before the mksquashfs check")
+	}
+}
+
+func TestRunRootBaseHonorsTmpdir(t *testing.T) {
+	t.Setenv("TMPDIR", "")
+	if got := runRootBase(); got != "/tmp" {
+		t.Fatalf("unset = %q, want /tmp", got)
+	}
+	t.Setenv("TMPDIR", "   ")
+	if got := runRootBase(); got != "/tmp" {
+		t.Fatalf("blank = %q, want /tmp", got)
+	}
+	t.Setenv("TMPDIR", " /var/tmp ")
+	if got := runRootBase(); got != "/var/tmp" {
+		t.Fatalf("set = %q, want /var/tmp", got)
+	}
+}
+
+func TestOfflineStoreName(t *testing.T) {
+	const hex = "4b95c13bcf24e7f19c5a8be64262f5f291a54b125b998af343751b3117a70304"
+	cases := map[string]string{
+		"ghcr.io/example/os:stable":                "ghcr.io/example/os:stable",
+		"localhost:5000/os":                        "localhost:5000/os",
+		"ghcr.io/example/os@sha256:" + hex:         "ghcr.io/example/os:sha256-" + hex,
+		"ghcr.io/example/os:testing@sha256:" + hex: "ghcr.io/example/os:testing",
+		"localhost:5000/os@sha256:" + hex:          "localhost:5000/os:sha256-" + hex,
+		"localhost:5000/team/os:v1@sha256:" + hex:  "localhost:5000/team/os:v1",
+	}
+	for in, want := range cases {
+		if got := offlineStoreName(in); got != want {
+			t.Errorf("offlineStoreName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A digest-pinned payload ref cannot be skopeo's containers-storage
+// destination (the layers are re-encoded, so c/image refuses with
+// "Destination specifies a digest"). It must be stored under a tag, and the
+// digest ref the installer uses must be verified to resolve in the store.
+func TestCopyLocalImageToOfflineStoreDigestRefStoredUnderTag(t *testing.T) {
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
+	t.Setenv("SUDO_USER", "")
+	t.Setenv("TACKLEBOX_OFFLINE_COPY_TIMEOUT", "42")
+
+	oldRunFn := runner.RunFn
+	defer func() { runner.RunFn = oldRunFn }()
+
+	var calls [][]string
+	runner.RunFn = func(_ io.Reader, name string, args ...string) error {
+		calls = append(calls, append([]string{name}, args...))
+		return nil
+	}
+
+	const ref = "ghcr.io/example/os@sha256:4b95c13bcf24e7f19c5a8be64262f5f291a54b125b998af343751b3117a70304"
+	if err := copyLocalImageToOfflineStoreAs(ref, ref, "/tmp/store", "/tmp/run"); err != nil {
+		t.Fatalf("copyLocalImageToOfflineStoreAs returned error: %v", err)
+	}
+
+	want := [][]string{
+		{"podman", "image", "exists", ref},
+		{
+			"podman", "unshare", "--", "sh", "-c",
+			"timeout 42 skopeo copy --remove-signatures 'containers-storage:" + ref + "' " +
+				"'containers-storage:[overlay@/tmp/store+/tmp/run]ghcr.io/example/os:sha256-4b95c13bcf24e7f19c5a8be64262f5f291a54b125b998af343751b3117a70304'" +
+				" && skopeo inspect --raw 'containers-storage:[overlay@/tmp/store+/tmp/run]" + ref + "' >/dev/null",
+		},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls mismatch\n got: %#v\nwant: %#v", calls, want)
 	}
 }

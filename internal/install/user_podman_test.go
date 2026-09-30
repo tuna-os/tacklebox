@@ -6,8 +6,23 @@ import (
 	"testing"
 )
 
+// Every test below exercises the SUDO_USER drop, which rootContext() disables
+// whenever EUID is 0. Without pinning TACKLEBOX_CONTEXT the whole group
+// depends on who runs `go test`: the drop assertions fail as root, and the
+// "returns the command unchanged" assertions pass for the wrong reason. Pin
+// it, the way TestRootContextForcesDirectCommands and
+// TestUserContextOverridePreservesDrop already do.
+func userContext(t *testing.T) {
+	t.Helper()
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
+}
+
 func TestUserCommandPrefix_NoSudoUser(t *testing.T) {
-	// When SUDO_USER is not set, return the command unchanged.
+	userContext(t)
+	// When SUDO_USER is not set, return the command unchanged. t.Setenv
+	// first so the caller's value is restored afterwards; there is no
+	// t.Unsetenv.
+	t.Setenv("SUDO_USER", "")
 	os.Unsetenv("SUDO_USER")
 	got := UserCommandPrefix("podman")
 	want := []string{"podman"}
@@ -17,8 +32,8 @@ func TestUserCommandPrefix_NoSudoUser(t *testing.T) {
 }
 
 func TestUserCommandPrefix_SudoUserSet(t *testing.T) {
-	os.Setenv("SUDO_USER", "alice")
-	defer os.Unsetenv("SUDO_USER")
+	userContext(t)
+	t.Setenv("SUDO_USER", "alice")
 
 	got := UserCommandPrefix("podman")
 	if len(got) < 6 {
@@ -54,8 +69,8 @@ func TestUserCommandPrefix_SudoUserSet(t *testing.T) {
 }
 
 func TestUserCommandPrefix_SudoUserIsRoot(t *testing.T) {
-	os.Setenv("SUDO_USER", "root")
-	defer os.Unsetenv("SUDO_USER")
+	userContext(t)
+	t.Setenv("SUDO_USER", "root")
 
 	got := UserCommandPrefix("podman")
 	want := []string{"podman"}
@@ -65,8 +80,8 @@ func TestUserCommandPrefix_SudoUserIsRoot(t *testing.T) {
 }
 
 func TestUserCommandPrefix_EmptySudoUser(t *testing.T) {
-	os.Setenv("SUDO_USER", "")
-	defer os.Unsetenv("SUDO_USER")
+	userContext(t)
+	t.Setenv("SUDO_USER", "")
 
 	got := UserCommandPrefix("podman")
 	want := []string{"podman"}
@@ -76,6 +91,8 @@ func TestUserCommandPrefix_EmptySudoUser(t *testing.T) {
 }
 
 func TestUserPodmanPrefix(t *testing.T) {
+	userContext(t)
+	t.Setenv("SUDO_USER", "")
 	os.Unsetenv("SUDO_USER")
 	got := UserPodmanPrefix()
 	want := []string{"podman"}
@@ -85,8 +102,8 @@ func TestUserPodmanPrefix(t *testing.T) {
 }
 
 func TestUserPodmanPrefix_WithSudoUser(t *testing.T) {
-	os.Setenv("SUDO_USER", "bob")
-	defer os.Unsetenv("SUDO_USER")
+	userContext(t)
+	t.Setenv("SUDO_USER", "bob")
 
 	got := UserPodmanPrefix()
 	// Should be UserCommandPrefix("podman").
@@ -96,8 +113,8 @@ func TestUserPodmanPrefix_WithSudoUser(t *testing.T) {
 }
 
 func TestUserCommandPrefix_ArbitraryCommand(t *testing.T) {
-	os.Setenv("SUDO_USER", "carol")
-	defer os.Unsetenv("SUDO_USER")
+	userContext(t)
+	t.Setenv("SUDO_USER", "carol")
 
 	got := UserCommandPrefix("skopeo")
 	if got[len(got)-1] != "skopeo" {

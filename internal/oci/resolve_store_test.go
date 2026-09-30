@@ -177,6 +177,52 @@ func TestResolveManifestNotFound(t *testing.T) {
 	}
 }
 
+func TestResolveManifestRejectsSubstitutedPlatformManifest(t *testing.T) {
+	// The index names one platform manifest by digest; the server answers
+	// that request with a different document, as a compromised registry
+	// mirror or CORS shim would. Its layer digests must never be trusted:
+	// blob verification checks blobs against exactly these numbers.
+	honest := &Manifest{MediaType: "application/vnd.oci.image.manifest.v1+json", Config: Descriptor{Digest: "sha256:honestcfg"}}
+	honestBody, _ := json.Marshal(honest)
+	honestDigest := digestOf(honestBody)
+
+	forged := &Manifest{MediaType: "application/vnd.oci.image.manifest.v1+json", Config: Descriptor{Digest: "sha256:forgedcfg"}}
+	forgedBody, _ := json.Marshal(forged)
+
+	index := &Manifest{
+		MediaType: "application/vnd.oci.image.index.v1+json",
+		Manifests: []Descriptor{
+			{Digest: honestDigest, Platform: &struct {
+				Architecture string `json:"architecture"`
+				Variant      string `json:"variant"`
+			}{Architecture: "amd64"}},
+		},
+	}
+	indexBody, _ := json.Marshal(index)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"token":"tok"}`)
+	})
+	mux.HandleFunc("/v2/test/img/manifests/latest", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(indexBody)
+	})
+	mux.HandleFunc("/v2/test/img/manifests/"+honestDigest, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(forgedBody)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	got, err := c.ResolveManifest(Ref{Repo: "test/img", Tag: "latest"}, "amd64")
+	if err == nil {
+		t.Fatalf("expected a digest mismatch, got manifest with config %s", got.Config.Digest)
+	}
+	if !strings.Contains(err.Error(), "digest mismatch") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestResolveManifestBadJSONDecode(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {

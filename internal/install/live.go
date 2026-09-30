@@ -88,13 +88,13 @@ func InstallLive(image, dstSquashfs, compression string) error {
 MOUNT=$(podman image mount %s)
 trap 'podman image unmount %s' EXIT
 %s "$MOUNT" %s \
-  -noappend -comp zstd -Xcompression-level %s -b %s \
+  -noappend %s -b %s \
   -processors 4 \
   -e proc -e sys -e dev -e run -e tmp \
   -e var/lib/containers/storage`,
 		shellEsc(image), shellEsc(image),
 		mksquashfsPath, shellEsc(tmpPath),
-		level, block)
+		squashCompArgs(level), block)
 
 	fmt.Printf(">>> [live] squashing %s -> %s (podman unshare)\n", image, dstSquashfs)
 	if err := RunUnshare(script); err != nil {
@@ -165,13 +165,13 @@ fi
 mount -t overlay overlay -o lowerdir="$LOWER",upperdir="$UPPER",workdir="$WORK" "$STAGE"
 
 %[3]s "$STAGE" %[4]s \
-  -noappend -comp zstd -Xcompression-level %[5]s -b %[6]s \
+  -noappend %[5]s -b %[6]s \
   -processors 4 \
   -e proc -e sys -e dev -e run -e tmp
 `,
 		shellEsc(image), shellEsc(storePath),
 		mksquashfsPath, shellEsc(tmpPath),
-		level, block)
+		squashCompArgs(level), block)
 
 	fmt.Printf(">>> [live+vfs] squashing %s + VFS store -> %s (podman unshare, overlay merge)\n", image, dstSquashfs)
 	if err := RunUnshare(script); err != nil {
@@ -275,10 +275,10 @@ func combinedSquashScript(envs []LiveEnv, mksquashfsPath, tmpPath, level, block 
 	}
 
 	fmt.Fprintf(&b, `%s "$STAGE" %s \
-  -noappend -comp zstd -Xcompression-level %s -b %s \
+  -noappend %s -b %s \
   -processors 4 \
   -e %s
-`, mksquashfsPath, shellEsc(tmpPath), level, block, strings.Join(excludeArgs, " "))
+`, mksquashfsPath, shellEsc(tmpPath), squashCompArgs(level), block, strings.Join(excludeArgs, " "))
 	return b.String()
 }
 
@@ -372,12 +372,12 @@ E=$(podman image mount %[2]s)
 trap 'podman image unmount %[2]s >/dev/null 2>&1 || true; podman image unmount %[1]s >/dev/null 2>&1 || true' EXIT
 %[3]s tree-diff "$B" "$E" %[4]s%[5]s
 %[6]s %[4]s %[7]s \
-  -noappend -comp zstd -Xcompression-level %[8]s -b %[9]s \
+  -noappend %[8]s -b %[9]s \
   -processors 4`,
 		shellEsc(baseImage), shellEsc(env.Image),
 		shellEsc(tboxPath), shellEsc(stage), excludeFlags.String(),
 		mksquashfsPath, shellEsc(tmpPath),
-		level, block)
+		squashCompArgs(level), block)
 
 	fmt.Printf(">>> [live] diffing %s against base -> %s (podman unshare)\n", env.Image, dstSquashfs)
 	if err := RunUnshare(script); err != nil {
@@ -407,7 +407,7 @@ func resolveImageIDs(envs []LiveEnv) ([]string, bool) {
 func squashCacheName(parts []string, level, block string) string {
 	sorted := append([]string(nil), parts...)
 	sort.Strings(sorted)
-	h := sha256.Sum256([]byte(strings.Join(sorted, ",") + "|zstd|" + level + "|" + block))
+	h := sha256.Sum256([]byte(strings.Join(sorted, ",") + "|" + squashCompressor() + "|" + level + "|" + block))
 	return hex.EncodeToString(h[:])[:16] + ".sfs"
 }
 
@@ -464,6 +464,78 @@ func squashParams(compression string) (level, block string) {
 		level, block = "15", "1048576"
 	}
 	return level, block
+}
+
+// SquashCompressors are the mksquashfs compressors a recipe may pick with
+// shared_store.compressor. zstd is the default. The others exist for
+// kernels built without CONFIG_SQUASHFS_ZSTD: Arch Linux ARM's
+// linux-aarch64, for one, has XZ, ZLIB, LZ4 and LZO but not ZSTD, so a
+// zstd live rootfs never mounts there (tuna-os/tunaOS#2705).
+var SquashCompressors = []string{"zstd", "xz", "gzip", "lz4", "lzo"}
+
+// recipeCompressor is the recipe's shared_store.compressor, set by the
+// orchestrator through SetSquashCompressor before any squashfs is built.
+var recipeCompressor string
+
+// SetSquashCompressor sets the mksquashfs compressor for every
+// subsequent squashfs (env rootfs, combined, delta and offline store).
+// "" means the default (zstd). An unknown name is an error, so a typo in
+// a recipe fails the build instead of silently falling back.
+func SetSquashCompressor(c string) error {
+	if c != "" && !validCompressor(c) {
+		return fmt.Errorf("shared_store.compressor %q: want one of %s", c, strings.Join(SquashCompressors, ", "))
+	}
+	recipeCompressor = c
+	return nil
+}
+
+func validCompressor(c string) bool {
+	for _, k := range SquashCompressors {
+		if c == k {
+			return true
+		}
+	}
+	return false
+}
+
+// squashCompressor resolves the active compressor. Priority: the
+// TACKLEBOX_SQUASHFS_COMPRESSOR env var (when valid) > the recipe's
+// shared_store.compressor > zstd.
+func squashCompressor() string {
+	if c := os.Getenv("TACKLEBOX_SQUASHFS_COMPRESSOR"); validCompressor(c) {
+		return c
+	}
+	if recipeCompressor != "" {
+		return recipeCompressor
+	}
+	return "zstd"
+}
+
+// squashCompArgs returns the mksquashfs compressor flags for the active
+// compressor. level is squashParams' zstd level: "15" means the recipe
+// asked for release/max quality, which maps to each compressor's
+// strongest reasonable setting. xz and lzo have no level knob that
+// matters here, so they ignore it.
+func squashCompArgs(level string) string {
+	release := level != "3"
+	switch squashCompressor() {
+	case "xz":
+		return "-comp xz"
+	case "gzip":
+		if release {
+			return "-comp gzip -Xcompression-level 9"
+		}
+		return "-comp gzip -Xcompression-level 6"
+	case "lz4":
+		if release {
+			return "-comp lz4 -Xhc"
+		}
+		return "-comp lz4"
+	case "lzo":
+		return "-comp lzo"
+	default:
+		return "-comp zstd -Xcompression-level " + level
+	}
 }
 
 // placeSquashfs materializes a cached squashfs into the staging tree.

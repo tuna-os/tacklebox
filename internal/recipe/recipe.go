@@ -8,6 +8,13 @@ import (
 type SharedStore struct {
 	Format      string `json:"format"`
 	Compression string `json:"compression"`
+	// Compressor picks the mksquashfs compressor for every squashfs the
+	// build writes: "zstd" (default), "xz", "gzip", "lz4" or "lzo". Use a
+	// non-zstd compressor when the image's kernel lacks
+	// CONFIG_SQUASHFS_ZSTD (e.g. Arch Linux ARM's linux-aarch64), or the
+	// live ISO cannot mount its own rootfs. Compression still selects
+	// the fast default vs release/max quality within the compressor.
+	Compressor string `json:"compressor,omitempty"`
 	// Dedup (ISO targets only) deduplicates content shared across env
 	// images instead of packing one full squashfs per env. The layout is
 	// picked by DedupLayout.
@@ -78,7 +85,9 @@ type BootableEnvironment struct {
 	// installs ignore it). Each script runs as root inside the container
 	// with CAP_SYS_ADMIN and network — enough for `flatpak install`,
 	// dbus-daemon, dconf update, etc. (the dakota-iso configure-live
-	// pattern). The container is committed to a content-addressed derived
+	// pattern) — plus TBOX_CUSTOMIZE_CAPS extras for workloads like
+	// flatpak's bwrap sandbox that need CAP_NET_ADMIN. The container is
+	// committed to a content-addressed derived
 	// image which is then squashed/extracted instead of the original, so
 	// unchanged image+scripts hit the existing squashfs cache.
 	//

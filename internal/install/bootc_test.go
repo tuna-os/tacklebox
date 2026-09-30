@@ -75,6 +75,9 @@ func skipIfNoSudo(t *testing.T) {
 // user's rootless store (via the SUDO_USER drop-back prefix), not root's
 // store — the regression guard for ISO builds double-pulling images.
 func TestPullUser_TargetsUserStore(t *testing.T) {
+	// rootContext() disables the drop whenever EUID is 0, so without this
+	// the assertion below depends on who runs `go test`.
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
 	t.Setenv("SUDO_USER", "alice")
 	oldRunFn := runner.RunFn
 	defer func() { runner.RunFn = oldRunFn }()
@@ -105,6 +108,7 @@ func TestPullUser_TargetsUserStore(t *testing.T) {
 }
 
 func TestPullUser_RejectsMissingLocalhost(t *testing.T) {
+	t.Setenv("TACKLEBOX_CONTEXT", "user")
 	t.Setenv("SUDO_USER", "")
 	oldRunFn := runner.RunFn
 	defer func() { runner.RunFn = oldRunFn }()

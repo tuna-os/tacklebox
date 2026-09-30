@@ -170,6 +170,12 @@ var embeddedModulesDigest = sync.OnceValue(func() string {
 // systemd-cryptsetup and systemd-pcrphase on top of them — omitting
 // tpm2-tss there turns those dependents into hard errors instead
 // ("Module 'clevis' cannot be installed"). So omit only what is absent.
+// A third shape: Hummingbird ships both module dirs but neither helper
+// binary (no tpm2-tools, no pcsc-lite), so the modules are present but
+// uninstallable. The template probes the exact helpers each module-setup
+// require_binaries (tpm2, pcscd) and omits on their absence too: omitting
+// a module whose helpers exist changes nothing, and omitting one whose
+// helpers are absent only skips a failure dracut would report anyway.
 func initramfsScript(modules []string) string {
 	modList := strings.Join(modules, " ")
 	return fmt.Sprintf(`set -eu
@@ -197,6 +203,11 @@ if ! command -v dracut >/dev/null 2>&1; then
   echo "image lacks dracut; cannot inject$missing — bake the modules into the image and set skip_initramfs_rebuild" >&2
   exit 3
 fi
+# /root is a symlink to /var/roothome in Fedora bootc images and the target
+# does not exist in the container build context, so dracut's install of /root
+# fails the whole rebuild (dracut-install: ERROR: installing '/root'). Give
+# the symlink a target for the duration; a no-op where /root is a real dir.
+mkdir -p /var/roothome
 omit=""
 for m in tpm2-tss pcsc; do
   present=""
@@ -205,6 +216,15 @@ for m in tpm2-tss pcsc; do
   done
   if [ -z "$present" ]; then omit="$omit $m"; fi
 done
+# A present module whose helpers are missing fails the rebuild the same way
+# (Hummingbird ships both module dirs but neither tpm2-tools nor pcsc-lite,
+# and each module-setup require_binaries the exact helper). Probe the helpers
+# the module-setup scripts demand; omitting a module whose helpers exist
+# changes nothing, and omitting one whose helpers are absent only skips a
+# failure dracut would report anyway.
+command -v tpm2 >/dev/null 2>&1 || omit="$omit tpm2-tss"
+command -v pcscd >/dev/null 2>&1 || omit="$omit pcsc"
+omit="$(printf '%%s\n' $omit | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
 run_dracut() {
   dracut --force --no-hostonly --reproducible --add "%s" --kver "$kver" "$@" /tbox-out/initramfs.img
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -149,7 +148,7 @@ func updateEnv(env recipe.BootableEnvironment, tbxRoot, bootedEnv string) error 
 // rootfs is mounted at /; the shared store is mounted somewhere else
 // and the path varies per init system / per booted env.
 func findStoreMount() (string, error) {
-	out, err := exec.Command("findmnt", "-n", "-o", "TARGET", "LABEL=TBOX_STORE").Output()
+	out, err := runner.Output("findmnt", "-n", "-o", "TARGET", "LABEL=TBOX_STORE")
 	if err != nil {
 		return "", fmt.Errorf("findmnt LABEL=TBOX_STORE: %w", err)
 	}

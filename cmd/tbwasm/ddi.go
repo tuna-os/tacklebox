@@ -104,7 +104,7 @@ func buildDdiIso(_ js.Value, args []js.Value) any {
 			return nil, err
 		}
 		sfsSource := func() (io.ReadCloser, error) {
-			return rootArena.Open(fmt.Sprintf("d:0:%d", sfsSize))
+			return rootArena.Open(formatArenaRef("d", 0, sfsSize))
 		}
 		reportMem("ddi-root")
 

@@ -1,7 +1,7 @@
 # How to set up a GitHub repo that builds an ISO with Tacklebox
 
-This guide walks you through creating a GitHub repository that builds a
-UEFI-bootable ISO from one or more bootc container images using Tacklebox.
+This guide shows how to create a GitHub repository that uses Tacklebox to
+build a UEFI-bootable ISO from one or more bootc container images.
 
 ---
 
@@ -9,39 +9,38 @@ UEFI-bootable ISO from one or more bootc container images using Tacklebox.
 
 `tacklebox build recipe.json --iso output.iso` uses the **IsoTarget** path:
 
-1. Each bootable environment is packed into a squashfs file
-   (`LiveOS/<id>.rootfs.sfs`) using `podman image mount` + `mksquashfs`.
-2. Before copying the initramfs to the ESP, Tacklebox checks whether the image's
-   initramfs contains the modules required for live ISO boot (`tbox-live`,
-   `tbox-root` — Tacklebox's own embedded dracut modules). If not, it rebuilds the initramfs automatically by running
-   `dracut` inside a privileged container. The result is cached by OCI image
-   digest — the rebuild only happens on the **first** build or after an image
-   update.
-3. The systemd-boot EFI binary is extracted from the first image in your recipe.
+1. Tacklebox uses `podman image mount` and `mksquashfs` to put each bootable
+   environment in a squashfs file (`LiveOS/<id>.rootfs.sfs`).
+2. Tacklebox checks the initramfs for the modules needed to boot a live ISO.
+   They are the embedded `tbox-live` and `tbox-root` dracut modules. If the
+   modules are absent, Tacklebox runs `dracut` in a privileged container to
+   rebuild the initramfs. A cache uses the OCI image digest as its key. A
+   rebuild occurs only on the first build or after an image update.
+3. Tacklebox extracts the systemd-boot EFI binary from the first image in your recipe.
 4. `xorriso` wraps everything into an ISO9660+El Torito image that boots on
    real hardware and QEMU.
 
-At runtime the ISO boots via `tbox-live`. Each env's squashfs is loop-mounted
-and an overlayfs on top gives you a writable (but ephemeral) root. **No disk is
-written.** Persistent mode is not supported for ISO targets — use a block target
-(USB drive) if you need persistence.
+At runtime the ISO boots via `tbox-live`. It mounts the squashfs of each
+environment on a loop device. An overlayfs on top gives you a writable but
+temporary root. **The process does not write to a disk.** ISO targets do not
+support persistent mode. Use a block target, such as a USB drive, if you need
+persistence.
 
 **Performance note:** The first build is ~2–3 min slower per environment due to
 the dracut rebuild. Subsequent builds hit the cache and add no overhead. If your
 images already include `tbox-live` and `tbox-root`, set
 `"skip_initramfs_rebuild": true` in the env to skip the rebuild.
 
-The per-env squashfs is also cached (keyed by image ID + compression
-settings, under `<output-base>/squashfs-cache/`), so rebuilding a
-multi-env ISO only re-squashes the environments whose image actually
-changed. On CI, persist `<output-base>` between runs (e.g.
+A cache also stores each squashfs by image ID and compression settings under
+`<output-base>/squashfs-cache/`. Thus, a new build of a multi-env ISO creates
+new squashfs files only for images that changed. On CI, persist `<output-base>` between runs (e.g.
 `actions/cache`) to benefit; on a fresh runner every env is built once.
 
 ---
 
 ## Repository layout
 
-A minimal repo looks like this:
+A minimal repository has this layout:
 
 ```
 my-iso-repo/
@@ -60,12 +59,12 @@ my-iso-repo/
 ISO recipes are identical to block recipes except:
 
 - Only `"modes": ["live"]` is meaningful (ISOs are always ephemeral).
-- `size` is used for internal staging only; the final ISO is as large as it
-  needs to be.
-- `partitions` is ignored for ISO targets.
+- `size` applies only to the internal work area. The final ISO is as large as
+  necessary.
+- ISO targets do not use `partitions`.
 
-Optional per-env `title` sets the boot menu entry name shown by
-systemd-boot (the env `id` is used when omitted). For release ISOs, set
+The optional `title` for an environment sets its name in the boot menu.
+Systemd-boot shows the environment `id` when the title is absent. For release ISOs, set
 `"shared_store": {"compression": "release"}` to use zstd level 15
 (~10–15% smaller squashfs, slower build); the default favours build speed.
 
@@ -78,15 +77,17 @@ both Fedora-based), add `"dedup": true` to `shared_store`:
 "shared_store": { "format": "ext4", "dedup": true }
 ```
 
-All envs are packed into **one** combined squashfs with a subtree per env,
-and mksquashfs stores each shared file once — often a dramatically smaller
-ISO than per-env squashfs files. Each env still gets its own boot menu
-entry; at boot the `tbox-root` dracut module pivots into the env's subtree.
-Trade-offs: changing any image rebuilds the whole combined squashfs (the
-squashfs cache covers the env set as a whole), and every env's initramfs
-must contain `tbox-root` — which the automatic initramfs preparation
-guarantees unless you set `skip_initramfs_rebuild` (only do that for
-images that ship **both** `tbox-live` and `tbox-root`).
+Tacklebox puts all environments in **one** combined squashfs, with one subtree
+for each environment. Mksquashfs stores each shared file once. This layout often
+produces a much smaller file than separate squashfs files. Each environment
+still gets its own boot menu entry. At boot, the `tbox-root` dracut module pivots into the
+applicable subtree.
+
+A change to any image rebuilds the complete combined squashfs. The squashfs
+cache covers the set of environments as one unit. Each initramfs must contain
+`tbox-root`. Automatic preparation of the initramfs adds this module. Set
+`skip_initramfs_rebuild` only for images that contain both `tbox-live` and
+`tbox-root`.
 See `examples/iso-dedup.json`.
 
 ```json
@@ -286,13 +287,13 @@ jobs:
 
 ## Publishing to Cloudflare R2
 
-GitHub Actions artifacts expire and are awkward to share. For a stable
+Artifacts from GitHub Actions expire and are difficult to share. For a stable
 download URL, push the ISO to an object store. R2 has no egress fees,
 which suits multi-GB ISOs.
 
-The tuna-os org publishes ISOs with **rclone** against the org-wide R2
-secrets — `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`,
-`R2_BUCKET` — the same pattern as `dakota-iso` and `ubuntu-26.04-iso`.
+The tuna-os organization uses **rclone** and shared R2 secrets to publish ISOs:
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, and `R2_BUCKET`. It
+uses the same pattern as `dakota-iso` and `ubuntu-26.04-iso`.
 Each repo uploads under its own prefix in the shared bucket and serves
 from `https://download.tunaos.org/<prefix>/…`:
 
@@ -318,14 +319,14 @@ from `https://download.tunaos.org/<prefix>/…`:
             "/mnt/tbx/$ISO_NAME" "R2:${BUCKET}/my-iso/my-iso-latest.iso"
 ```
 
-`--s3-no-check-bucket` skips the bucket-existence probe (the R2 token is
-usually scoped to one bucket and can't list); `--checksum` on the dated
-upload makes re-runs idempotent.
+`--s3-no-check-bucket` skips the check for bucket existence. The R2 token
+usually has access to one bucket and cannot list buckets. On the dated upload,
+`--checksum` makes repeated runs safe.
 
-This repo's own `.github/workflows/poc-artifacts.yml` is a complete,
-pinned example — it builds both ISO layouts (per-env + dedup), verifies
-them, writes a `SHA256SUMS`, and uploads each ISO as
-`tacklebox/<name>-<date>-<sha>.iso` plus a rolling `…-latest.iso`. It
+The `.github/workflows/poc-artifacts.yml` file in this repository is a complete
+example with fixed action versions. It builds and verifies both ISO layouts:
+per-env and dedup. It writes `SHA256SUMS` and uploads each ISO as
+`tacklebox/<name>-<date>-<sha>.iso`, plus an `…-latest.iso` alias. It
 skips the upload on PRs, on the `skip_upload` dry-run input, and on forks
 where `R2_BUCKET` is unset — build + verify still run in all cases.
 
