@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tacklebox "github.com/tuna-os/tacklebox"
 	"github.com/tuna-os/tacklebox/internal/runner"
@@ -46,6 +47,9 @@ func customizeExtraCaps() []string {
 // Keep the existing ten-minute default, but let callers raise it for images
 // whose large writable layers legitimately take longer to commit. Zero
 // disables this inner deadline; the caller's outer deadline still applies.
+// CI sets TBOX_CUSTOMIZE_COMMIT_TIMEOUT=1800 in poc-artifacts.yml — a wider,
+// still-bounded budget for the weekly PoC ISO builds, whose customized
+// layers grew past the 600s default (tuna-os/tacklebox#258).
 func customizeCommitTimeoutSeconds() int {
 	if v := strings.TrimSpace(os.Getenv("TBOX_CUSTOMIZE_COMMIT_TIMEOUT")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
@@ -207,7 +211,19 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 	if commitTimeoutSecs > 0 {
 		bounded = append([]string{"timeout", "--foreground", strconv.Itoa(commitTimeoutSecs)}, commitArgs...)
 	}
-	if err := runner.RunStreamed(bounded[0], bounded[1:]...); err != nil {
+	// Disk usage + wall-clock timing around the commit, best effort: the
+	// #258 regression (a healthy 600s commit growing to a hard timeout over
+	// two weekly runs) had no evidence beyond "exit status 124" to say
+	// whether it was storage growth or a genuine podman wedge. A snapshot on
+	// both sides of the commit makes the NEXT regression attributable from
+	// the streamed log alone.
+	logDiskUsage("customize", "before commit")
+	commitStart := time.Now()
+	err = runner.RunStreamed(bounded[0], bounded[1:]...)
+	commitElapsed := time.Since(commitStart)
+	fmt.Printf(">>> [customize] commit took %s\n", commitElapsed.Round(time.Second))
+	logDiskUsage("customize", "after commit")
+	if err != nil {
 		if commitTimeoutSecs > 0 {
 			return "", fmt.Errorf("commit customized %s (killed if it exceeded the %ds cap — see TBOX_CUSTOMIZE_COMMIT_TIMEOUT): %w", image, commitTimeoutSecs, err)
 		}
