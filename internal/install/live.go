@@ -558,23 +558,9 @@ func placeSquashfs(cachePath, dst string) error {
 
 // ExtractEFIBinary copies a systemd-boot EFI binary into destDir,
 // returning the basename written ("BOOTX64.EFI" / "BOOTAA64.EFI").
+// It probes the image first, falling back to the build host.
 func ExtractEFIBinary(image, destDir string) (string, error) {
-	if err := runner.Run("sudo", "mkdir", "-p", destDir); err != nil {
-		return "", err
-	}
-	hostBins := []struct{ src, dst string }{
-		{"/usr/lib/systemd/boot/efi/systemd-bootx64.efi", "BOOTX64.EFI"},
-		{"/usr/lib/systemd/boot/efi/systemd-bootaa64.efi", "BOOTAA64.EFI"},
-	}
-	for _, b := range hostBins {
-		if info, statErr := os.Stat(b.src); statErr == nil && !info.IsDir() {
-			if err := runner.Run("sudo", "cp", b.src, filepath.Join(destDir, b.dst)); err != nil {
-				return "", fmt.Errorf("copy host EFI binary %s: %w", b.src, err)
-			}
-			return b.dst, nil
-		}
-	}
-	return "", fmt.Errorf("no systemd-boot EFI binary on host (and image %s wasn't probed); install systemd-boot-efi or systemd-boot-unsigned", image)
+	return StageBootloader(image, destDir)
 }
 
 // shellEsc single-quotes a string for safe interpolation into a shell script.
