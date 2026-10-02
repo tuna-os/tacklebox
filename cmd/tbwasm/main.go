@@ -169,7 +169,7 @@ func introspect(_ js.Value, args []js.Value) any {
 		}
 		gRoot = root
 		gClient, gManifest, gImage = c, m, image
-		gFacts = purefs.Introspect(root)
+		gFacts = purefs.Introspect(root, gStore)
 		reportMem("unpack")
 		b, _ := json.Marshal(gFacts)
 		return string(b), nil
