@@ -1,10 +1,20 @@
 # Tacklebox Roadmap
 
-**Last updated**: 2026-08-17
+**Last updated**: 2026-09-17
 
 Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrator for bootc.
 
-## Done
+---
+
+## 🎯 Strategic Objective
+
+Provide a robust, zero-downtime multi-boot media orchestrator that downstream ISO builders, installers, and CLI tools rely on for container-native bootc distribution.
+
+---
+
+## 📅 Milestones & Strategic Horizons
+
+### Q3 2026 — Feature Completeness & GUI Integration (Completed Baseline)
 
 - ✅ `build` — ISO and block device provisioning
 - ✅ `update` — in-place env refresh without reformatting
@@ -18,35 +28,27 @@ Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrato
 - ✅ Cross-platform GUI multi-boot USB manager (`tuna-os/iso-builder` native app): Inspection, add/remove/update lifecycle, cross-platform helper VMs (macOS QEMU, Windows WSL2), and VM boot verification (#104)
 - ✅ CI pipeline: lint, unit, block smoke, ISO smoke, 6-env scale test
 
-## Near-term release gate
+---
 
-Tacklebox is consumed by downstream TunaOS build tooling, but has not yet
-published a versioned release. Before expanding the feature surface, establish
-the first supported baseline and make it possible for downstream users to pin
-and evaluate it.
+### Q4 2026 — v0.1.0 Release Gate & Platform Maturation (Current Horizon)
 
-The first versioned release is ready when:
+#### 🚦 Near-Term Release Gate (v0.1.0 Baseline)
+Tacklebox is consumed by downstream TunaOS build tooling, but requires a formal versioned release.
+The v0.1.0 release baseline is targeted for completion under issue #320 / #237 when:
+- [x] Core build, block-device, ISO boot, and cross-platform smoke checks pass cleanly in CI.
+- [ ] Automated release workflow publishes signed Linux `amd64` and `arm64` binaries with SHA-256 checksums to GitHub Releases.
+- [ ] Immutable release tags and digest references are published to GHCR.
+- [ ] Release notes document supported targets, known limitations, recipe schema stability, and rollback paths.
+- [ ] Downstream TunaOS repositories (`iso-builder`, `bootc-installer`) switch from mutable `main` references to pinned `v0.1.0` releases.
 
-- the release commit passes unit, block-device, ISO boot, and cross-platform
-  disk smoke checks;
-- GitHub Releases contains Linux amd64 and arm64 binaries with checksums, and
-  GHCR contains matching immutable version and digest references;
-- release notes identify supported targets, known limitations, compatibility
-  expectations for recipes and media, and the rollback path;
-- TunaOS consumers replace mutable `main` or `latest` references with the
-  versioned release or an immutable digest; and
-- a 30-day review records downstream upgrade results, external install/use
-  feedback, and release defects to inform the next version.
+#### 🚀 Mid-Term Goals (Q4 2026)
+- **ARM64 Multi-ISO Expansion**: Full support and integration testing for `aarch64` sd-boot and OVMF virtualized boot targets.
+- **GUI Customization & Signed App Bundles**: Expand ISO Builder desktop integration with signed native application bundles and preset recipe sharing.
+- **Per-stateroot Greenboot Health Checks**: Automated health-checking and rollback hooks per bootc stateroot on multi-boot drives.
+- **Persistent Storage GC & Quotas**: Lifecycle persistence management including quota limits, garbage collection, and stateroot migration.
 
-Tracking: #237
+---
 
-## Planned
-
-- **GUI customization & signed bundles** — port browser ISO Builder customization panels to desktop GUI + signed native app bundles (#104)
-- **Per-stateroot greenboot** — health-check + auto-rollback per env
-- **Persist lifecycle** — quota, GC, migration
-- **ARM64 multi-ISO** — aarch64 sd-boot + OVMF testing
-
-## Contributing
+## 📜 Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
