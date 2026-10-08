@@ -111,6 +111,41 @@ A container image is also published as `ghcr.io/tuna-os/tacklebox:latest` for
 CI and other container-based workflows. Pin a version or `sha-*` tag when you
 need reproducible builds.
 
+#### Using the container image
+
+Run Tacklebox in a container by mounting your recipe and output directory:
+
+```bash
+# Prepare your recipe and output directories
+mkdir -p output
+cp my-recipe.json output/
+
+# Build via container
+podman run --rm --privileged \
+  -v $(pwd)/output:/w:z \
+  -w /w \
+  ghcr.io/tuna-os/tacklebox:latest \
+  build recipe.json --xz -b /w
+```
+
+The container needs:
+- `--privileged` for loop device and filesystem operations
+- `-v $(pwd)/output:/w:z` to mount your working directory (`:z` for SELinux)
+- Recipe file and output directory both under the same mount point (e.g., `/w`)
+
+For USB or block device provisioning, you must also mount `/dev`:
+
+```bash
+podman run --rm --privileged \
+  -v $(pwd):/w:z \
+  -v /dev:/dev \
+  -w /w \
+  ghcr.io/tuna-os/tacklebox:latest \
+  build recipe.json /dev/sda --yes
+```
+
+**Note:** Device provisioning (`/dev/sdX` targets) requires host kernel semantics that only work inside a privileged container on Linux. Cross-platform provisioning (macOS, Windows) uses the [multi-boot USB manager GUI](https://github.com/tuna-os/iso-builder) instead.
+
 ### Build a Multi-Boot Image
 ```bash
 sudo tacklebox build recipe.json --xz
