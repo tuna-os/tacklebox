@@ -7,7 +7,7 @@ require (
 	github.com/klauspost/compress v1.20.1
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.17
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 	howett.net/plist v1.0.1
 )
