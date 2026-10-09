@@ -48,6 +48,15 @@ jobs:
       # Mapped to env so the upload step's `if:` can detect a fork with no
       # secrets (secrets aren't available in job-level `if:` directly).
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      # tuna-os/tacklebox#258: the live-customize `podman commit` hit its
+      # 600s default cap on two consecutive weekly runs as the customized
+      # image's writable layer grew, skipping verify/checksum/upload
+      # entirely. This job is weekly and non-blocking (90-minute job budget,
+      # two ISO layouts built sequentially), so it can afford a much wider
+      # — but still bounded — commit budget than the interactive/PR default.
+      # customize.go logs disk usage + commit timing around this step so the
+      # next regression is attributable before it reaches this cap.
+      TBOX_CUSTOMIZE_COMMIT_TIMEOUT: "1800"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

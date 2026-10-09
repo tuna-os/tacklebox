@@ -123,7 +123,7 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 			if err := removeSourceImage(payload.Source); err != nil {
 				return err
 			}
-			logDiskUsage("after pruning " + payload.Source)
+			logDiskUsage("offline-store", "after pruning "+payload.Source)
 		}
 	}
 
@@ -371,9 +371,13 @@ func removeSourceImage(img string) error {
 	return nil
 }
 
-func logDiskUsage(label string) {
+// logDiskUsage prints a best-effort `df -h /` snapshot tagged with the
+// calling component and a label for the point in the pipeline, e.g.
+// logDiskUsage("customize", "before commit"). Silent on error: a disk-usage
+// probe that can fail should never break the actual step it's diagnosing.
+func logDiskUsage(component, label string) {
 	if out, err := runner.Output("df", "-h", "/"); err == nil {
-		fmt.Printf(">>> [offline-store] disk usage %s:\n%s", label, out)
+		fmt.Printf(">>> [%s] disk usage %s:\n%s", component, label, out)
 	}
 }
 
