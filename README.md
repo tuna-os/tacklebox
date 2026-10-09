@@ -83,6 +83,13 @@ Tacklebox automatically handles these requirements of the Composefs backend:
 * Manage the bootloader metadata that `bootc` needs.
 * Generate BLS entries with `rootflags=subvol=...` mappings.
 
+## 📚 Documentation
+
+*   [User guide](docs/USER-GUIDE.md) — commands, recipe reference, ISO/dedup layouts, day-2 operations, troubleshooting
+*   [Architecture](ARCHITECTURE.md) — build pipeline, boot chain, package layout
+*   [GitHub ISO setup](docs/github-iso-setup.md) — building ISOs in CI, including the host packages required
+*   [Runbooks](runbooks/) — build/ISO generation and boot/update troubleshooting
+
 ## 🛠 Usage
 
 ### Installation
@@ -115,6 +122,14 @@ need reproducible builds.
 ```bash
 sudo tacklebox build recipe.json --xz
 ```
+
+### Build a Live ISO
+```bash
+sudo tacklebox build recipe.json --iso ./myos.iso
+```
+Every environment is installed in live mode. See the
+[user guide](docs/USER-GUIDE.md) for the full ISO workflow and
+[`docs/github-iso-setup.md`](docs/github-iso-setup.md) for building ISOs in CI.
 
 ### Provision a Physical USB Drive
 ```bash
@@ -270,6 +285,7 @@ every image ID. See `examples/iso-dedup.json`.
 | Flag | What it does |
 |---|---|
 | `-b, --output-base DIR` | Where intermediate artifacts and `tacklebox.img` are written. |
+| `--iso PATH` | Produce a UEFI-bootable `.iso` at `PATH` instead of a disk image. Installs every environment in live mode. |
 | `--xz` | Compress the resulting image or ISO with `xz -T0`. |
 | `-y, --yes` | Skip the destructive-target confirmation. Required in CI / non-tty contexts. |
 | `-v, --verbose` | Stream subprocess output and command traces. Default is quiet (stderr still captured on failure). |
@@ -279,12 +295,30 @@ every image ID. See `examples/iso-dedup.json`.
 ## 🏗 Requirements
 
 You need Go only to build Tacklebox from source. Use the version in
-[`go.mod`](go.mod). To create media with the installed CLI, you also need:
+[`go.mod`](go.mod). Creating media with the installed CLI needs root and the
+host tools below.
 
-*   `podman` & `bootc`
+Every target:
+
+*   `podman`
+*   `skopeo` — backend auto-detection; not needed when every environment sets
+    `backend` explicitly in the recipe
+*   `xz` (for `--xz` outputs)
+
+Disk image / USB targets additionally:
+
+*   `bootc`
 *   `sgdisk` (gdisk)
 *   `mkfs.vfat`, `mkfs.ext4` (with verity support)
-*   `xz` (for compressed outputs)
+
+ISO targets (`--iso`) additionally:
+
+*   `mksquashfs` — squashes each environment's root filesystem
+*   `xorriso` — wraps the staged tree into the ISO
+*   `mcopy` (mtools) and `mkfs.fat` — build the embedded ESP image
+
+[`docs/github-iso-setup.md`](docs/github-iso-setup.md) lists the distribution
+packages that provide the ISO tools, for both local builds and CI runners.
 
 ## 📦 Releases & Operations
 
