@@ -1,6 +1,6 @@
 # Tacklebox Roadmap
 
-**Last updated**: 2026-08-17
+**Last updated**: 2026-09-16
 
 Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrator for bootc.
 
@@ -38,7 +38,7 @@ The first versioned release is ready when:
 - a 30-day review records downstream upgrade results, external install/use
   feedback, and release defects to inform the next version.
 
-Tracking: #237
+Tracking: #237, #2407
 
 ## Planned
 
