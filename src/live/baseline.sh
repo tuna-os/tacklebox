@@ -12,9 +12,12 @@
 #   - live networking: enable NetworkManager when the image ships it
 #     disabled (server-ish bases)
 #   - mask sleep/suspend targets (an installer mid-run cannot survive S3)
+#   - install the image's own suggested flatpaks from flatpak preinstall.d
+#     (tuna-os/tacklebox#326), pinning the runtimes they pulled in
 #
-# Branding, flatpak preloads, installer autostart entries and other
-# project-specific polish stay in the recipe's own live_customize scripts.
+# Branding, live-session-only flatpaks (the installer), autostart entries
+# and other project-specific polish stay in the recipe's own
+# live_customize scripts.
 
 set -euo pipefail
 
@@ -166,5 +169,65 @@ fi
 
 # ── No sleeping mid-install ─────────────────────────────────────────────────
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
+
+# ── Image-declared flatpaks (preinstall.d) ─────────────────────────────────
+# flatpak >= 1.16 lets the image declare what it wants installed:
+# /usr/share/flatpak/preinstall.d (distro) and /etc/flatpak/preinstall.d
+# (admin), with remotes in /etc/flatpak/remotes.d. Installing exactly that
+# set here is what keeps the ISO from drifting from the image — the Utah
+# ISO built by dakota-iso shipped without Ghostty because its list lived in
+# a per-variant script. Fisherman copies the live /var/lib/flatpak to the
+# target, so a flatpak missed here is missed after an offline install too.
+# TBOX_FLATPAK_PREINSTALL=0 (forwarded from the host by CustomizeLive)
+# skips the step.
+preinstall_declared() {
+	compgen -G "/usr/share/flatpak/preinstall.d/*.preinstall" >/dev/null ||
+		compgen -G "/etc/flatpak/preinstall.d/*.preinstall" >/dev/null
+}
+
+if [[ "${TBOX_FLATPAK_PREINSTALL:-1}" != "0" ]] && command -v flatpak >/dev/null && preinstall_declared; then
+	if ! flatpak preinstall --help >/dev/null 2>&1; then
+		echo "tbox-live-baseline: WARNING: image declares preinstall.d but its flatpak ($(flatpak --version)) has no 'preinstall' command; skipping" >&2
+	else
+		# flatpak wants a machine-id; container images usually ship an empty
+		# one (bootc) or none. Borrow one for the install and put the file
+		# back the way it was, so the live boot still gets a fresh ID.
+		machine_id_state=present
+		if [[ ! -e /etc/machine-id ]]; then
+			machine_id_state=absent
+		elif [[ ! -s /etc/machine-id ]]; then
+			machine_id_state=empty
+		fi
+		if [[ "${machine_id_state}" != present ]]; then
+			tr -d '-' </proc/sys/kernel/random/uuid >/etc/machine-id
+		fi
+
+		runtimes_before="$(flatpak list --system --runtime --columns=ref 2>/dev/null | sort || true)"
+		preinstall_rc=0
+		flatpak preinstall --system -y --noninteractive || preinstall_rc=$?
+
+		case "${machine_id_state}" in
+		absent) rm -f /etc/machine-id ;;
+		empty) : >/etc/machine-id ;;
+		esac
+
+		if [[ "${preinstall_rc}" -ne 0 ]]; then
+			echo "tbox-live-baseline: flatpak preinstall failed (exit ${preinstall_rc}); the ISO would ship without the image's suggested flatpaks" >&2
+			echo "tbox-live-baseline: if bwrap reported 'loopback: Failed RTM_NEWADDR', rebuild with TBOX_CUSTOMIZE_CAPS=NET_ADMIN; TBOX_FLATPAK_PREINSTALL=0 skips this step" >&2
+			exit "${preinstall_rc}"
+		fi
+
+		# Pin every runtime the preinstall pulled in. A later
+		# `flatpak uninstall --unused` (a recipe script, or the installed
+		# system's cleanup) otherwise strips runtimes no app references by
+		# ref, such as GTK themes — projectbluefin/utah#256.
+		while read -r ref; do
+			[[ -n "${ref}" ]] || continue
+			flatpak pin --system "runtime/${ref}" || true
+		done < <(comm -13 <(printf '%s\n' "${runtimes_before}") \
+			<(flatpak list --system --runtime --columns=ref | sort))
+		echo "tbox-live-baseline: flatpak preinstall.d applied"
+	fi
+fi
 
 echo "tbox-live-baseline: done"

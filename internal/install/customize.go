@@ -42,6 +42,12 @@ func customizeExtraCaps() []string {
 	return caps
 }
 
+// preinstallSetting is the host's TBOX_FLATPAK_PREINSTALL, forwarded to
+// the live baseline ("0" skips its flatpak preinstall.d step).
+func preinstallSetting() string {
+	return strings.TrimSpace(os.Getenv("TBOX_FLATPAK_PREINSTALL"))
+}
+
 // customizeCommitTimeoutSeconds bounds the podman commit after customization.
 // Keep the existing ten-minute default, but let callers raise it for images
 // whose large writable layers legitimately take longer to commit. Zero
@@ -156,6 +162,11 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 	for _, cap := range customizeExtraCaps() {
 		runArgs = append(runArgs, "--cap-add", cap)
 	}
+	// The baseline's flatpak preinstall.d step (tuna-os/tacklebox#326) reads
+	// its opt-out from the environment; podman passes none through by default.
+	if v := preinstallSetting(); v != "" {
+		runArgs = append(runArgs, "-e", "TBOX_FLATPAK_PREINSTALL="+v)
+	}
 	var inner strings.Builder
 	inner.WriteString("set -eu\n")
 	for i, s := range scripts {
@@ -230,6 +241,11 @@ func CustomizeLive(image string, scripts []string) (string, error) {
 func customizeCacheKey(imageID string, scripts []string) (string, error) {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n", imageID)
+	// The preinstall opt-out changes what the baseline bakes, so it is part
+	// of the identity. Unset adds nothing, which keeps existing keys stable.
+	if v := preinstallSetting(); v != "" {
+		fmt.Fprintf(h, "env:TBOX_FLATPAK_PREINSTALL=%s\n", v)
+	}
 
 	// Execution order is part of the identity: the scripts run in sequence and
 	// a later one can depend on an earlier one's effects. Hash the ordered

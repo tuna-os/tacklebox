@@ -306,3 +306,20 @@ func TestCustomizeCacheKeyVariesBySourcedSibling(t *testing.T) {
 		t.Fatalf("editing a sourced sibling must change the cache key; got %q both times", before)
 	}
 }
+
+func TestCustomizeCacheKeyVariesByPreinstallSetting(t *testing.T) {
+	s := writeScript(t, t.TempDir(), "a.sh", "echo a\n")
+	t.Setenv("TBOX_FLATPAK_PREINSTALL", "")
+	unset, err := customizeCacheKey("sha256:abc", []string{s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TBOX_FLATPAK_PREINSTALL", "0")
+	skipped, err := customizeCacheKey("sha256:abc", []string{s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unset == skipped {
+		t.Error("TBOX_FLATPAK_PREINSTALL=0 must not reuse the derived image baked with preinstall")
+	}
+}
