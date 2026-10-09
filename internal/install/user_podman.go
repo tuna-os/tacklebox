@@ -1,6 +1,7 @@
 package install
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/tuna-os/tacklebox/internal/runner"
@@ -72,6 +73,35 @@ func UserCommandPrefix(command string) []string {
 // UserPodmanPrefix returns the command prefix for running podman as the
 // original user.
 func UserPodmanPrefix() []string { return UserCommandPrefix("podman") }
+
+// runScriptOnImageMount mounts image and runs script against it under the
+// host's shell, with the mount as $ROOT and a fresh directory as $DEST.
+// Returns $DEST, which the caller removes; on error it is already gone.
+func runScriptOnImageMount(image, script string) (string, error) {
+	// Held by every podman image mount in this package.
+	mountSerialise.Lock()
+	defer mountSerialise.Unlock()
+
+	// World-writable: the script may write here as SUDO_USER.
+	outDir, err := os.MkdirTemp("", "tbox-run-*")
+	if err != nil {
+		return "", fmt.Errorf("mktemp: %w", err)
+	}
+	if err := os.Chmod(outDir, 0777); err != nil {
+		os.RemoveAll(outDir)
+		return "", fmt.Errorf("chmod outdir: %w", err)
+	}
+	wrapper := fmt.Sprintf(`set -eu
+MOUNT=$(podman image mount %s)
+trap 'podman image unmount %s >/dev/null 2>&1' EXIT
+ROOT="$MOUNT" DEST=%s sh -c %s`,
+		shellEsc(image), shellEsc(image), shellEsc(outDir), shellEsc(script))
+	if err := RunUnshare(wrapper); err != nil {
+		os.RemoveAll(outDir)
+		return "", err
+	}
+	return outDir, nil
+}
 
 // RunUnshare executes a shell script inside `podman unshare` as the
 // original (non-root) user. This is required for:

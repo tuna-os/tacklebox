@@ -18,11 +18,11 @@ import (
 // Layout produced:
 //
 //	/EFI/efi.img                    FAT ESP — sd-boot + per-env kernels
-//	    /EFI/BOOT/BOOTX64.EFI       systemd-boot
+//	    /EFI/BOOT/BOOT<ARCH>.EFI    systemd-boot
 //	    /loader/loader.conf
 //	    /loader/entries/<env>.conf
 //	    /images/pxeboot/<env>/{vmlinuz,initrd.img}
-//	/EFI/BOOT/BOOTX64.EFI           fallback at ISO9660 root for
+//	/EFI/BOOT/BOOT<ARCH>.EFI        fallback at ISO9660 root for
 //	                                firmware that ignores El Torito
 //	/images/pxeboot/<env>/{vmlinuz,initrd.img}    loopback boot copies
 //	/LiveOS/<env>.rootfs.sfs        per-env rootfs squashfs
@@ -41,7 +41,7 @@ import (
 //   - BLS entry into EspMount/loader/entries/<env>.conf
 //
 // Finalize then:
-//   - copies pxeboot/* and BOOTX64.EFI back out of esp-staging into
+//   - copies pxeboot/* and BOOT<ARCH>.EFI back out of esp-staging into
 //     iso-root for loopback / fallback boot
 //   - sizes + mkfs.fat the ESP image, mcopy's esp-staging into it
 //   - runs xorriso to assemble the final .iso
@@ -161,7 +161,7 @@ func (i *IsoTarget) Finalize(track Track) (string, error) {
 	//    into both esp-staging (for the FAT image) and iso-root (for
 	//    firmware that ignores El Torito).
 	efiBaseDir := filepath.Join(i.espStaging, "EFI", "BOOT")
-	efiBin, err := install.ExtractEFIBinary(i.EFISource, efiBaseDir)
+	efiBin, err := install.StageBootloader(i.EFISource, efiBaseDir)
 	if err != nil {
 		return "", err
 	}
