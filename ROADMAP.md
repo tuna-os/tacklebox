@@ -1,6 +1,6 @@
 # Tacklebox Roadmap
 
-**Last updated**: 2026-08-17
+**Last updated**: 2026-09-16
 
 Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrator for bootc.
 
@@ -16,6 +16,7 @@ Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrato
 - ✅ `recipe-gen` — YAML → recipe JSON
 - ✅ USB pre-flight — unmount busy partitions before format
 - ✅ Cross-platform GUI multi-boot USB manager (`tuna-os/iso-builder` native app): Inspection, add/remove/update lifecycle, cross-platform helper VMs (macOS QEMU, Windows WSL2), and VM boot verification (#104)
+- ✅ Expanded pure helper and store partition estimation test coverage (#298, #299)
 - ✅ CI pipeline: lint, unit, block smoke, ISO smoke, 6-env scale test
 
 ## Near-term release gate
@@ -50,3 +51,4 @@ Tracking: #237
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
