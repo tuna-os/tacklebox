@@ -278,13 +278,43 @@ every image ID. See `examples/iso-dedup.json`.
 
 ## 🏗 Requirements
 
-You need Go only to build Tacklebox from source. Use the version in
-[`go.mod`](go.mod). To create media with the installed CLI, you also need:
+### To build Tacklebox from source
 
-*   `podman` & `bootc`
-*   `sgdisk` (gdisk)
+You need the Go version declared in [`go.mod`](go.mod).
+
+### To create media with the CLI (Linux)
+
+Linux amd64 and arm64 binaries work on any Linux distribution. You will need:
+
+*   `podman` (or `docker`) and `bootc`
+*   `sgdisk` (from gdisk)
 *   `mkfs.vfat`, `mkfs.ext4` (with verity support)
 *   `xz` (for compressed outputs)
+
+### To use the Container Image
+
+Tacklebox is published as `ghcr.io/tuna-os/tacklebox:latest` and works on any container runtime (podman or docker). **Note:** Container builds must have privileged mode and volume mounts to access the host's bootc storage and output paths.
+
+**Usage example:**
+
+```bash
+sudo podman run --rm --privileged \
+  -v $PWD:/work:ro \
+  -v /var/lib/containers:/var/lib/containers:Z \
+  -v /var/run/podman:/var/run/podman \
+  ghcr.io/tuna-os/tacklebox:latest build /work/recipe.json --xz -o /work/output/
+```
+
+Required mounts:
+- Input recipe directory: `-v $PWD:/work:ro`
+- Bootc container storage: `-v /var/lib/containers:/var/lib/containers:Z`
+- Podman socket (for bootc): `-v /var/run/podman:/var/run/podman`
+
+Pin a release tag or digest for reproducible builds: `ghcr.io/tuna-os/tacklebox:v0.1.0` or `ghcr.io/tuna-os/tacklebox:sha-<commit>`.
+
+### To use the Desktop GUI
+
+The native multi-boot manager in [`tuna-os/iso-builder`](https://github.com/tuna-os/iso-builder) is a cross-platform desktop application for Linux, macOS, and Windows. On macOS and Windows, it uses a container engine (Podman Desktop or WSL2) to run the bootc toolchain. You must install and configure one of these engines before running the GUI.
 
 ## 📦 Releases & Operations
 
