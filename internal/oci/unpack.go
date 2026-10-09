@@ -457,6 +457,14 @@ func (s *DirStore) Open(ref string) (io.ReadCloser, error) {
 // (e.g. `podman export` of a customized container) instead of registry
 // layers — the native path for live_customize output until the customize
 // step itself is expressed as tree operations.
+// ApplyTarOnto applies an uncompressed tar stream onto an existing tree with
+// layer semantics: entries replace what is there, and OCI whiteouts
+// (.wh.<name>, .wh..wh..opq) delete. It is how a caller layers extra files
+// (for example a test harness's SSH key) over an already-assembled rootfs.
+func ApplyTarOnto(root *Node, r io.Reader, store BlobStore) error {
+	return applyLayer(root, r, "application/x-tar", store)
+}
+
 func ApplyTar(r io.Reader, store BlobStore) (*Node, error) {
 	root := &Node{Type: TypeDir, Mode: 0o755, Children: map[string]*Node{}}
 	if err := applyLayer(root, r, "application/x-tar", store); err != nil {
