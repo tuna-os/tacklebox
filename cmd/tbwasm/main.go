@@ -216,10 +216,17 @@ func buildIso(_ js.Value, args []js.Value) any {
 		// purefs.GraftLiveOverlay. Shared with cmd/purebuild so the native
 		// build produces the byte-identical artifact this one does; that
 		// shared call is the only thing making the two paths comparable.
-		// Best-effort: absence just means the plain baseline.
+		//
+		// GraftLiveOverlay's own contract: a nil applied+nil err means no
+		// overlay was published for this variant (the common case, and the
+		// only case this build tolerates) — a non-nil err means an overlay
+		// exists but failed to apply, which purebuild treats as fatal
+		// (log.Fatal). Swallowing it here would silently ship a browser ISO
+		// missing customization that cmd/purebuild would have refused to
+		// produce, defeating the parity this call exists for.
 		emitProgress("overlay", 0, 1)
 		if _, err := purefs.GraftLiveOverlay(root, store, gClient, gImage, gManifest, nil); err != nil {
-			fmt.Println("!!! live overlay skipped:", err)
+			return nil, fmt.Errorf("apply live overlay: %w", err)
 		}
 		emitProgress("overlay", 1, 1)
 		reportMem("overlay")
