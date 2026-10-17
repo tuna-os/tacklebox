@@ -14,7 +14,7 @@ import (
 )
 
 // fakeTarget is a minimal target.Target for unit-testing the per-env
-// install orchestration (installEnv, installEnvBootc, runEnvs) without
+// install orchestration (installEnvBootc, runEnvs, and strategy dispatch) without
 // going through a real BlockTarget/IsoTarget's Prepare — which would pull
 // in real bootloader tooling (install.SetupBootloader shells out via
 // exec.LookPath, not runner, so it isn't mockable the way everything
@@ -54,31 +54,29 @@ func TestCompressArtifactFailurePropagates(t *testing.T) {
 	}
 }
 
-// --- installEnv (dispatch on InstallMode) ---
-
-func TestInstallEnvDispatchesToBootc(t *testing.T) {
+func TestRunEnvsDispatchesToBootc(t *testing.T) {
 	newMockRunner(t)
 	storeMount, espMount := t.TempDir(), t.TempDir()
 	env := baseTestEnv("aurora")
 	r := recipe.MediaRecipe{DefaultBoot: "aurora", BootableEnvironments: []recipe.BootableEnvironment{env}}
 	tgt := &fakeTarget{mode: target.InstallModeBootc}
 
-	if err := installEnv(env, r, tgt, storeMount, espMount, noopTrack, nil); err != nil {
-		t.Fatalf("installEnv: %v", err)
+	if err := runEnvs(r, tgt, storeMount, espMount, 1, noopTrack, nil); err != nil {
+		t.Fatalf("runEnvs: %v", err)
 	}
 	entry := filepath.Join(espMount, "loader", "entries", "aurora-persistent.conf")
 	if _, err := os.Stat(entry); err != nil {
-		t.Errorf("expected the bootc path (installEnvBootc) to run and write a BLS entry: %v", err)
+		t.Errorf("expected the bootc strategy to run and write a BLS entry: %v", err)
 	}
 }
 
-func TestInstallEnvRejectsUnsupportedMode(t *testing.T) {
+func TestRunEnvsRejectsUnsupportedMode(t *testing.T) {
 	newMockRunner(t)
 	env := baseTestEnv("x")
 	r := recipe.MediaRecipe{BootableEnvironments: []recipe.BootableEnvironment{env}}
 	tgt := &fakeTarget{mode: target.InstallMode("unknown")}
 
-	err := installEnv(env, r, tgt, t.TempDir(), t.TempDir(), noopTrack, nil)
+	err := runEnvs(r, tgt, t.TempDir(), t.TempDir(), 1, noopTrack, nil)
 	if err == nil {
 		t.Fatal("expected an error for an unsupported install mode")
 	}
@@ -87,7 +85,7 @@ func TestInstallEnvRejectsUnsupportedMode(t *testing.T) {
 	}
 }
 
-// --- installEnvBootc ---
+// --- bootc installer ---
 
 func TestInstallEnvBootcWritesBLSEntryAndKargs(t *testing.T) {
 	newMockRunner(t)
