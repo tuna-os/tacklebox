@@ -129,3 +129,14 @@ func TestReadArchiveThenVerifyX13sGate(t *testing.T) {
 		}
 	}
 }
+
+func TestGateOwnershipDiagnostic(t *testing.T) {
+	i, s := gateInventory()
+	e := i.entries["usr/sbin/tbox-live-root"]
+	e.UID, e.GID = 1001, 1002
+	i.entries[e.Path] = e
+	err := VerifyX13sGate(i, s)
+	if err == nil || !strings.Contains(err.Error(), "uid=1001 gid=1002 mode=0100755") {
+		t.Fatalf("missing observed ownership/mode: %v", err)
+	}
+}

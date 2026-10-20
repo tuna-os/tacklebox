@@ -43,7 +43,7 @@ func VerifyX13sGate(i *InitrdInventory, sources X13sGateSources) error {
 			return fmt.Errorf("X13s gate bytes mismatch: %s", name)
 		}
 		if entry.UID != 0 || entry.GID != 0 || entry.Mode&0022 != 0 || entry.Mode&06000 != 0 {
-			return fmt.Errorf("unsafe X13s gate ownership or mode: %s", name)
+			return fmt.Errorf("unsafe X13s gate ownership or mode: %s uid=%d gid=%d mode=%#o", name, entry.UID, entry.GID, entry.Mode)
 		}
 		if name != "etc/tacklebox/x13s-adsp-required" && entry.Mode&0100 == 0 {
 			return fmt.Errorf("X13s gate is not executable: %s", name)
