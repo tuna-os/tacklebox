@@ -7,6 +7,7 @@ set -euo pipefail
 TBOX_FIXTURE_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export TBOX_FIXTURE_SCRIPT_DIR
 exec python3 - "$@" <<'PY'
+import base64
 import hashlib
 import json
 import lzma
@@ -140,15 +141,81 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def read_json(path):
-    path = Path(path)
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 4 << 20:
-        fail(f"invalid or excessive JSON input: {path}")
-    with path.open("rb") as source:
+def read_json_bytes(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        before = os.fstat(source.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_size > 4 << 20:
+            fail(f"invalid or excessive JSON input: {path}")
         data = source.read((4 << 20) + 1)
+        after = os.fstat(source.fileno())
     if len(data) > 4 << 20:
         fail("JSON input grew beyond limit")
-    return json.loads(data)
+    if ((before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+            != (after.st_size, after.st_mtime_ns, after.st_ctime_ns) or len(data) != before.st_size):
+        fail("JSON input changed during read")
+    return data
+
+
+def decode_json(data):
+    if isinstance(data, bytes):
+        data = data.decode("utf-8")
+    def unique(pairs):
+        value, folded = {}, set()
+        for key, item in pairs:
+            if key.casefold() in folded:
+                fail(f"duplicate JSON key: {key}")
+            folded.add(key.casefold())
+            value[key] = item
+        return value
+    value = json.loads(data, object_pairs_hook=unique,
+                       parse_constant=lambda token: fail(f"non-JSON numeric constant: {token}"))
+    if not isinstance(value, dict):
+        fail("JSON receipt must be an object")
+    return value
+
+
+def read_json(path):
+    return decode_json(read_json_bytes(path))
+
+
+def decode_expected(data):
+    value = decode_json(data)
+    budget = 99999  # Go's 100000-token budget includes the final EOF read.
+    environment_keys = {"DRACUT_ARCH", "DRACUT_NO_MKNOD", "HOME", "LC_ALL", "PATH", "SOURCE_DATE_EPOCH"}
+
+    def visit(item, depth=0, parent=""):
+        nonlocal budget
+        if depth > 64:
+            fail("expected JSON nesting budget exceeded")
+        budget -= 1
+        if isinstance(item, dict):
+            for key, child in item.items():
+                budget -= 1
+                if not (parent == "/build_environment" and key in environment_keys):
+                    if not re.fullmatch(r"[a-z][a-z0-9_]{0,127}", key):
+                        fail(f"noncanonical expected JSON key: {key}")
+                visit(child, depth + 1, parent + "/" + key)
+            budget -= 1
+        elif isinstance(item, list):
+            for child in item:
+                visit(child, depth + 1, parent + "/[]")
+            budget -= 1
+        if budget < 0:
+            fail("expected JSON token budget exceeded")
+    visit(value)
+    return value
+
+
+def read_bound_expected(path, receipt):
+    # Binding is meaningful only after the Go byte/ELF audit that emits this
+    # receipt. It does not independently verify producer metadata.
+    data = read_json_bytes(path)
+    if (type(receipt.get("expected_size")) is not int
+            or receipt["expected_size"] != len(data)
+            or receipt.get("expected_sha256") != hashlib.sha256(data).hexdigest()):
+        fail("expected.json differs from the Go-audited receipt")
+    return decode_expected(data)
 
 
 def record_modprobe_config(out, configs, maximum=1 << 20):
@@ -676,8 +743,176 @@ def safe_relative(value):
     return p
 
 
-def record_closure_comparison(result, expected, receipt, args, text, modules, builtins, source):
-    # Persist evidence before the unchanged ordered comparison can fail. These
+def read_dependency_metadata(root, records, source=False):
+    evidence = []
+    for name in ("modules.softdep", "modules.weakdep"):
+        path = f"lib/modules/{KVER}/{name}"
+        matches = [item for item in records
+                   if (item.get("name") == name if source else item.get("path") == path)]
+        if len(matches) != 1:
+            fail(f"missing or ambiguous dependency metadata: {name}")
+        item = matches[0]
+        relative = safe_relative(item["source_path"] if source else path)
+        if source and relative.parts[0] != "source":
+            fail("dependency metadata is outside copied source")
+        fd = os.open(Path(root) / relative, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 256 << 10:
+                fail("dependency metadata is not a bounded regular file")
+            data = stream.read((256 << 10) + 1)
+        sha = hashlib.sha256(data).hexdigest()
+        if len(data) > 256 << 10 or (len(data), sha) != (item["size"], item["sha256"]):
+            fail("dependency metadata differs from validated receipt")
+        evidence.append({"scope": "source" if source else "emitted", "name": name,
+                         "path": str(relative), "size": len(data), "sha256": sha,
+                         "base64": base64.b64encode(data).decode("ascii")})
+    return evidence
+
+
+def module_name(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+        fail(f"unsupported literal module name: {value!r}")
+    return value.replace("-", "_")
+
+
+def reject_required_dependency_rules(metadata, required):
+    if sorted((item["scope"], item["name"]) for item in metadata) != [
+            ("emitted", "modules.softdep"), ("emitted", "modules.weakdep"),
+            ("source", "modules.softdep"), ("source", "modules.weakdep")]:
+        fail("source/emitted dependency metadata inventory is incomplete")
+    for item in metadata:
+        data = base64.b64decode(item["base64"], validate=True)
+        if len(data) > 256 << 10 or (len(data), hashlib.sha256(data).hexdigest()) != (item["size"], item["sha256"]):
+            fail("dependency rule evidence identity mismatch")
+        if any(byte not in (9, 10) and not 32 <= byte <= 126 for byte in data) or b"\\" in data:
+            fail("unsupported dependency rule encoding or continuation")
+        kind = "softdep" if item["name"] == "modules.softdep" else "weakdep"
+        for number, line in enumerate(data.decode("ascii").splitlines(), 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            fields = line.split()
+            if len(fields) < 3 or fields[0] != kind:
+                fail(f"malformed {item['scope']} {item['name']}:{number}")
+            subject = module_name(fields[1])
+            if kind == "weakdep":
+                for value in fields[2:]:
+                    module_name(value)
+            else:
+                labels, count = [], 0
+                for value in fields[2:]:
+                    if value in ("pre:", "post:"):
+                        if labels and not count:
+                            fail("empty softdep phase")
+                        labels.append(value)
+                        count = 0
+                    else:
+                        if not labels:
+                            fail("softdep target lacks a phase")
+                        module_name(value)
+                        count += 1
+                if labels not in (["pre:"], ["post:"], ["pre:", "post:"]) or not count:
+                    fail("malformed or repeated softdep phases")
+            # kmod uses fnmatch(subject, module_name); literal-only grammar above
+            # avoids approximating wildcard/escape semantics. Targets of an
+            # unrelated subject do not apply to this exact seed closure.
+            if subject in required:
+                fail(f"required module has unreviewed {kind} rule: {subject}")
+
+
+def compare_module_closure(expected, observed, builtins, metadata):
+    modules = expected["modules"]
+    if not 1 <= len(modules) <= 512 or not isinstance(observed, list) or len(observed) > 512:
+        fail("module closure exceeds bounded inventory")
+    paths, names, graph = [], {}, {}
+    for item in modules:
+        for field in ("softdep", "weakdep"):
+            if (field not in item or not isinstance(item[field], list) or len(item[field]) > 512
+                    or any(not isinstance(value, str) or len(value) > 4096 for value in item[field])):
+                fail(f"missing, noncanonical, or unbounded module {field} metadata")
+        path = item["archive_path"]
+        relative = safe_relative(path)
+        match = re.fullmatch(r"(.+)\.ko(?:\.xz|\.zst)?", relative.name)
+        name = module_name(item["name"])
+        if (len(path) > 4096 or not path.startswith(f"usr/lib/modules/{KVER}/kernel/")
+                or not match or module_name(match[1]) != name or name in names or path in paths):
+            fail("ambiguous module name/path identity")
+        paths.append(path)
+        names[name] = path
+        dependencies = item["depends"]
+        if not isinstance(dependencies, list) or len(dependencies) > 512:
+            fail("unbounded hard dependency list")
+        graph[name] = [module_name(value) for value in dependencies]
+        if len(set(graph[name])) != len(graph[name]):
+            fail("duplicate hard dependency")
+    if (len(observed) != len(paths) or len(set(observed)) != len(observed)
+            or set(observed) != set(paths)):
+        fail("emitted closure has missing, extra, or duplicate modules")
+    if not isinstance(builtins, list) or len(builtins) > 512 or builtins != expected["builtins"]:
+        fail("emitted builtin list differs from source")
+    builtin_names = [module_name(value) for value in builtins]
+    if len(set(builtin_names)) != len(builtin_names) or set(builtin_names) & names.keys():
+        fail("ambiguous builtin/module identity")
+    if expected["modprobe"]["seed"] != "qcom_q6v5_pas" or "qcom_q6v5_pas" not in names:
+        fail("missing or incorrect modular PAS seed")
+    lines = expected["modprobe"]["lines"]
+    if (not isinstance(lines, list) or not 1 <= len(lines) <= 1024
+            or any(not isinstance(line, str) or len(line) > 8192 for line in lines)):
+        fail("unbounded raw source closure lines")
+    raw = ("\n".join(lines) + "\n").encode("utf-8")
+    if len(raw) > 4 << 20 or hashlib.sha256(raw).hexdigest() != expected["modprobe"]["stdout_sha256"]:
+        fail("raw source closure lines differ from stdout identity")
+    source_paths, source_builtins = [], []
+    for line in lines:
+        fields = line.split()
+        if len(fields) != 2:
+            fail("unsupported raw source closure action")
+        if fields[0] == "insmod" and fields[1].startswith("/"):
+            # kmod --dirname / emits //lib/...; normalize only leading slashes
+            # and the known usr-merge alias, never traversal/interior aliases.
+            path = fields[1].lstrip("/")
+            safe_relative(path)
+            if path.startswith("lib/modules/"):
+                path = "usr/" + path
+            source_paths.append(path)
+        elif fields[0] == "builtin":
+            module_name(fields[1])
+            source_builtins.append(fields[1])
+        else:
+            fail("unsupported raw source closure action")
+    if source_paths != paths or source_builtins != expected["builtins"]:
+        fail("source inventory order differs from raw source closure")
+    if sum(len(values) for values in graph.values()) > 16384:
+        fail("hard dependency graph exceeds edge bound")
+    for order in (paths, observed):
+        positions = {path: index for index, path in enumerate(order)}
+        for name, dependencies in graph.items():
+            for dependency in dependencies:
+                if dependency in builtin_names:
+                    continue
+                if dependency not in names or positions[names[dependency]] >= positions[names[name]]:
+                    fail(f"missing, cyclic, or inverted hard dependency: {dependency} before {name}")
+    if paths == observed:
+        return "exact-order"
+    for item in modules:
+        if item["softdep"] or item["weakdep"]:
+            fail("permuted closure has required module soft/weak constraints")
+    reject_required_dependency_rules(metadata, set(names) | set(builtin_names))
+    reachable, pending = set(), ["qcom_q6v5_pas"]
+    while pending:
+        name = pending.pop()
+        if name not in reachable:
+            reachable.add(name)
+            pending.extend(value for value in graph[name] if value in graph)
+    if reachable != set(names):
+        fail("permuted inventory is not the seed's hard dependency closure")
+    return "hard-dependency-equivalent"
+
+
+def record_closure_comparison(result, expected, receipt, args, text, modules, builtins, source,
+                              dependency_metadata=None):
+    # Persist evidence before the comparison can fail. These
     # files describe trusted dry-run output; they do not authorize extra modules.
     raw_limit = 4 << 20
     fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -692,6 +927,7 @@ def record_closure_comparison(result, expected, receipt, args, text, modules, bu
     comparison = {
         "schema_version": 1, "kernel_release": KVER,
         "initrd_sha256": receipt["initrd_sha256"], "initrd_size": receipt["initrd_size"],
+        "expected_sha256": receipt["expected_sha256"], "expected_size": receipt["expected_size"],
         "expected_modules": [m["archive_path"] for m in expected["modules"]],
         "observed_modules": modules, "expected_builtins": expected["builtins"],
         "observed_builtins": builtins,
@@ -701,6 +937,8 @@ def record_closure_comparison(result, expected, receipt, args, text, modules, bu
         "emitted_modprobe": {"path": "emitted-modprobe.txt", "args": args,
                             "size": len(emitted_raw), "sha256": hashlib.sha256(emitted_raw).hexdigest()},
     }
+    if dependency_metadata is not None:
+        comparison["dependency_metadata"] = dependency_metadata
     encoded = (json.dumps(comparison, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(encoded) > 1 << 20:
         fail("closure comparison evidence exceeds JSON bound")
@@ -714,11 +952,12 @@ def record_closure_comparison(result, expected, receipt, args, text, modules, bu
                 output.write(data)
     finally:
         os.close(directory)
+    return comparison
 
 
 def internal_verify():
-    expected = read_json("/input/expected.json")
     receipt = read_json("/input/audit-root.json")
+    expected = read_bound_expected("/input/expected.json", receipt)
     if receipt.get("schema_version") != 1 or receipt.get("kernel_release") != KVER:
         fail("unsupported audit receipt")
     if receipt["initrd_sha256"] != expected["initrd"]["sha256"]:
@@ -750,15 +989,18 @@ def internal_verify():
         if not value.startswith(prefix):
             fail(f"modprobe escaped staged selected release: {value}")
         normalized.append("usr/" + value.removeprefix("/audit/"))
-    wanted = [m["archive_path"] for m in expected["modules"]]
-    record_closure_comparison("/result", expected, receipt, args, text, normalized, builtins,
-                             "/input/evidence/source-modprobe.txt")
-    if normalized != wanted or builtins != expected["builtins"]:
-        fail("emitted indexes resolve a different module/softdep closure; "
-             "see verification/closure-comparison.json and raw modprobe evidence")
+    metadata = read_dependency_metadata("/input", expected["module_metadata"], source=True)
+    metadata += read_dependency_metadata("/audit", receipt["files"])
+    diagnostics = record_closure_comparison("/result", expected, receipt, args, text, normalized, builtins,
+                                           "/input/evidence/source-modprobe.txt", metadata)
+    if diagnostics["source_modprobe"]["sha256"] != expected["modprobe"]["stdout_sha256"]:
+        fail("copied raw source modprobe output differs from audited stdout identity")
+    comparison = compare_module_closure(expected, normalized, builtins, metadata)
     write_json(Path("/result/verified.json"), {
         "schema_version": 1, "initrd_sha256": receipt["initrd_sha256"],
+        "expected_sha256": receipt["expected_sha256"], "expected_size": receipt["expected_size"],
         "kernel_release": KVER, "module_closure": normalized, "builtins": builtins,
+        "closure_comparison": comparison,
         "modprobe_command": args, "modprobe_stdout_sha256": hashlib.sha256(text.encode()).hexdigest(),
         "scope": "native fixture emitted bytes and PAS dependency resolution; no hardware qualification"})
 

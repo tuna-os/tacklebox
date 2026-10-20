@@ -17,6 +17,17 @@ It does not change a production image or enable hardware support.
 The fixture does not run programs from the emitted archive.
 It does not load kernel modules or attach host devices.
 The module check must use the emitted config. It cannot hide overrides with an empty config.
+The audit receipt binds the JSON bytes that the Go audit checked.
+The final check rejects a changed receipt input before it uses those claims.
+
+Module lists must contain the same paths without duplicates.
+Both lists must put each hard dependency before its dependent module.
+The check allows a different order only for the seed's complete hard-dependency closure.
+Required modules must have no soft or weak constraints in that case.
+
+The check also inspects source and emitted dependency rules.
+It rejects rules with unsupported syntax.
+Raw command output and comparison evidence remain available when a check fails.
 
 ## Inputs and limits
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Offline regressions for the fixture producer. Never downloads or runs containers."""
 import ast
+import base64
+import copy
 import hashlib
 import io
 import json
@@ -73,14 +75,63 @@ def keyring_observations(db, keys=""):
 def closure_observations():
     prefix = "usr/lib/modules/" + NAMESPACE["KVER"] + "/kernel/"
     modules = [prefix + "dependency.ko", prefix + "qcom_q6v5_pas.ko"]
-    raw = "".join("insmod /" + name + "\n" for name in modules)
-    expected = {"modules": [{"archive_path": name} for name in modules],
+    raw = "".join("insmod /" + name + "\n" for name in modules) + "builtin builtin_a\nbuiltin builtin_b\n"
+    expected = {"modules": [{"archive_path": path, "name": name, "depends": deps,
+                             "softdep": [], "weakdep": []}
+                            for path, name, deps in zip(modules, ["dependency", "qcom_q6v5_pas"],
+                                                       [[], ["dependency"]])],
                 "builtins": ["builtin_a", "builtin_b"], "initrd": {"sha256": "b" * 64},
-                "modprobe": {"args": ["modprobe", "--show-depends", "qcom_q6v5_pas"],
+                "module_metadata": [],
+                "modprobe": {"seed": "qcom_q6v5_pas", "args": ["modprobe", "--show-depends", "qcom_q6v5_pas"],
+                            "lines": raw.splitlines(),
                             "stdout_sha256": hashlib.sha256(raw.encode()).hexdigest()}}
     receipt = {"schema_version": 1, "kernel_release": NAMESPACE["KVER"],
                "initrd_sha256": "b" * 64, "initrd_size": 78459904, "files": []}
+    data = json.dumps(expected).encode()
+    receipt.update(expected_size=len(data), expected_sha256=hashlib.sha256(data).hexdigest())
     return expected, receipt, modules, raw
+
+
+def dependency_metadata_fixture(changes=None):
+    items = []
+    for scope in ("source", "emitted"):
+        for name in ("modules.softdep", "modules.weakdep"):
+            data = (changes or {}).get((scope, name), b"# controlled offline rule fixture\n")
+            items.append({"scope": scope, "name": name, "path": scope + "/" + name,
+                          "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                          "base64": base64.b64encode(data).decode()})
+    return items
+
+
+def run7_closure_observations():
+    # Exact paths/names/depends and observed ordering from native run7 evidence
+    # ZIP SHA256 f1af2efcd1262d0465e6d99f7b2e967efc95c63d8905ee0daddc50526bcf8230.
+    # Index bytes were not uploaded in run7; rule fixtures are separately marked.
+    rows = [
+        ("rpmsg/rpmsg_core", []),
+        ("soc/qcom/qmi_helpers", []),
+        ("soc/qcom/smem", []),
+        ("rpmsg/qcom_smd", ["smem", "rpmsg_core"]),
+        ("soc/qcom/qcom_aoss", []),
+        ("rpmsg/qcom_glink", ["rpmsg_core"]),
+        ("rpmsg/qcom_glink_smem", ["smem", "qcom_glink"]),
+        ("remoteproc/qcom_common", ["smem", "qcom_glink", "qcom_glink_smem", "qcom_smd"]),
+        ("soc/qcom/mdt_loader", []),
+        ("remoteproc/qcom_sysmon", ["qmi_helpers", "rpmsg_core"]),
+        ("remoteproc/qcom_q6v5", ["qcom_aoss", "qcom_sysmon", "smem"]),
+        ("remoteproc/qcom_pil_info", []),
+        ("remoteproc/qcom_q6v5_pas",
+         ["qcom_common", "qcom_q6v5", "mdt_loader", "qcom_sysmon", "smem", "qcom_pil_info"]),
+    ]
+    modules = [{"archive_path": f"usr/lib/modules/{NAMESPACE['KVER']}/kernel/drivers/{path}.ko.xz",
+                "name": path.split("/")[-1], "depends": deps, "softdep": [], "weakdep": []}
+               for path, deps in rows]
+    raw = "".join("insmod //" + item["archive_path"].removeprefix("usr/") + " \n" for item in modules)
+    expected = {"modules": modules, "builtins": [], "modprobe": {
+        "seed": "qcom_q6v5_pas", "lines": raw.splitlines(),
+        "stdout_sha256": hashlib.sha256(raw.encode()).hexdigest()}}
+    observed = [modules[n]["archive_path"] for n in (0, 1, 2, 3, 4, 9, 10, 5, 6, 7, 8, 11, 12)]
+    return expected, observed
 
 
 class FixtureProducerTests(unittest.TestCase):
@@ -462,14 +513,16 @@ class FixtureProducerTests(unittest.TestCase):
             result.mkdir()
             source.write_text(source_raw)
             def capture(_result, *values):
-                record(result, *values[:-1], source)
+                return record(result, *values[:-2], source, values[-1])
             with mock.patch.dict(NAMESPACE, {
                     "read_json": lambda name: expected if name.endswith("expected.json") else receipt,
+                    "read_bound_expected": lambda path, receipt: expected,
                     "closure": lambda *unused: (args, emitted_raw, paths, ["builtin_b", "builtin_a"]),
+                    "read_dependency_metadata": lambda *args, **kwargs: dependency_metadata_fixture()[:2],
                     "record_closure_comparison": capture,
                     "write_json": mock.Mock(side_effect=AssertionError("success marker written"))}), \
                     mock.patch("os.walk", return_value=[]), \
-                    self.assertRaisesRegex(ValueError, "different module/softdep closure"):
+                    self.assertRaisesRegex(ValueError, "builtin list differs"):
                 NAMESPACE["internal_verify"]()
             comparison = json.loads((result / "closure-comparison.json").read_text())
             self.assertEqual(comparison["expected_modules"], modules)
@@ -478,6 +531,8 @@ class FixtureProducerTests(unittest.TestCase):
             self.assertEqual(comparison["observed_builtins"], ["builtin_b", "builtin_a"])
             self.assertEqual(comparison["initrd_sha256"], receipt["initrd_sha256"])
             self.assertEqual(comparison["initrd_size"], receipt["initrd_size"])
+            self.assertEqual(comparison["expected_sha256"], receipt["expected_sha256"])
+            self.assertEqual(comparison["expected_size"], receipt["expected_size"])
             self.assertEqual(comparison["emitted_modprobe"]["args"], args)
             self.assertEqual(comparison["source_modprobe"]["args"], expected["modprobe"]["args"])
             for name, raw in (("source", source_raw), ("emitted", emitted_raw)):
@@ -485,6 +540,168 @@ class FixtureProducerTests(unittest.TestCase):
                 self.assertEqual(value, raw.encode())
                 self.assertEqual(comparison[name + "_modprobe"]["sha256"], hashlib.sha256(value).hexdigest())
             self.assertFalse((result / "verified.json").exists())
+
+    def test_run7_independent_orders_require_inspected_hard_only_rules(self):
+        expected, observed = run7_closure_observations()
+        compare = NAMESPACE["compare_module_closure"]
+        metadata = dependency_metadata_fixture()
+        self.assertEqual(compare(expected, observed, [], metadata), "hard-dependency-equivalent")
+        source = [m["archive_path"] for m in expected["modules"]]
+        self.assertEqual(compare(expected, source, [], metadata), "exact-order")
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            compare(expected, observed, [], [])
+        unrelated = dependency_metadata_fixture({
+            ("emitted", "modules.softdep"): b"softdep unrelated pre: qcom_q6v5_pas post: other\n",
+            ("source", "modules.weakdep"): b"weakdep unrelated qcom_q6v5_pas\n"})
+        self.assertEqual(compare(expected, observed, [], unrelated), "hard-dependency-equivalent")
+
+    def test_source_order_requires_the_bound_raw_source_lines(self):
+        original, observed = run7_closure_observations()
+        compare = NAMESPACE["compare_module_closure"]
+        metadata = dependency_metadata_fixture()
+        swapped = copy.deepcopy(original)
+        swapped["modules"][0], swapped["modules"][1] = swapped["modules"][1], swapped["modules"][0]
+        with self.assertRaisesRegex(ValueError, "source inventory order"):
+            compare(swapped, observed, [], metadata)
+        for change in ("swap", "extra", "action", "interior-alias", "hash"):
+            expected = copy.deepcopy(original)
+            lines = expected["modprobe"]["lines"]
+            if change == "swap":
+                lines[0], lines[1] = lines[1], lines[0]
+            elif change == "extra":
+                lines.append("builtin other")
+            elif change == "action":
+                lines[0] = "install /bin/true"
+            elif change == "interior-alias":
+                lines[0] = lines[0].replace("/lib/modules/", "/lib//modules/")
+            expected["modprobe"]["stdout_sha256"] = hashlib.sha256(("\n".join(lines) + "\n").encode()).hexdigest()
+            if change == "hash":
+                expected["modprobe"]["stdout_sha256"] = "0" * 64
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                compare(expected, observed, [], metadata)
+
+    def test_copied_source_stdout_mismatch_blocks_comparison(self):
+        expected, receipt, modules, raw = closure_observations()
+        with mock.patch.dict(NAMESPACE, {
+                "read_json": lambda path: receipt,
+                "read_bound_expected": lambda path, receipt: expected,
+                "read_dependency_metadata": lambda *args, **kwargs: [],
+                "closure": lambda *args: ([], raw, ["/audit/" + p.removeprefix("usr/") for p in modules],
+                                         expected["builtins"]),
+                "record_closure_comparison": lambda *args: {"source_modprobe": {"sha256": "0" * 64}},
+                "compare_module_closure": mock.Mock(side_effect=AssertionError("comparison reached")),
+                "write_json": mock.Mock(side_effect=AssertionError("success marker written"))}), \
+                mock.patch("os.walk", return_value=[]), \
+                self.assertRaisesRegex(ValueError, "copied raw source"):
+            NAMESPACE["internal_verify"]()
+
+    def test_closure_dag_rejects_inventory_identity_and_edge_failures(self):
+        original, order = run7_closure_observations()
+        metadata = dependency_metadata_fixture()
+        compare = NAMESPACE["compare_module_closure"]
+        for observed in (order[:-1], order + [order[0]], order[:-1] + [order[0]],
+                         order + [order[-1].replace("qcom_q6v5_pas", "unexpected")],
+                         list(reversed(order))):
+            with self.subTest(observed=observed), self.assertRaises(ValueError):
+                compare(original, observed, [], metadata)
+        for change in ("seed", "name", "duplicate-name", "cycle", "missing-edge", "duplicate-edge",
+                       "source-order", "unreachable", "softdep", "weakdep"):
+            expected = copy.deepcopy(original)
+            if change == "seed":
+                expected["modprobe"]["seed"] = "other"
+            elif change == "name":
+                expected["modules"][0]["name"] = "other"
+            elif change == "duplicate-name":
+                expected["modules"][1]["name"] = expected["modules"][0]["name"]
+            elif change == "cycle":
+                expected["modules"][0]["depends"] = ["qcom_q6v5_pas"]
+            elif change == "missing-edge":
+                expected["modules"][-1]["depends"].append("absent")
+            elif change == "duplicate-edge":
+                expected["modules"][-1]["depends"].append("smem")
+            elif change == "source-order":
+                expected["modules"].reverse()
+            elif change == "unreachable":
+                expected["modules"][-1]["depends"].remove("mdt_loader")
+            else:
+                expected["modules"][-1][change] = ["pre: other" if change == "softdep" else "other"]
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                compare(expected, order, [], metadata)
+        with self.assertRaises(ValueError):
+            compare(original, order, ["unexpected_builtin"], metadata)
+        duplicate = copy.deepcopy(original)
+        duplicate["modules"].append(copy.deepcopy(duplicate["modules"][0]))
+        with self.assertRaises(ValueError):
+            compare(duplicate, [m["archive_path"] for m in duplicate["modules"]], [], metadata)
+        ambiguous = copy.deepcopy(original)
+        alias = copy.deepcopy(ambiguous["modules"][0])
+        alias["name"] = alias["name"].replace("_", "-")
+        alias["archive_path"] = alias["archive_path"].replace("rpmsg_core", "rpmsg-core")
+        ambiguous["modules"].append(alias)
+        with self.assertRaises(ValueError):
+            compare(ambiguous, [m["archive_path"] for m in ambiguous["modules"]], [], metadata)
+        for field in ("softdep", "weakdep"):
+            for noncanonical in (False, True):
+                expected = copy.deepcopy(original)
+                del expected["modules"][-1][field]
+                if noncanonical:
+                    expected["modules"][-1][field.capitalize()] = ["other"]
+                with self.subTest(field=field, noncanonical=noncanonical), self.assertRaises(ValueError):
+                    compare(expected, order, [], metadata)
+
+    def test_permutations_reject_relevant_unknown_and_pattern_rules(self):
+        expected, observed = run7_closure_observations()
+        compare = NAMESPACE["compare_module_closure"]
+        bad_soft = (
+            b"softdep qcom_q6v5_pas pre: other\n", b"softdep qcom-q6v5-pas pre: other\n",
+            b"softdep qcom* pre: other\n", b"softdep unrelated pre: qcom[ab]\n",
+            b"softdep unrelated pre:\n", b"softdep unrelated other\n",
+            b"softdep unrelated post: a pre: b\n", b"softdep unrelated pre: a pre: b\n",
+            b"softdep unrelated pre: post: b\n", b"install unrelated /bin/true\n",
+            b"softdep unrelated pre: a\\\n b\n", b"# invalid\\\n",
+            b"# invalid\x00\n", b"# nonascii\xff\n",
+        )
+        for scope in ("source", "emitted"):
+            for rule in bad_soft:
+                metadata = dependency_metadata_fixture({(scope, "modules.softdep"): rule})
+                with self.subTest(scope=scope, rule=rule), self.assertRaises(ValueError):
+                    compare(expected, observed, [], metadata)
+            for rule in (b"weakdep qcom_q6v5_pas other\n", b"weakdep qcom-q6v5-pas other\n",
+                         b"weakdep unrelated\n", b"weakdep unrelated *\n", b"unknown foo bar\n"):
+                metadata = dependency_metadata_fixture({(scope, "modules.weakdep"): rule})
+                with self.subTest(scope=scope, rule=rule), self.assertRaises(ValueError):
+                    compare(expected, observed, [], metadata)
+        exact = [m["archive_path"] for m in expected["modules"]]
+        expected["modules"][-1]["softdep"] = ["pre: smem"]
+        self.assertEqual(compare(expected, exact, [], dependency_metadata_fixture()), "exact-order")
+
+    def test_dependency_metadata_read_is_bounded_receipted_and_nofollow(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = []
+            for name in ("modules.softdep", "modules.weakdep"):
+                relative = f"lib/modules/{NAMESPACE['KVER']}/{name}"
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"# fixture\n")
+                records.append({"path": relative, **NAMESPACE["digest"](path)})
+            read = NAMESPACE["read_dependency_metadata"]
+            items = read(root, records)
+            self.assertEqual([base64.b64decode(item["base64"]) for item in items],
+                             [b"# fixture\n", b"# fixture\n"])
+            for bad in (records[:1], records + records[:1],
+                        [{**records[0], "sha256": "0" * 64}, records[1]]):
+                with self.assertRaises(ValueError):
+                    read(root, bad)
+            path = root / records[0]["path"]
+            with path.open("wb") as stream:
+                stream.truncate((256 << 10) + 1)
+            with self.assertRaises(ValueError):
+                read(root, records)
+            path.unlink()
+            path.symlink_to(root / records[1]["path"])
+            with self.assertRaises(OSError):
+                read(root, records)
 
     def test_closure_evidence_bounds_and_symlink_rejection(self):
         expected, receipt, modules, raw = closure_observations()
@@ -621,12 +838,77 @@ class FixtureProducerTests(unittest.TestCase):
             self.assertEqual(NAMESPACE["read_json"](path), {"schema_version": 1})
             link = Path(directory) / "link.json"
             link.symlink_to(path)
-            with self.assertRaises(ValueError):
+            with self.assertRaises((ValueError, OSError)):
                 NAMESPACE["read_json"](link)
             with path.open("wb") as output:
                 output.truncate((4 << 20) + 1)
             with self.assertRaises(ValueError):
                 NAMESPACE["read_json"](path)
+
+    def test_strict_json_and_expected_receipt_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "expected.json"
+            data = b'{"modules": [], "metadata": {"source": "verified"}}\n'
+            path.write_bytes(data)
+            receipt = {"expected_size": len(data), "expected_sha256": hashlib.sha256(data).hexdigest()}
+            read = NAMESPACE["read_bound_expected"]
+            self.assertEqual(read(path, receipt), json.loads(data))
+            replacement = data.replace(b"verified", b"modified")
+            path.write_bytes(replacement)  # Same size, different DAG metadata.
+            with self.assertRaisesRegex(ValueError, "differs"):
+                read(path, receipt)
+            path.write_bytes(data)
+            for changed in ({}, {**receipt, "expected_size": len(data) + 1},
+                            {**receipt, "expected_sha256": "0" * 64}):
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    read(path, changed)
+            for invalid in (b'{"x":1,"x":2}', b'{"x":{"a":1,"a":2}}',
+                            b'{"depends":[],"Depends":["other"]}', b'{"K":1,"\\u212a":2}',
+                            b'{"x":1,"\\u0078":2}', b'{} {}', b'{} trailing',
+                            b'{"x":NaN}', b'{"x":Infinity}', b'[]'):
+                path.write_bytes(invalid)
+                bound = {"expected_size": len(invalid),
+                         "expected_sha256": hashlib.sha256(invalid).hexdigest()}
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    read(path, bound)
+                with self.assertRaises(ValueError):
+                    NAMESPACE["read_json"](path)
+            path.unlink()
+            path.symlink_to(Path(directory) / "missing")
+            with self.assertRaises(OSError):
+                read(path, receipt)
+
+    def test_expected_json_canonical_keys_and_go_matching_budgets(self):
+        decode = NAMESPACE["decode_expected"]
+        env = {"DRACUT_ARCH": "aarch64", "DRACUT_NO_MKNOD": "1", "HOME": "/tmp",
+               "LC_ALL": "C", "PATH": "/usr/bin", "SOURCE_DATE_EPOCH": "0"}
+        self.assertEqual(decode(json.dumps({"build_environment": env}).encode()),
+                         {"build_environment": env})
+        for invalid in (
+            b'{"modules":[{"Softdep":["pre: other"]}]}',
+            b'{"modules":[{"weakdep":[],"Weakdep":["other"]}]}',
+            b'{"build_environment":{"OTHER":"x"}}',
+            b'{"nested":{"PATH":"x"}}', b'{"build_environment":[{"PATH":"x"}]}',
+            b'{"\\u212aernel_release":"x"}', b'{"bad-key":1}',
+            b'{"' + b"a" * 129 + b'":1}', b'{"x":"\xff"}',
+            '{"x":1}'.encode("utf-16"),
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                decode(invalid)
+        for depth, valid in ((63, True), (64, False)):
+            raw = b'{"a":' + b"[" * depth + b"0" + b"]" * depth + b"}"
+            if valid:
+                decode(raw)
+            else:
+                with self.assertRaisesRegex(ValueError, "nesting"):
+                    decode(raw)
+        for count, valid in ((99994, True), (99995, False)):
+            raw = b'{"a":[' + b",".join([b"0"] * count) + b"]}"
+            if valid:
+                decode(raw)
+            else:
+                with self.assertRaisesRegex(ValueError, "token"):
+                    decode(raw)
 
     def test_runtime_security_and_strict_emission_options(self):
         self.assertNotIn("--privileged", PYTHON)

@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 const fixtureRelease = "7.2.11-200.fc44.aarch64"
@@ -98,14 +99,16 @@ type fixtureStagedFile struct {
 }
 
 type fixtureAuditReceipt struct {
-	SchemaVersion int                 `json:"schema_version"`
-	AuditRoot     string              `json:"audit_root"`
-	InitrdSHA256  string              `json:"initrd_sha256"`
-	InitrdSize    int64               `json:"initrd_size"`
-	KernelRelease string              `json:"kernel_release"`
-	Files         []fixtureStagedFile `json:"files"`
-	Modules       []string            `json:"modules"`
-	Builtins      []string            `json:"builtins"`
+	SchemaVersion  int                 `json:"schema_version"`
+	AuditRoot      string              `json:"audit_root"`
+	InitrdSHA256   string              `json:"initrd_sha256"`
+	InitrdSize     int64               `json:"initrd_size"`
+	ExpectedSHA256 string              `json:"expected_sha256"`
+	ExpectedSize   int64               `json:"expected_size"`
+	KernelRelease  string              `json:"kernel_release"`
+	Files          []fixtureStagedFile `json:"files"`
+	Modules        []string            `json:"modules"`
+	Builtins       []string            `json:"builtins"`
 }
 
 func TestFedoraEmittedInitrdFixture(t *testing.T) {
@@ -122,14 +125,9 @@ func TestFedoraEmittedInitrdFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var expected fixtureExpected
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&expected); err != nil {
+	expected, err := fixtureDecodeExpected(raw)
+	if err != nil {
 		t.Fatalf("expected.json: %v", err)
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		t.Fatal("expected.json has trailing data")
 	}
 	if expected.SchemaVersion != 1 || expected.Architecture != "aarch64" || expected.KernelRelease != fixtureRelease {
 		t.Fatal("fixture must use schema 1 and the reviewed Fedora aarch64 kernel")
@@ -210,6 +208,7 @@ func TestFedoraEmittedInitrdFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fixtureBindExpected(&receipt, raw)
 	receipt.KernelRelease = expected.KernelRelease
 	receipt.Builtins = append([]string{}, expected.Builtins...)
 	for _, module := range expected.Modules {
@@ -228,6 +227,206 @@ func TestFedoraEmittedInitrdFixture(t *testing.T) {
 	}
 	t.Logf("verified emitted archive %s (%d bytes); staged %d regular files in %s; trusted-container closure dry-run remains required",
 		receipt.InitrdSHA256, receipt.InitrdSize, len(receipt.Files), receipt.AuditRoot)
+}
+
+// Bind the exact originally inspected producer claims across the Go/container
+// phases. This prevents replacement; it does not make those claims independent
+// publisher signatures or add evidence beyond the comparisons above.
+func fixtureBindExpected(receipt *fixtureAuditReceipt, raw []byte) {
+	receipt.ExpectedSHA256 = fixtureDigest(raw)
+	receipt.ExpectedSize = int64(len(raw))
+}
+
+func fixtureDecodeExpected(raw []byte) (fixtureExpected, error) {
+	var expected fixtureExpected
+	if len(raw) == 0 || len(raw) > 4<<20 || !utf8.Valid(raw) ||
+		!bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) {
+		return expected, fmt.Errorf("invalid expected JSON size/encoding")
+	}
+	// encoding/json's DisallowUnknownFields does not reject duplicate keys.
+	// Preflight every object, including retained provenance, before decoding.
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	budget := 100000
+	token := func() (json.Token, error) {
+		budget--
+		if budget < 0 {
+			return nil, fmt.Errorf("expected JSON token budget exceeded")
+		}
+		return decoder.Token()
+	}
+	var value func(int, string) error
+	value = func(depth int, parent string) error {
+		if depth > 64 {
+			return fmt.Errorf("expected JSON nesting budget exceeded")
+		}
+		next, err := token()
+		if err != nil {
+			return err
+		}
+		delim, container := next.(json.Delim)
+		if !container {
+			return nil
+		}
+		switch delim {
+		case '{':
+			keys := map[string]bool{}
+			for decoder.More() {
+				key, err := token()
+				if err != nil {
+					return err
+				}
+				name, ok := key.(string)
+				if !ok || !fixtureExpectedKey(name, parent) {
+					return fmt.Errorf("invalid expected JSON object key %q", key)
+				}
+				// Keys are ASCII after the grammar check. Also reject an
+				// environment provenance key and its lowercase counterpart.
+				folded := strings.ToLower(name)
+				if keys[folded] {
+					return fmt.Errorf("duplicate expected JSON object key %q", key)
+				}
+				keys[folded] = true
+				if err := value(depth+1, parent+"/"+name); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err := value(depth+1, parent+"/[]"); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("unexpected JSON delimiter")
+		}
+		close, err := token()
+		if err != nil || (delim == '{' && close != json.Delim('}')) ||
+			(delim == '[' && close != json.Delim(']')) {
+			return fmt.Errorf("invalid expected JSON container")
+		}
+		return nil
+	}
+	if err := value(0, ""); err != nil {
+		return expected, err
+	}
+	if _, err := token(); err != io.EOF {
+		return expected, fmt.Errorf("expected JSON has trailing data")
+	}
+	decoder = json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&expected); err != nil {
+		return expected, err
+	}
+	return expected, nil
+}
+
+// Go's field decoder is case-insensitive while the next Python phase is not.
+// Keep the fixture keys canonical ASCII rather than trying to reproduce both
+// runtimes' Unicode folding. The only uppercase keys are observed environment
+// variable names in the producer's build_environment provenance object.
+func fixtureExpectedKey(name, parent string) bool {
+	if parent == "/build_environment" {
+		switch name {
+		case "DRACUT_ARCH", "DRACUT_NO_MKNOD", "HOME", "LC_ALL", "PATH", "SOURCE_DATE_EPOCH":
+			return true
+		}
+	}
+	if len(name) == 0 || len(name) > 128 || name[0] < 'a' || name[0] > 'z' {
+		return false
+	}
+	for _, c := range name {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func TestFixtureExpectedJSONAndReceiptBinding(t *testing.T) {
+	raw := []byte(`{"schema_version":1,"architecture":"aarch64","kernel_release":"` + fixtureRelease +
+		`","modprobe":{"seed":"qcom_q6v5_pas"},"controlled_config":[{"name":"strict","sha256":"observed-claim"}],` +
+		`"build_environment":{"DRACUT_ARCH":"aarch64","DRACUT_NO_MKNOD":"1","HOME":"/root","LC_ALL":"C","PATH":"/usr/bin","SOURCE_DATE_EPOCH":"0"}}` + "\n")
+	expected, err := fixtureDecodeExpected(raw)
+	if err != nil || expected.KernelRelease != fixtureRelease {
+		t.Fatalf("valid producer metadata rejected: %v", err)
+	}
+	receipt := fixtureAuditReceipt{SchemaVersion: 1}
+	fixtureBindExpected(&receipt, raw)
+	serialized, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(serialized, &fields); err != nil {
+		t.Fatal(err)
+	}
+	var digest string
+	var size int64
+	if json.Unmarshal(fields["expected_sha256"], &digest) != nil ||
+		json.Unmarshal(fields["expected_size"], &size) != nil ||
+		digest != fixtureDigest(raw) || size != int64(len(raw)) {
+		t.Fatal("audit receipt does not bind the original metadata bytes")
+	}
+	// Semantically identical reformatting and dependency metadata replacement
+	// both change the binding. Never reconstruct the digest by re-marshalling.
+	for _, changed := range [][]byte{
+		append(append([]byte{}, raw...), '\n'),
+		bytes.Replace(raw, []byte("qcom_q6v5_pas"), []byte("different_seed"), 1),
+	} {
+		if _, err := fixtureDecodeExpected(changed); err != nil {
+			t.Fatal(err)
+		}
+		if receipt.ExpectedSHA256 == fixtureDigest(changed) {
+			t.Fatal("replaced/reformatted metadata retained original binding")
+		}
+	}
+	for name, invalid := range map[string][]byte{
+		"duplicate top-level":    []byte(`{"schema_version":1,"schema_version":1}`),
+		"duplicate escaped key":  []byte(`{"schema_version":1,"schema_\u0076ersion":2}`),
+		"duplicate nested":       []byte(`{"modprobe":{"seed":"qcom_q6v5_pas","seed":"other"}}`),
+		"duplicate raw metadata": []byte(`{"controlled_config":[{"name":"first","name":"second"}]}`),
+		"mixed-case alias":       []byte(`{"modules":[{"Softdep":[]}]}`),
+		"case alias duplicate":   []byte(`{"modules":[{"depends":[],"Depends":[]}]}`),
+		"Unicode fold alias":     []byte(`{"modules":[{"\u017foftdep":[]}]}`),
+		"uppercase outside env":  []byte(`{"initrd":{"PATH":"initrd.img"}}`),
+		"unknown uppercase env":  []byte(`{"build_environment":{"UNREVIEWED":"value"}}`),
+		"env case duplicate":     []byte(`{"build_environment":{"PATH":"/usr/bin","path":"/other"}}`),
+		"excessive key":          []byte(`{"controlled_config":{"` + strings.Repeat("k", 129) + `":true}}`),
+		"unknown top-level":      []byte(`{"unreviewed":true}`),
+		"unknown nested":         []byte(`{"modprobe":{"unreviewed":true}}`),
+		"trailing object":        []byte("{} {}"),
+		"trailing scalar":        []byte("{} true"),
+		"trailing garbage":       []byte("{} invalid"),
+		"truncated":              []byte(`{"modprobe":`),
+		"wrong container":        []byte(`{"modprobe":[}`),
+		"null":                   []byte("null"),
+		"invalid UTF-8":          append([]byte(`{"os_release":"`), 0xff, '"', '}'),
+		"excessive size":         bytes.Repeat([]byte(" "), (4<<20)+1),
+		"excessive nesting":      []byte(`{"controlled_config":` + strings.Repeat("[", 66) + "0" + strings.Repeat("]", 66) + "}"),
+		"excessive token count":  []byte(`{"controlled_config":[` + strings.Repeat("0,", 100001) + "0]}"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := fixtureDecodeExpected(invalid); err == nil {
+				t.Fatal("ambiguous or unsupported producer metadata accepted")
+			}
+		})
+	}
+	// Match the next Python phase's exact depth/token boundary regressions.
+	for _, depth := range []int{63, 64} {
+		data := []byte(`{"controlled_config":` + strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth) + "}")
+		_, err := fixtureDecodeExpected(data)
+		if (err == nil) != (depth == 63) {
+			t.Fatalf("nesting boundary %d: %v", depth, err)
+		}
+	}
+	for _, count := range []int{99994, 99995} {
+		data := []byte(`{"controlled_config":[` + strings.Repeat("0,", count-1) + "0]}")
+		_, err := fixtureDecodeExpected(data)
+		if (err == nil) != (count == 99994) {
+			t.Fatalf("token boundary %d: %v", count, err)
+		}
+	}
 }
 
 // All fixture input opens are descriptor-relative and refuse symlinks, including
