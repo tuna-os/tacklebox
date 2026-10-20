@@ -218,6 +218,11 @@ class FixtureProducerTests(unittest.TestCase):
     def test_reviewed_pin_shape_and_container_base(self):
         pins = json.loads((DIRECTORY / "pins.json").read_text())
         self.assertEqual(pins["architecture"], "aarch64")
+        self.assertEqual(pins["base_image"],
+                         "registry.fedoraproject.org/fedora@sha256:"
+                         "db1539298ea4e8e7a96f1ce1f82195bff05d66bef015db79dda9954245253b24")
+        self.assertEqual(pins["base_index_digest"],
+                         "sha256:99741a26ce7d4ee2746a564552210f267a458c527cc09ea7dd103ecbe62b0d5a")
         self.assertEqual(pins["kernel_release"], "7.2.11-200.fc44.aarch64")
         self.assertEqual(pins["source_date_epoch"], 1792078574)
         self.assertEqual(pins["fedora44_fingerprint"],

@@ -32,6 +32,11 @@ Raw command output and comparison evidence remain available when a check fails.
 ## Inputs and limits
 
 The RPMs need about 251 MB in total. The base container has an immutable digest.
+The base comes from registry.fedoraproject.org/fedora with the original ARM64 digest.
+On October 20, Quay no longer served that digest.
+The Fedora registry served the same index, manifest, and config bytes.
+The fixture has no fallback to a mutable tag.
+
 Additional dependencies from Fedora can change. The receipts record their versions and repository metadata.
 These records do not make the entire build reproducible.
 
