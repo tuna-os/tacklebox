@@ -1124,8 +1124,15 @@ func fixtureSelectAuditFiles(dir string, e fixtureExpected, i *InitrdInventory) 
 		}
 	}
 	// Source config is evidence for byte equality, not authority to allow a
-	// directive. Initially only comments/blank lines are admitted; add an explicit
-	// narrow policy only after reviewing a real native producer failure.
+	// directive. The only active exception is the exact reviewed systemd.conf;
+	// its three option targets must remain outside the verified PAS closure.
+	requiredNames := map[string]bool{"qcom_q6v5_pas": true}
+	for _, module := range e.Modules {
+		requiredNames[module.Name] = true
+	}
+	for _, name := range e.Builtins {
+		requiredNames[name] = true
+	}
 	configPins := map[string]fixtureFile{}
 	configBytes := map[string][]byte{}
 	for _, pin := range e.ModprobeConfig {
@@ -1168,7 +1175,7 @@ func fixtureSelectAuditFiles(dir string, e fixtureExpected, i *InitrdInventory) 
 			if err := fixtureMatchArchive(i, pin); err != nil {
 				return nil, err
 			}
-			if err := fixtureAuditModprobeConfig(name, configBytes[name]); err != nil {
+			if err := fixtureAuditModprobeConfig(name, configBytes[name], requiredNames); err != nil {
 				return nil, err
 			}
 			target := "etc/modprobe.d/" + path.Base(name)
@@ -1180,23 +1187,41 @@ func fixtureSelectAuditFiles(dir string, e fixtureExpected, i *InitrdInventory) 
 	return selected, nil
 }
 
-func fixtureAuditModprobeConfig(name string, data []byte) error {
+func fixtureAuditModprobeConfig(name string, data []byte, requiredNames map[string]bool) error {
 	if len(data) > 1<<20 || bytes.IndexByte(data, 0) >= 0 {
 		return fmt.Errorf("invalid modprobe config %s", name)
 	}
+	// Observed in native Fedora attempt4's source-modprobe-config.json.
+	// Preserve exact bytes and path as well as parsing the three directives:
+	// https://github.com/systemd/systemd/blob/main/modprobe.d/systemd.conf
+	reviewedSystemd := (name == "usr/lib/modprobe.d/systemd.conf" || name == "lib/modprobe.d/systemd.conf") &&
+		len(data) == 821 && fixtureDigest(data) == "e5a3958cbd3684b63f3cada6604469cc56f727b106d5524daf5aefa6935a48ce"
+	reviewedOptions := map[string]string{"bonding": "max_bonds=0", "dummy": "numdummies=0", "ifb": "numifbs=0"}
+	seen := map[string]bool{}
 	for n, line := range strings.Split(string(data), "\n") {
 		if len(line) > 65536 {
 			return fmt.Errorf("%s:%d: excessive config line", name, n+1)
 		}
 		line = strings.TrimSpace(line)
 		if line != "" && !strings.HasPrefix(line, "#") {
-			return fmt.Errorf("%s:%d: unreviewed active modprobe directive: %s", name, n+1, strings.Fields(line)[0])
+			fields := strings.Fields(line)
+			if !reviewedSystemd || len(fields) != 3 || fields[0] != "options" ||
+				reviewedOptions[fields[1]] != fields[2] || seen[fields[1]] {
+				return fmt.Errorf("%s:%d: unreviewed active modprobe directive: %s", name, n+1, fields[0])
+			}
+			if requiredNames[fields[1]] {
+				return fmt.Errorf("%s:%d: reviewed option target %s overlaps required PAS closure", name, n+1, fields[1])
+			}
+			seen[fields[1]] = true
 		}
 		// A backslash on a comment line can join a following directive in some
 		// config readers. Avoid a divergent continuation interpretation.
 		if strings.HasSuffix(line, "\\") {
 			return fmt.Errorf("%s:%d: config continuations unsupported", name, n+1)
 		}
+	}
+	if reviewedSystemd && len(seen) != len(reviewedOptions) {
+		return fmt.Errorf("%s: reviewed config does not contain exactly three options", name)
 	}
 	return nil
 }
@@ -1496,11 +1521,11 @@ func TestFixtureSourceClosureAndConfig(t *testing.T) {
 			t.Fatal("invalid or incomplete closure accepted")
 		}
 	}
-	if err := fixtureAuditModprobeConfig("example.conf", []byte("# comment\n \n")); err != nil {
+	if err := fixtureAuditModprobeConfig("example.conf", []byte("# comment\n \n"), nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, data := range []string{"install foo /bin/sh\n", "remove foo /bin/sh\n", "blacklist foo\n", "options foo bar=1\n", "alias foo bar\n", "softdep foo pre: bar\n", "mask foo\n", "weakdep foo bar\n", "unknown foo\n", "# comment\\\n", "#\x00comment"} {
-		if err := fixtureAuditModprobeConfig("example.conf", []byte(data)); err == nil || !strings.Contains(err.Error(), "example.conf") {
+		if err := fixtureAuditModprobeConfig("example.conf", []byte(data), nil); err == nil || !strings.Contains(err.Error(), "example.conf") {
 			t.Fatal("active/ambiguous modprobe config accepted")
 		}
 	}
@@ -1658,6 +1683,77 @@ func TestFixtureStagesOnlyObservedRegularBytes(t *testing.T) {
 	}
 }
 
+// Exact systemd modprobe.d/systemd.conf bytes observed in the Fedora fixture,
+// from https://github.com/systemd/systemd/blob/main/modprobe.d/systemd.conf .
+// The upstream LGPL-2.1-or-later attribution/license notice is retained below.
+const fixtureObservedSystemdConfig = `#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+#
+#  systemd is free software; you can redistribute it and/or modify it
+#  under the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation; either version 2.1 of the License, or
+#  (at your option) any later version.
+#
+# When bonding module is loaded, it creates bond0 by default due to max_bonds
+# option default value 1. This interferes with the network configuration
+# management / networkd, as it is not possible to detect whether this bond0 was
+# intentionally configured by the user, or should be managed by
+# networkd/NM/etc. Therefore disable bond0 creation.
+
+options bonding max_bonds=0
+
+# Do the same for dummy0.
+
+options dummy numdummies=0
+
+# Do the same for ifb0.
+
+options ifb numifbs=0
+`
+
+func TestFixtureObservedSystemdConfigException(t *testing.T) {
+	data := []byte(fixtureObservedSystemdConfig)
+	if len(data) != 821 || fixtureDigest(data) != "e5a3958cbd3684b63f3cada6604469cc56f727b106d5524daf5aefa6935a48ce" {
+		t.Fatal("observed config bytes changed")
+	}
+	required := map[string]bool{"qcom_q6v5_pas": true, "qcom_q6v5": true, "rpmsg_core": true}
+	for _, name := range []string{"usr/lib/modprobe.d/systemd.conf", "lib/modprobe.d/systemd.conf"} {
+		if err := fixtureAuditModprobeConfig(name, data, required); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"systemd.conf", "etc/modprobe.d/systemd.conf", "run/modprobe.d/systemd.conf", "usr/lib/modprobe.d/other.conf"} {
+		if err := fixtureAuditModprobeConfig(name, data, required); err == nil {
+			t.Fatalf("reviewed bytes admitted at unreviewed path %s", name)
+		}
+	}
+	for _, changed := range []string{
+		strings.Replace(fixtureObservedSystemdConfig, "max_bonds=0", "max_bonds=1", 1),
+		strings.Replace(fixtureObservedSystemdConfig, "options dummy numdummies=0", "options qcom_q6v5_pas debug=1", 1),
+		strings.Replace(fixtureObservedSystemdConfig, "options dummy numdummies=0", "options rpmsg_core debug=1", 1),
+		strings.Replace(fixtureObservedSystemdConfig, "options dummy numdummies=0", "", 1),
+		strings.Replace(fixtureObservedSystemdConfig, "options dummy numdummies=0", "options dummy numdummies=0 extra=1", 1),
+		strings.Replace(fixtureObservedSystemdConfig, "options dummy numdummies=0", "options ifb numifbs=0", 1),
+		strings.Replace(fixtureObservedSystemdConfig, "# Do the same for dummy0.", "# Changed comment.", 1),
+		fixtureObservedSystemdConfig + "options bonding max_bonds=0\n",
+		fixtureObservedSystemdConfig + "install qcom_q6v5_pas /bin/true\n",
+		fixtureObservedSystemdConfig + "options firmware_class path=/elsewhere\n",
+		fixtureObservedSystemdConfig + "\n",
+		strings.ReplaceAll(fixtureObservedSystemdConfig, "\n", "\r\n"),
+	} {
+		if err := fixtureAuditModprobeConfig("usr/lib/modprobe.d/systemd.conf", []byte(changed), required); err == nil {
+			t.Fatal("changed or extra config bytes admitted")
+		}
+	}
+	for _, name := range []string{"bonding", "dummy", "ifb"} {
+		if err := fixtureAuditModprobeConfig("usr/lib/modprobe.d/systemd.conf", data, map[string]bool{name: true}); err == nil ||
+			!strings.Contains(err.Error(), "overlaps required PAS closure") {
+			t.Fatalf("option affecting required module %s admitted: %v", name, err)
+		}
+	}
+}
+
 func TestFixtureAuditSelectionAndConfigPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "source"), 0700); err != nil {
@@ -1668,6 +1764,7 @@ func TestFixtureAuditSelectionAndConfigPrecedence(t *testing.T) {
 		"etc/modprobe.d/reviewed.conf":                                   "# highest priority\n",
 		"usr/lib/modprobe.d/reviewed.conf":                               "# lower priority\n",
 		"usr/lib/modprobe.d/vendor.conf":                                 "# vendor comment\n",
+		"usr/lib/modprobe.d/systemd.conf":                                fixtureObservedSystemdConfig,
 	}
 	for _, name := range []string{"modules.dep", "modules.dep.bin", "modules.alias", "modules.alias.bin", "modules.softdep", "modules.builtin", "modules.builtin.bin"} {
 		body["usr/lib/modules/"+fixtureRelease+"/"+name] = ""
@@ -1691,10 +1788,13 @@ func TestFixtureAuditSelectionAndConfigPrecedence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := fixtureExpected{KernelRelease: fixtureRelease}
-	for _, name := range []string{"etc/modprobe.d/reviewed.conf", "usr/lib/modprobe.d/reviewed.conf", "usr/lib/modprobe.d/vendor.conf"} {
+	e := fixtureExpected{KernelRelease: fixtureRelease, Modules: []fixturePayload{{fixtureFile: fixtureFile{Name: "qcom_q6v5_pas"}}}}
+	for _, name := range []string{"etc/modprobe.d/reviewed.conf", "usr/lib/modprobe.d/reviewed.conf", "usr/lib/modprobe.d/vendor.conf", "usr/lib/modprobe.d/systemd.conf", "lib/modprobe.d/systemd.conf"} {
 		source := "source/" + strings.ReplaceAll(name, "/", "-")
 		data := []byte(body[name])
+		if name == "lib/modprobe.d/systemd.conf" {
+			data = []byte(fixtureObservedSystemdConfig)
+		}
 		if err := os.WriteFile(filepath.Join(dir, source), data, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -1706,8 +1806,20 @@ func TestFixtureAuditSelectionAndConfigPrecedence(t *testing.T) {
 	}
 	if selected["etc/modprobe.d/reviewed.conf"] != "etc/modprobe.d/reviewed.conf" ||
 		selected["etc/modprobe.d/vendor.conf"] != "usr/lib/modprobe.d/vendor.conf" ||
+		selected["etc/modprobe.d/systemd.conf"] != "usr/lib/modprobe.d/systemd.conf" ||
 		selected["lib/modules/"+fixtureRelease+"/kernel/qcom_q6v5_pas.ko"] == "" {
 		t.Fatal("incorrect config precedence or module normalization")
+	}
+	for _, builtin := range []bool{false, true} {
+		bad := e
+		if builtin {
+			bad.Builtins = []string{"dummy"}
+		} else {
+			bad.Modules = append(append([]fixturePayload{}, e.Modules...), fixturePayload{fixtureFile: fixtureFile{Name: "dummy"}})
+		}
+		if _, err := fixtureSelectAuditFiles(dir, bad, inventory); err == nil || !strings.Contains(err.Error(), "overlaps required PAS closure") {
+			t.Fatalf("config affecting required module/builtin admitted: %v", err)
+		}
 	}
 	clone := func() *InitrdInventory {
 		result := *inventory
@@ -2015,7 +2127,7 @@ func TestFixtureFirmwareCmdlineOverrides(t *testing.T) {
 			t.Fatal("invalid cmdline member accepted")
 		}
 	}
-	if err := fixtureAuditModprobeConfig("firmware.conf", []byte("options firmware_class path=/different\n")); err == nil {
+	if err := fixtureAuditModprobeConfig("firmware.conf", []byte("options firmware_class path=/different\n"), nil); err == nil {
 		t.Fatal("modprobe firmware search override accepted")
 	}
 	flags := []string{`CONFIG_EXTRA_FIRMWARE=""`, `CONFIG_CMDLINE=""`, "# CONFIG_FW_LOADER_USER_HELPER is not set", "# CONFIG_BOOT_CONFIG_FORCE is not set"}

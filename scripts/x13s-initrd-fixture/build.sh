@@ -47,6 +47,7 @@ compress=cat
 early_microcode=no
 acpi_override=no
 enhanced_cpio=no
+cpio_owner=0:0
 do_hardlink=no
 do_strip=no
 uefi=no

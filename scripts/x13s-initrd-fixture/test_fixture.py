@@ -50,6 +50,14 @@ APPROVED_KEY_ROW = (
     "36f612dcf27f7d1a48a835e4dbfcf71c6d9f90a6 "
     "Fedora (44) <fedora-44-primary@fedoraproject.org> public key\n"
 )
+# Extracted from verified dracut-108-8.fc44 /usr/bin/dracut, lines 2484/2609.
+# File SHA256: 9399a7041414a13b213ca55b8ef4d943b8dafb2f7b5545997fbf443d5177d660.
+# The normal archive uses line 2609; line 2512 is the disabled early-cpio path.
+FEDORA108_OWNER_DEFAULT = '[[ $EUID != 0 ]] && cpio_owner="0:0"'
+FEDORA108_CPIO_COMMAND = (
+    'cpio -o ${CPIO_REPRODUCIBLE:+--reproducible} --null '
+    '${cpio_owner:+-R "$cpio_owner"} -H newc --quiet'
+)
 
 
 def keyring_observations(db, keys=""):
@@ -498,6 +506,30 @@ class FixtureProducerTests(unittest.TestCase):
                          "--setopt=tsflags=noscripts", "--nostrip", "--no-compress",
                          "--no-early-microcode", "--nohardlink", "--no-uefi"):
             self.assertIn(required, PYTHON)
+
+    def test_fedora108_archive_owner_expression_uses_controlled_config(self):
+        self.assertEqual(NAMESPACE["STRICT_CONFIG"].splitlines().count("cpio_owner=0:0"), 1)
+        # EUID is readonly in Bash. Substitute only its variable name to cover
+        # both observed source branches without privilege or an actual archive.
+        owner_default = FEDORA108_OWNER_DEFAULT.replace("$EUID", "$fixture_euid")
+        for config, euid, owner in (
+            (NAMESPACE["STRICT_CONFIG"], 0, "0:0"),
+            (NAMESPACE["STRICT_CONFIG"], 1000, "0:0"),
+            ("", 0, None),  # Root otherwise retains source uid/gid.
+            ("", 1000, "0:0"),
+            ("cpio_owner=123:456\n", 0, "123:456"),
+            ("cpio_owner=123:456\n", 1000, "0:0"),
+        ):
+            script = ('set -u\nfixture_euid=$1\nCPIO_REPRODUCIBLE=1\n'
+                      + config + "\n" + owner_default
+                      + '\ncpio() { printf "%s\\n" "$@"; }\n' + FEDORA108_CPIO_COMMAND)
+            with self.subTest(euid=euid, owner=owner):
+                _, output = NAMESPACE["run"](["bash", "-c", script, "fixture", str(euid)],
+                                             maximum=1024)
+                expected = ["-o", "--reproducible", "--null"]
+                if owner:
+                    expected += ["-R", owner]
+                self.assertEqual(output.splitlines(), expected + ["-H", "newc", "--quiet"])
 
     def test_command_stdout_bound_and_success(self):
         run = NAMESPACE["run"]
