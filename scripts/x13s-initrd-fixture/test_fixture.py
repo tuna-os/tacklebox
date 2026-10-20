@@ -69,6 +69,44 @@ class FixtureProducerTests(unittest.TestCase):
             with self.subTest(text=text, code=code):
                 self.assertFalse(check(text, code))
 
+    def test_signature_diagnostics_preserve_failure_and_bound_output(self):
+        receipt = ("Header OpenPGP V4 RSA/SHA256 signature, key fingerprint: "
+                   "36f612dcf27f7d1a48a835e4dbfcf71c6d9f90a6: OK\n")
+        # Diagnostics-only change: no new format is admitted before native evidence.
+        self.assertFalse(NAMESPACE["signed_rpm"](receipt, 0))
+        with self.assertRaises(ValueError) as caught:
+            NAMESPACE["signature_failure"]("dracut", 0, receipt, "RPM version 6\n")
+        message = str(caught.exception)
+        self.assertIn(receipt, message)
+        self.assertIn("rpmkeys exit=0", message)
+        self.assertIn("RPM version 6", message)
+        with self.assertRaises(ValueError) as caught:
+            NAMESPACE["signature_failure"]("dracut", 1, "X" * 30000 + receipt, "Y" * 30000)
+        self.assertLess(len(str(caught.exception).encode()), 13000)
+        self.assertIn(receipt, str(caught.exception))
+
+    def test_keyring_diagnostics_are_read_only_and_scoped(self):
+        calls = []
+        def diagnostic(command, path, **kwargs):
+            calls.append((command, path, kwargs))
+            return 0, "public diagnostic\n"
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict(NAMESPACE, {"log_run": diagnostic}):
+            db, evidence = Path(directory) / "keys", Path(directory)
+            result = NAMESPACE["rpm_keyring_diagnostics"](db, evidence, "before-import")
+        self.assertEqual(len(calls), 3)
+        self.assertIn("before-import key-list exit=0", result)
+        for command, _, options in calls:
+            self.assertFalse(options["check"])
+            self.assertEqual(options["maximum"], 16384)
+            self.assertNotIn("--import", command)
+            self.assertNotIn("--delete", command)
+            self.assertNotIn("--showrc", command)
+        self.assertEqual(calls[1][0][1:3], ["--dbpath", db])
+        self.assertEqual(calls[2][0], ["rpmkeys", "--dbpath", db, "--list"])
+        for macro in ("_dbpath", "_keyring", "_keyringpath", "_pkgverify_level", "_pkgverify_flags"):
+            self.assertIn("%{" + macro + "}", calls[1][0][-1])
+
     def test_digest_size_limit_and_nonfile(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "data"

@@ -182,6 +182,37 @@ def signed_rpm(text, code):
     ) and not re.search(r"NOT OK|NOKEY|NOTTRUSTED|BAD|UNTRUSTED", text)
 
 
+def rpm_keyring_diagnostics(db, evidence, phase):
+    # Read only these public-key/verification settings, not --showrc or the
+    # environment. RPM6 can use a filesystem keyring independent of --dbpath.
+    queries = [
+        ("version", ["rpm", "--version"]),
+        ("keyring-macros", ["rpm", "--dbpath", db, "--eval",
+            "_dbpath=%{_dbpath}\n_keyring=%{_keyring}\n_keyringpath=%{_keyringpath}\n"
+            "_pkgverify_level=%{_pkgverify_level}\n_pkgverify_flags=%{_pkgverify_flags}"]),
+        ("key-list", ["rpmkeys", "--dbpath", db, "--list"]),
+    ]
+    context = []
+    for name, command in queries:
+        code, text = log_run(command, evidence / f"rpm-{phase}-{name}.txt",
+                             maximum=16384, check=False)
+        # Keep failure context small enough to survive Docker's bounded build log.
+        tail = text.encode("utf-8")[-1024:].decode("utf-8", errors="replace")
+        context.append(f"{phase} {name} exit={code}:\n{tail}")
+    return "\n".join(context)
+
+
+def signature_failure(name, code, text, context):
+    # The complete bounded receipt is also saved in the build image. Print its
+    # tail because a failed image cannot be used to retrieve that evidence.
+    tail = text.encode("utf-8")[-8192:].decode("utf-8", errors="replace")
+    details = context.encode("utf-8")[-4096:].decode("utf-8", errors="replace")
+    fail(f"approved signature missing: {name}; rpmkeys exit={code}\n"
+         f"approved fingerprint={PINS['fedora44_fingerprint']}\n"
+         f"BEGIN RPM DIAGNOSTICS\n{details}\n"
+         f"BEGIN RPMKEYS RECEIPT (last 8192 bytes)\n{tail}\nEND RPM DIAGNOSTICS")
+
+
 def rpm_identity(path):
     _, text = run(["rpm", "-qp", "--qf",
                   "%{NAME}\t%{EPOCHNUM}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{SOURCERPM}\t%{BUILDTIME}\n", path])
@@ -236,7 +267,9 @@ def internal_install():
     (evidence / "fedora44-key.txt").write_text(shown)
     db = HERE / "rpmkeys"
     db.mkdir()
+    before_keys = rpm_keyring_diagnostics(db, evidence, "before-import")
     run(["rpmkeys", "--dbpath", db, "--import", key])
+    after_keys = rpm_keyring_diagnostics(db, evidence, "after-import")
     downloads = HERE / "rpms"
     downloads.mkdir()
     identities = []
@@ -247,7 +280,7 @@ def internal_install():
         code, text = log_run(["rpmkeys", "--dbpath", db, "--checksig", "--verbose", rpm],
                              evidence / (pin["name"] + ".rpmkeys.txt"), check=False)
         if not signed_rpm(text, code):
-            fail(f"approved signature missing: {pin['name']}")
+            signature_failure(pin["name"], code, text, before_keys + "\n" + after_keys)
         actual = rpm_identity(rpm)
         for field in ("name", "epoch", "version", "release", "arch", "source_rpm"):
             if actual[field] != str(pin[field]):
