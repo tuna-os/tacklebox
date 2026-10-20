@@ -174,12 +174,61 @@ def download(pin, destination):
 
 def signed_rpm(text, code):
     # rpmkeys exits zero for digest-only unsigned RPMs. Require an actual approved
-    # RSA header-signature success in an isolated database containing just that key.
-    pattern = r"^\s*Header V[34] RSA/SHA256 Signature, key ID ([0-9a-fA-F]{8,40}): OK\s*$"
-    signers = re.findall(pattern, text, re.MULTILINE)
-    return code == 0 and bool(signers) and all(
-        PINS["fedora44_fingerprint"].endswith(x.upper()) for x in signers
-    ) and not re.search(r"NOT OK|NOKEY|NOTTRUSTED|BAD|UNTRUSTED", text)
+    # RSA header-signature success. RPM4 grammar comes from the retained 3494
+    # receipt; RPM6 grammar from native run 39377874335, job 118480012249.
+    if code != 0 or "\0" in text or re.search(
+            r"NOT OK|NOTFOUND|NOKEY|NOTTRUSTED|BAD|UNTRUSTED", text, re.IGNORECASE):
+        return False
+    signatures = [line for line in text.splitlines()
+                  if re.search(r"\bsignature\b", line, re.IGNORECASE)]
+    # Never ignore an extra unsupported, duplicate, or mixed-format signature.
+    if len(signatures) != 1:
+        return False
+    for line in text.splitlines():
+        if line == signatures[0] or not line or line.endswith(".rpm:"):
+            continue
+        if not re.fullmatch(
+                r"[ \t]*(?:(?:Header|Payload|Legacy) )?"
+                r"(?:SHA1|SHA256|SHA512|SHA3-256|SHA3-512|MD5)(?: ALT)? digest: OK[ \t]*",
+                line):
+            return False
+    modern = re.fullmatch(
+        r"[ \t]*Header OpenPGP V4 RSA/SHA256 signature, key fingerprint: "
+        r"([0-9a-fA-F]{40}): OK[ \t]*", signatures[0])
+    if modern:
+        return modern[1].upper() == PINS["fedora44_fingerprint"]
+    legacy = re.fullmatch(
+        r"[ \t]*Header V[34] RSA/SHA256 Signature, key ID "
+        r"([0-9a-fA-F]{40}|[0-9a-fA-F]{16}|[0-9a-fA-F]{8}): OK[ \t]*", signatures[0])
+    return bool(legacy) and PINS["fedora44_fingerprint"].endswith(legacy[1].upper())
+
+
+def validate_rpm_keyring(db, phase, observations):
+    # These settings and the full-fingerprint listing were observed on the
+    # actual Fedora6.0.2 builder. Unknown native profiles require review.
+    if phase not in ("before-import", "after-import"):
+        fail("unknown RPM keyring validation phase")
+    if any(observations[name][0] != 0 for name in ("version", "keyring-macros", "key-list")):
+        fail("RPM keyring inspection failed")
+    if observations["version"][1].splitlines() != ["RPM version 6.0.2"]:
+        fail("unreviewed native RPM version")
+    required_macros = {
+        "_dbpath": str(db), "_keyring": "rpmdb", "_keyringpath": str(db) + "/pubkeys/",
+        "_pkgverify_level": "digest", "_pkgverify_flags": "0x20100",
+    }
+    lines = observations["keyring-macros"][1].splitlines()
+    if len(lines) != len(required_macros) or set(lines) != {
+            key + "=" + value for key, value in required_macros.items()}:
+        fail("RPM keyring or verification settings differ from isolated reviewed profile")
+    keys = observations["key-list"][1].splitlines()
+    if phase == "before-import":
+        if keys:
+            fail("RPM verification keyring is not initially empty")
+    else:
+        approved = (PINS["fedora44_fingerprint"].lower()
+                    + " Fedora (44) <fedora-44-primary@fedoraproject.org> public key")
+        if keys != [approved]:
+            fail("RPM verification keyring is not exactly the approved Fedora44 key")
 
 
 def rpm_keyring_diagnostics(db, evidence, phase):
@@ -192,14 +241,20 @@ def rpm_keyring_diagnostics(db, evidence, phase):
             "_pkgverify_level=%{_pkgverify_level}\n_pkgverify_flags=%{_pkgverify_flags}"]),
         ("key-list", ["rpmkeys", "--dbpath", db, "--list"]),
     ]
-    context = []
+    context, observations = [], {}
     for name, command in queries:
         code, text = log_run(command, evidence / f"rpm-{phase}-{name}.txt",
                              maximum=16384, check=False)
+        observations[name] = (code, text)
         # Keep failure context small enough to survive Docker's bounded build log.
         tail = text.encode("utf-8")[-1024:].decode("utf-8", errors="replace")
         context.append(f"{phase} {name} exit={code}:\n{tail}")
-    return "\n".join(context)
+    context = "\n".join(context)
+    try:
+        validate_rpm_keyring(db, phase, observations)
+    except ValueError as error:
+        fail(f"{error}\nBEGIN RPM DIAGNOSTICS\n{context}\nEND RPM DIAGNOSTICS")
+    return context
 
 
 def signature_failure(name, code, text, context):

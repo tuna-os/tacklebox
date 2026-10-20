@@ -27,6 +27,37 @@ NAMESPACE = {}
 with mock.patch.dict(os.environ, {"TBOX_FIXTURE_SCRIPT_DIR": str(DIRECTORY)}):
     exec(CODE, NAMESPACE)
 
+# Exact rpmkeys stdout from run 39377874335, job 118480012249 (RPM6.0.2).
+RPM6_RECEIPT = (
+    "/fixture/rpms/dracut-108-8.fc44.aarch64.rpm:\n"
+    "    Header OpenPGP V4 RSA/SHA256 signature, key fingerprint: "
+    "36f612dcf27f7d1a48a835e4dbfcf71c6d9f90a6: OK\n"
+    "    Header SHA256 digest: OK\n"
+    "    Payload SHA256 digest: OK\n"
+)
+# Retained 3494 native Ubuntu RPM4 receipt; this compatibility grammar remains.
+RPM4_RECEIPT = (
+    "/home/runner/work/_temp/x13s-handoff/kernel-uki-dtbloader.rpm:\n"
+    "    Header V4 RSA/SHA256 Signature, key ID 6d9f90a6: OK\n"
+    "    Header SHA256 digest: OK\n"
+    "    Header SHA1 digest: OK\n"
+    "    Payload SHA256 digest: OK\n"
+    "    MD5 digest: OK\n"
+)
+APPROVED_KEY_ROW = (
+    "36f612dcf27f7d1a48a835e4dbfcf71c6d9f90a6 "
+    "Fedora (44) <fedora-44-primary@fedoraproject.org> public key\n"
+)
+
+
+def keyring_observations(db, keys=""):
+    return {
+        "version": (0, "RPM version 6.0.2\n"),
+        "keyring-macros": (0, f"_dbpath={db}\n_keyring=rpmdb\n_keyringpath={db}/pubkeys/\n"
+                          "_pkgverify_level=digest\n_pkgverify_flags=0x20100\n"),
+        "key-list": (0, keys),
+    }
+
 
 class FixtureProducerTests(unittest.TestCase):
     def test_reviewed_pin_shape_and_container_base(self):
@@ -69,11 +100,46 @@ class FixtureProducerTests(unittest.TestCase):
             with self.subTest(text=text, code=code):
                 self.assertFalse(check(text, code))
 
+    def test_actual_rpm6_and_rpm4_receipts_and_strict_negatives(self):
+        check = NAMESPACE["signed_rpm"]
+        self.assertTrue(check(RPM6_RECEIPT, 0))
+        self.assertTrue(check(RPM4_RECEIPT, 0))
+        fingerprint = NAMESPACE["PINS"]["fedora44_fingerprint"].lower()
+        for receipt in (RPM4_RECEIPT, RPM6_RECEIPT):
+            self.assertFalse(check(receipt, 1))
+            signature = next(line for line in receipt.splitlines() if "signature" in line.lower())
+            for altered in (
+                receipt.replace(signature + "\n", ""),  # unsigned/digest-only
+                receipt + signature + "\n",             # duplicate signature
+                receipt + "Header future-format signature: OK\n",
+                receipt + "\0",
+                receipt.replace("RSA/SHA256", "RSA/SHA512"),
+                receipt.replace("V4", "V5"),
+                receipt.replace(": OK", ": BAD"),
+                receipt.replace(": OK", ": NOKEY"),
+                receipt.replace(": OK", ": NOTTRUSTED"),
+                receipt.replace(": OK", ": NOTFOUND"),
+                receipt.replace(": OK", ": UNKNOWN"),
+                receipt.replace("Payload SHA256 digest: OK", "Payload SHA256 digest: UNKNOWN"),
+                receipt + "warning: unsupported verification state\n",
+            ):
+                with self.subTest(receipt=altered):
+                    self.assertFalse(check(altered, 0))
+        for altered in (
+            RPM4_RECEIPT + RPM6_RECEIPT,  # mixed known grammars
+            RPM6_RECEIPT.replace(fingerprint, "0" + fingerprint[1:]),  # same short ID
+            RPM6_RECEIPT.replace(fingerprint, fingerprint[-16:]),
+            RPM6_RECEIPT.replace(fingerprint, fingerprint + "0"),
+            RPM6_RECEIPT.replace("key fingerprint:", "key ID"),
+            RPM4_RECEIPT.replace("6d9f90a6", "12345678"),
+            RPM4_RECEIPT.replace("6d9f90a6", fingerprint[-12:]),  # arbitrary suffix forbidden
+        ):
+            with self.subTest(receipt=altered):
+                self.assertFalse(check(altered, 0))
+
     def test_signature_diagnostics_preserve_failure_and_bound_output(self):
         receipt = ("Header OpenPGP V4 RSA/SHA256 signature, key fingerprint: "
                    "36f612dcf27f7d1a48a835e4dbfcf71c6d9f90a6: OK\n")
-        # Diagnostics-only change: no new format is admitted before native evidence.
-        self.assertFalse(NAMESPACE["signed_rpm"](receipt, 0))
         with self.assertRaises(ValueError) as caught:
             NAMESPACE["signature_failure"]("dracut", 0, receipt, "RPM version 6\n")
         message = str(caught.exception)
@@ -89,7 +155,10 @@ class FixtureProducerTests(unittest.TestCase):
         calls = []
         def diagnostic(command, path, **kwargs):
             calls.append((command, path, kwargs))
-            return 0, "public diagnostic\n"
+            observation = keyring_observations(db)
+            name = ("version" if command[-1] == "--version" else
+                    "key-list" if command[-1] == "--list" else "keyring-macros")
+            return observation[name]
         with tempfile.TemporaryDirectory() as directory, \
                 mock.patch.dict(NAMESPACE, {"log_run": diagnostic}):
             db, evidence = Path(directory) / "keys", Path(directory)
@@ -106,6 +175,37 @@ class FixtureProducerTests(unittest.TestCase):
         self.assertEqual(calls[2][0], ["rpmkeys", "--dbpath", db, "--list"])
         for macro in ("_dbpath", "_keyring", "_keyringpath", "_pkgverify_level", "_pkgverify_flags"):
             self.assertIn("%{" + macro + "}", calls[1][0][-1])
+
+    def test_keyring_isolation_requires_empty_then_single_approved_key(self):
+        db = Path("/fixture/rpmkeys")
+        validate = NAMESPACE["validate_rpm_keyring"]
+        validate(db, "before-import", keyring_observations(db))
+        validate(db, "after-import", keyring_observations(db, APPROVED_KEY_ROW))
+        cases = [
+            ("before-import", keyring_observations(db, APPROVED_KEY_ROW)),
+            ("after-import", keyring_observations(db)),
+            ("after-import", keyring_observations(db, APPROVED_KEY_ROW * 2)),
+            ("after-import", keyring_observations(db, APPROVED_KEY_ROW.replace("36f612dc", "00000000"))),
+            ("after-import", keyring_observations(db, APPROVED_KEY_ROW.replace("public key", "secret key"))),
+        ]
+        for field, value in (
+            ("version", "RPM version 6.1.0\n"),
+            ("keyring-macros", keyring_observations(db)["keyring-macros"][1].replace("_keyring=rpmdb", "_keyring=fs")),
+            ("keyring-macros", keyring_observations(db)["keyring-macros"][1].replace(str(db), "/usr/lib/sysimage/rpm")),
+            ("keyring-macros", keyring_observations(db)["keyring-macros"][1].replace("pubkeys/", "other/")),
+            ("keyring-macros", keyring_observations(db)["keyring-macros"][1].replace("0x20100", "0")),
+            ("keyring-macros", keyring_observations(db)["keyring-macros"][1] + "_keyring=rpmdb\n"),
+        ):
+            observation = keyring_observations(db, APPROVED_KEY_ROW)
+            observation[field] = (0, value)
+            cases.append(("after-import", observation))
+        for field in ("version", "keyring-macros", "key-list"):
+            observation = keyring_observations(db, APPROVED_KEY_ROW)
+            observation[field] = (1, observation[field][1])
+            cases.append(("after-import", observation))
+        for phase, observation in cases:
+            with self.subTest(phase=phase, observation=observation), self.assertRaises(ValueError):
+                validate(db, phase, observation)
 
     def test_digest_size_limit_and_nonfile(self):
         with tempfile.TemporaryDirectory() as directory:
