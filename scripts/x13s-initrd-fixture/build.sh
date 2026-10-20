@@ -796,6 +796,19 @@ def reject_required_dependency_rules(metadata, required):
             if len(fields) < 3 or fields[0] != kind:
                 fail(f"malformed {item['scope']} {item['name']}:{number}")
             subject = module_name(fields[1])
+            # kmod uses fnmatch(subject, module_name); literal-only grammar
+            # avoids approximating wildcard/escape semantics. Targets of an
+            # unrelated subject do not apply to this exact seed closure.
+            if subject in required:
+                fail(f"required module has unreviewed {kind} rule: {subject}")
+            # Observed Fedora rows only: kmod v34.2 leaves these targets in
+            # S_NONE and appends empty records (libkmod-config.c:221-367).
+            # First matching subject wins (libkmod-module.c:1175-1205), so an
+            # empty record can shadow later cifs rules. This exception is safe
+            # only after rejecting cifs as a required subject, above.
+            if (kind == "softdep" and len(fields) == 3 and fields[1] == "cifs"
+                    and fields[2] in ("gcm", "ccm", "aead2", "aes", "nls")):
+                continue
             if kind == "weakdep":
                 for value in fields[2:]:
                     module_name(value)
@@ -814,11 +827,6 @@ def reject_required_dependency_rules(metadata, required):
                         count += 1
                 if labels not in (["pre:"], ["post:"], ["pre:", "post:"]) or not count:
                     fail("malformed or repeated softdep phases")
-            # kmod uses fnmatch(subject, module_name); literal-only grammar above
-            # avoids approximating wildcard/escape semantics. Targets of an
-            # unrelated subject do not apply to this exact seed closure.
-            if subject in required:
-                fail(f"required module has unreviewed {kind} rule: {subject}")
 
 
 def compare_module_closure(expected, observed, builtins, metadata):

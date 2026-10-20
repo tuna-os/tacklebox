@@ -103,6 +103,86 @@ def dependency_metadata_fixture(changes=None):
     return items
 
 
+def run8_dependency_metadata():
+    # Exact four rule records from native attempt8 verification/closure-comparison.json.
+    # Evidence ZIP SHA256 a98a6eae56f551ed2bb691a40a2e0ecd8bc183839a2157d28daefbcaa01e61c2.
+    records = [
+        ('source', 'modules.softdep',
+         'source/usr/lib/modules/7.2.11-200.fc44.aarch64/modules.softdep',
+         951, '40ecf69225c99e9980bf34b815215c94d2c97459e1d72fc7861c1b5400f76027',
+         (
+             b'# Soft dependencies extracted from modules themselves.\n'
+             b'softdep cifs gcm\n'
+             b'softdep cifs ccm\n'
+             b'softdep cifs aead2\n'
+             b'softdep cifs aes\n'
+             b'softdep cifs nls\n'
+             b'softdep lrw pre: ecb\n'
+             b'softdep gpio_mlxbf3 pre: pinctrl-mlxbf3\n'
+             b'softdep ipmi_msghandler post: ipmi_devintf\n'
+             b'softdep gcc_sdm845 pre: rpmhpd\n'
+             b'softdep dtpm pre: panfrost cpufreq-dt\n'
+             b'softdep host1x post: tegra-drm\n'
+             b'softdep lima pre: governor_simpleondemand\n'
+             b'softdep panfrost pre: governor_simpleondemand\n'
+             b'softdep cxl_acpi pre: cxl_port\n'
+             b'softdep r8169 pre: realtek\n'
+             b'softdep ohci_pci pre: ehci_pci\n'
+             b'softdep ohci_platform pre: ehci_platform\n'
+             b'softdep uhci_hcd pre: ehci_pci\n'
+             b'softdep max31760 pre: regmap_i2c\n'
+             b'softdep ufshcd_core pre: governor_simpleondemand\n'
+             b'softdep qat_4xxx pre: crypto-intel_qat\n'
+             b'softdep qat_420xx pre: crypto-intel_qat\n'
+             b'softdep vfio post: vfio_iommu_type1 vfio_iommu_spapr_tce\n'
+             b'softdep act_mpls post: mpls_gso\n'
+             b'softdep xt_LOG pre: nf_log_syslog\n'
+             b'softdep xt_NFLOG pre: nfnetlink_log\n'
+             b'softdep xt_TRACE pre: nf_log_syslog\n'
+         )),
+        ('source', 'modules.weakdep',
+         'source/usr/lib/modules/7.2.11-200.fc44.aarch64/modules.weakdep',
+         55, 'a1fffe1059d8150b5d402b3f284f507025a8d4b5881810cb17b3fda8b8ab9304',
+         (
+             b'# Weak dependencies extracted from modules themselves.\n'
+         )),
+        ('emitted', 'modules.softdep',
+         'lib/modules/7.2.11-200.fc44.aarch64/modules.softdep',
+         656, '89ecc83d1d672cc9ec5d090a10237b2944651d01ab49888f5e6ba3cfc1903918',
+         (
+             b'# Soft dependencies extracted from modules themselves.\n'
+             b'softdep cifs gcm\n'
+             b'softdep cifs ccm\n'
+             b'softdep cifs aead2\n'
+             b'softdep cifs aes\n'
+             b'softdep cifs nls\n'
+             b'softdep lrw pre: ecb\n'
+             b'softdep gpio_mlxbf3 pre: pinctrl-mlxbf3\n'
+             b'softdep ipmi_msghandler post: ipmi_devintf\n'
+             b'softdep gcc_sdm845 pre: rpmhpd\n'
+             b'softdep dtpm pre: panfrost cpufreq-dt\n'
+             b'softdep host1x post: tegra-drm\n'
+             b'softdep panfrost pre: governor_simpleondemand\n'
+             b'softdep ohci_pci pre: ehci_pci\n'
+             b'softdep ohci_platform pre: ehci_platform\n'
+             b'softdep uhci_hcd pre: ehci_pci\n'
+             b'softdep max31760 pre: regmap_i2c\n'
+             b'softdep ufshcd_core pre: governor_simpleondemand\n'
+             b'softdep qat_4xxx pre: crypto-intel_qat\n'
+             b'softdep qat_420xx pre: crypto-intel_qat\n'
+         )),
+        ('emitted', 'modules.weakdep',
+         'lib/modules/7.2.11-200.fc44.aarch64/modules.weakdep',
+         55, 'a1fffe1059d8150b5d402b3f284f507025a8d4b5881810cb17b3fda8b8ab9304',
+         (
+             b'# Weak dependencies extracted from modules themselves.\n'
+         )),
+    ]
+    return [{"scope": scope, "name": name, "path": path, "size": size, "sha256": sha,
+             "base64": base64.b64encode(data).decode()}
+            for scope, name, path, size, sha, data in records]
+
+
 def run7_closure_observations():
     # Exact paths/names/depends and observed ordering from native run7 evidence
     # ZIP SHA256 f1af2efcd1262d0465e6d99f7b2e967efc95c63d8905ee0daddc50526bcf8230.
@@ -554,6 +634,68 @@ class FixtureProducerTests(unittest.TestCase):
             ("emitted", "modules.softdep"): b"softdep unrelated pre: qcom_q6v5_pas post: other\n",
             ("source", "modules.weakdep"): b"weakdep unrelated qcom_q6v5_pas\n"})
         self.assertEqual(compare(expected, observed, [], unrelated), "hard-dependency-equivalent")
+
+    def test_run8_actual_rule_records_allow_the_observed_hard_only_orders(self):
+        metadata = run8_dependency_metadata()
+        self.assertEqual([(m["scope"], m["name"]) for m in metadata],
+                         [("source", "modules.softdep"), ("source", "modules.weakdep"),
+                          ("emitted", "modules.softdep"), ("emitted", "modules.weakdep")])
+        for item in metadata:
+            data = base64.b64decode(item["base64"], validate=True)
+            self.assertEqual((len(data), hashlib.sha256(data).hexdigest()),
+                             (item["size"], item["sha256"]))
+            prefix = "source/usr/" if item["scope"] == "source" else ""
+            self.assertEqual(item["path"], f"{prefix}lib/modules/{NAMESPACE['KVER']}/{item['name']}")
+        expected, observed = run7_closure_observations()
+        self.assertEqual(NAMESPACE["compare_module_closure"](expected, observed, [], metadata),
+                         "hard-dependency-equivalent")
+        with self.assertRaisesRegex(ValueError, "required module.*cifs"):
+            NAMESPACE["reject_required_dependency_rules"](metadata, {"cifs"})
+        corrupt = copy.deepcopy(metadata)
+        corrupt[0]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "identity mismatch"):
+            NAMESPACE["reject_required_dependency_rules"](corrupt, set())
+
+    def test_observed_cifs_empty_records_require_an_unrelated_literal_subject(self):
+        # kmod v34.2 keeps phase-less targets in S_NONE and appends an empty
+        # record. The first matching subject wins, so it may shadow later rules.
+        # https://github.com/kmod-project/kmod/blob/v34.2/libkmod/libkmod-config.c#L221-L367
+        # https://github.com/kmod-project/kmod/blob/v34.2/libkmod/libkmod-module.c#L1175-L1205
+        check = NAMESPACE["reject_required_dependency_rules"]
+        for scope in ("source", "emitted"):
+            for target in ("gcm", "ccm", "aead2", "aes", "nls"):
+                row = f"softdep cifs {target}\n".encode()
+                for later in (b"", b"softdep cifs pre: qcom_q6v5_pas\n"):
+                    metadata = dependency_metadata_fixture({(scope, "modules.softdep"): row + later})
+                    with self.subTest(scope=scope, target=target, later=later):
+                        check(metadata, {"qcom_q6v5_pas"})
+                        with self.assertRaisesRegex(ValueError, "required module.*cifs"):
+                            check(metadata, {"qcom_q6v5_pas", "cifs"})
+        # A permitted cifs row never hides a later relevant rule for the seed.
+        metadata = dependency_metadata_fixture({
+            ("emitted", "modules.softdep"):
+                b"softdep cifs gcm\nsoftdep qcom-q6v5-pas pre: other\n"})
+        with self.assertRaisesRegex(ValueError, "required module.*qcom_q6v5_pas"):
+            check(metadata, {"qcom_q6v5_pas"})
+
+    def test_cifs_empty_record_exception_rejects_unobserved_or_mixed_syntax(self):
+        expected, observed = run7_closure_observations()
+        bad = (
+            b"softdep other gcm\n", b"softdep CIFS gcm\n", b"softdep cifs unknown\n",
+            b"softdep cifs GCM\n", b"softdep cifs\n", b"softdep cifs gcm ccm\n",
+            b"softdep cifs gcm pre: other\n", b"softdep cifs gcm post: other\n",
+            b"softdep cifs pre: gcm post:\n", b"softdep cifs pre: gcm pre: other\n",
+            b"softdep cifs gcm # extra\n", b"softdep cif* gcm\n",
+            b"softdep cif[s] gcm\n", b"softdep cifs gc*\n", b"softdep cifs gc[m]\n",
+            b"softdep cifs gcm\\\n", b"softdep cifs gcm\x00\n", b"softdep cifs gcm\r\n",
+            b"softdep cifs gcm\x0b\n", b"softdep cifs gcm\xff\n",
+            b"softdep cifs gcm\nsoftdep cifs unknown\n",
+        )
+        for scope in ("source", "emitted"):
+            for row in bad:
+                metadata = dependency_metadata_fixture({(scope, "modules.softdep"): row})
+                with self.subTest(scope=scope, row=row), self.assertRaises(ValueError):
+                    NAMESPACE["compare_module_closure"](expected, observed, [], metadata)
 
     def test_source_order_requires_the_bound_raw_source_lines(self):
         original, observed = run7_closure_observations()
