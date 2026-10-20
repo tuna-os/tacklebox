@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "base_image": "quay.io/fedora/fedora@sha256:db1539298ea4e8e7a96f1ce1f82195bff05d66bef015db79dda9954245253b24",
+  "base_index_digest": "sha256:99741a26ce7d4ee2746a564552210f267a458c527cc09ea7dd103ecbe62b0d5a",
+  "architecture": "aarch64",
+  "kernel_release": "7.2.11-200.fc44.aarch64",
+  "kernel_sha256": "f838299696f91f0400de9e6b796d3d862f8e9eb2899101a913314150ce9550d6",
+  "kernel_config_sha256": "a51ef35e4ec68f0d066eb90550d9dae3c9ea7b93c91709653d86ba0778a95de6",
+  "fedora44_fingerprint": "36F612DCF27F7D1A48A835E4DBFCF71C6D9F90A6",
+  "fedora44_key": "/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-44-primary",
+  "dist_config_sha256": "32fd38b1ad4c27acedeee34e95df7bdea0a8ecb6932b333f6b71a37e9a2e6723",
+  "source_date_epoch": 1792078574,
+  "max_initrd_bytes": 1073741824,
+  "packages": [
+    {
+      "name": "dracut",
+      "epoch": 0,
+      "version": "108",
+      "release": "8.fc44",
+      "arch": "aarch64",
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/d/dracut-108-8.fc44.aarch64.rpm",
+      "size": 636127,
+      "sha256": "d503e00739a79e6b326804183da66a7e62ae3cd5663b93777e2b75374bd6219b",
+      "source_rpm": "dracut-108-8.fc44.src.rpm"
+    },
+    {
+      "name": "kernel-core",
+      "epoch": 0,
+      "version": "7.2.11",
+      "release": "200.fc44",
+      "arch": "aarch64",
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/k/kernel-core-7.2.11-200.fc44.aarch64.rpm",
+      "size": 24817037,
+      "sha256": "a32bb946edb9b874c7a423d78867ca2196c934b14862632292b65db0730441a1",
+      "source_rpm": "kernel-7.2.11-200.fc44.src.rpm"
+    },
+    {
+      "name": "kernel-modules-core",
+      "epoch": 0,
+      "version": "7.2.11",
+      "release": "200.fc44",
+      "arch": "aarch64",
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/k/kernel-modules-core-7.2.11-200.fc44.aarch64.rpm",
+      "size": 49519117,
+      "sha256": "6b076ff02115a064f7d26d9c64861cb27e8c5aaa8b84ee6ab1ccb07d16484c2f",
+      "source_rpm": "kernel-7.2.11-200.fc44.src.rpm"
+    },
+    {
+      "name": "qcom-firmware",
+      "epoch": 0,
+      "version": "20260916",
+      "release": "1.fc44",
+      "arch": "noarch",
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/q/qcom-firmware-20260916-1.fc44.noarch.rpm",
+      "size": 175852175,
+      "sha256": "9905349660950e995256999c66bf31c62f75e5706ca3bc863f09c3f3a4d2c4c6",
+      "source_rpm": "linux-firmware-20260916-1.fc44.src.rpm"
+    }
+  ],
+  "transitive_dependencies_pinned": false,
+  "provenance": "Primary RPM pins observed in Fedora44 updates metadata; signature verification is mandatory at fixture generation. Base manifest resolved separately. No loader RPM is installed."
+}

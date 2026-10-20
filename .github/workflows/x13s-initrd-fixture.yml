@@ -1,0 +1,98 @@
+name: X13s emitted initrd fixture
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/x13s-initrd-fixture.yml
+      - scripts/x13s-initrd-fixture/**
+      - internal/liveboot/**
+      - src/dracut/**
+      - embedded.go
+      - go.mod
+      - go.sum
+
+permissions:
+  contents: read
+
+concurrency:
+  group: x13s-initrd-fixture-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  emitted-initrd:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Install official decoding tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xz-utils zstd
+      - name: Record runner identity
+        run: |
+          test "$(uname -m)" = aarch64
+          docker version
+          mkdir -p fixture-receipts
+          {
+            uname -a
+            printf 'runner-image=%s\n' "${ImageVersion:-unknown}"
+            docker version
+            go version
+            xz --version
+            zstd --version
+            dpkg-query -W xz-utils zstd
+          } > fixture-receipts/runner.txt
+      - name: Check parser and rejection fixtures
+        run: |
+          python3 scripts/x13s-initrd-fixture/test_fixture.py
+          go test ./internal/liveboot
+      - name: Emit with exact Fedora kernel and dracut inputs
+        run: scripts/x13s-initrd-fixture/build.sh prepare "$RUNNER_TEMP/x13s-initrd"
+      - name: Audit emitted bytes and stage validated dependency inputs
+        env:
+          TBOX_X13S_INITRD_FIXTURE: ${{ runner.temp }}/x13s-initrd
+        run: go test -count=1 -v ./internal/liveboot -run '^TestFedoraEmittedInitrdFixture$'
+      - name: Prove emitted kmod-index dependency closure
+        run: scripts/x13s-initrd-fixture/build.sh verify "$RUNNER_TEMP/x13s-initrd"
+      - name: Collect bounded evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+          source = Path(os.environ['RUNNER_TEMP']) / 'x13s-initrd'
+          target = Path('fixture-receipts')
+          target.mkdir(exist_ok=True)
+          total = 0
+          count = 0
+          if source.is_symlink() or (source / 'evidence').is_symlink():
+              raise SystemExit('fixture evidence directory is a symlink')
+          candidates = list(source.glob('*.json')) + list((source / 'evidence').glob('*'))
+          for path in sorted(candidates):
+              if path.is_symlink() or not path.is_file():
+                  continue
+              size = path.stat().st_size
+              if size > 4 * 1024 * 1024:
+                  continue
+              total += size
+              count += 1
+              if total > 16 * 1024 * 1024 or count > 64:
+                  raise SystemExit('fixture evidence exceeds upload budget')
+              destination = target / path.relative_to(source)
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(path, destination)
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: x13s-emitted-initrd-${{ github.sha }}
+          path: fixture-receipts
+          retention-days: 7
+          if-no-files-found: error

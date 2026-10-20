@@ -1,0 +1,34 @@
+# Native ARM64 CI fixture only. This is not a production bootc image.
+FROM quay.io/fedora/fedora@sha256:db1539298ea4e8e7a96f1ce1f82195bff05d66bef015db79dda9954245253b24
+
+COPY build.sh pins.json /fixture/
+
+# Bootstrap trust is the digest-pinned Fedora image and its Fedora signing key.
+# Dependencies deliberately resolve from these official Fedora repositories.
+# Capture their actual metadata/transaction; do not call them transitively pinned.
+RUN mkdir -p /fixture/repos.d /fixture/evidence /fixture/bootstrap-repodata && \
+    printf '%s\n' \
+      '[fedora]' \
+      'name=Fedora44 official release' \
+      'baseurl=https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Everything/aarch64/os/' \
+      'enabled=1' 'gpgcheck=1' 'sslverify=1' \
+      'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-44-primary' \
+      '[updates]' \
+      'name=Fedora44 official updates' \
+      'baseurl=https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/' \
+      'enabled=1' 'gpgcheck=1' 'sslverify=1' \
+      'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-44-primary' \
+      > /fixture/repos.d/fedora.repo && \
+    rpm -qa --qf '%{NAME}\t%{EPOCHNUM}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{SOURCERPM}\n' \
+      | sort > /fixture/evidence/base-installed.tsv && \
+    ulimit -f 2097152 && \
+    (dnf -y --releasever=44 --setopt=reposdir=/fixture/repos.d \
+      --setopt=keepcache=True --setopt=install_weak_deps=False \
+      --setopt=timeout=30 --setopt=retries=2 --setopt=max_parallel_downloads=2 \
+      install python3 gnupg2 curl rpm-sign kmod xz zstd findutils util-linux \
+      > /fixture/evidence/bootstrap-dnf.log 2>&1 || \
+      { status=$?; tail -c 16384 /fixture/evidence/bootstrap-dnf.log >&2; exit "$status"; }) && \
+    /bin/bash /fixture/build.sh _install
+
+ENV LC_ALL=C HOME=/tmp
+ENTRYPOINT ["/bin/bash", "/fixture/build.sh"]
