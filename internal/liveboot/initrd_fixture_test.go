@@ -629,11 +629,21 @@ func fixtureSourceClosure(e fixtureExpected) error {
 		}
 		switch fields[0] {
 		case "insmod":
-			name := strings.TrimPrefix(fields[1], "/")
+			if !strings.HasPrefix(fields[1], "/") {
+				return fmt.Errorf("source modprobe path is not absolute")
+			}
+			// kmod 34.2 with --dirname / emits //lib/modules/... . Linux
+			// link_path_walk skips the leading slash run before lookup:
+			// https://github.com/torvalds/linux/blob/v6.18/fs/namei.c#L2293-L2305
+			// Normalize only that prefix; never clean away interior dot,
+			// traversal, repeated-slash, or trailing-slash components.
+			// The original Lines remain unchanged for their stdout hash.
+			name := strings.TrimLeft(fields[1], "/")
 			if strings.HasPrefix(name, "lib/modules/") {
 				name = "usr/" + name
 			}
-			if !strings.HasPrefix(name, "usr/lib/modules/"+e.KernelRelease+"/kernel/") || path.Clean(name) != name {
+			if !strings.HasPrefix(name, "usr/lib/modules/"+e.KernelRelease+"/kernel/") ||
+				path.Clean(name) != name || strings.ContainsAny(name, "\\\x00") {
 				return fmt.Errorf("source modprobe path escaped selected release")
 			}
 			modulePaths = append(modulePaths, name)
@@ -1515,6 +1525,76 @@ func TestFixtureSourceClosureAndConfig(t *testing.T) {
 	for _, bad := range []string{"weakdep qcom_q6v5_pas extra\n", "weakdep qcom-q6v5-pas extra\n", "garbage\n", "weakdep /invalid x\n"} {
 		if err := fixtureRejectWeakdeps("modules.weakdep", []byte(bad), required); err == nil {
 			t.Fatal("required or malformed weakdep accepted")
+		}
+	}
+}
+
+func TestFixtureSourceClosureObservedKmodReceipt(t *testing.T) {
+	// Exact source-modprobe.txt shape from Fedora native run 39378621709:
+	// kmod 34.2, --dirname /, 13 modules, one trailing space on each line.
+	// Its unmodified byte receipt remains separate from path comparison.
+	relative := []string{
+		"drivers/rpmsg/rpmsg_core.ko.xz",
+		"drivers/soc/qcom/qmi_helpers.ko.xz",
+		"drivers/soc/qcom/smem.ko.xz",
+		"drivers/rpmsg/qcom_smd.ko.xz",
+		"drivers/soc/qcom/qcom_aoss.ko.xz",
+		"drivers/rpmsg/qcom_glink.ko.xz",
+		"drivers/rpmsg/qcom_glink_smem.ko.xz",
+		"drivers/remoteproc/qcom_common.ko.xz",
+		"drivers/soc/qcom/mdt_loader.ko.xz",
+		"drivers/remoteproc/qcom_sysmon.ko.xz",
+		"drivers/remoteproc/qcom_q6v5.ko.xz",
+		"drivers/remoteproc/qcom_pil_info.ko.xz",
+		"drivers/remoteproc/qcom_q6v5_pas.ko.xz",
+	}
+	e := fixtureExpected{KernelRelease: fixtureRelease}
+	for _, name := range relative {
+		e.Modules = append(e.Modules, fixturePayload{fixtureFile: fixtureFile{
+			ArchivePath: "usr/lib/modules/" + fixtureRelease + "/kernel/" + name,
+		}})
+		e.Modprobe.Lines = append(e.Modprobe.Lines, "insmod //lib/modules/"+fixtureRelease+"/kernel/"+name+" ")
+	}
+	raw := strings.Join(e.Modprobe.Lines, "\n") + "\n"
+	if len(raw) != 1133 || fixtureDigest([]byte(raw)) != "e56e9e4cf4df8e5861899deeea0b0feacf12dddfa202dd1614ce053cc97df8ba" {
+		t.Fatal("observed source-modprobe.txt regression bytes changed")
+	}
+	if err := fixtureSourceClosure(e); err != nil {
+		t.Fatalf("observed Linux leading-slash equivalence rejected: %v", err)
+	}
+	if strings.Join(e.Modprobe.Lines, "\n")+"\n" != raw {
+		t.Fatal("closure comparison rewrote raw source receipt")
+	}
+	for _, prefix := range []string{"/lib/", "//lib/", "///lib/", "/usr/lib/", "//usr/lib/"} {
+		candidate := e
+		candidate.Modprobe.Lines = append([]string{}, e.Modprobe.Lines...)
+		candidate.Modprobe.Lines[0] = "insmod " + prefix + "modules/" + fixtureRelease + "/kernel/" + relative[0]
+		if err := fixtureSourceClosure(candidate); err != nil {
+			t.Fatalf("equivalent absolute prefix %q: %v", prefix, err)
+		}
+	}
+	root := "//lib/modules/" + fixtureRelease + "/kernel/"
+	for _, name := range []string{
+		"lib/modules/" + fixtureRelease + "/kernel/" + relative[0],
+		"usr/lib/modules/" + fixtureRelease + "/kernel/" + relative[0],
+		"//outside/lib/modules/" + fixtureRelease + "/kernel/" + relative[0],
+		"//lib/modules/other-release/kernel/" + relative[0],
+		"//lib/modules/" + fixtureRelease + "/kernel-other/" + relative[0],
+		root + "../kernel/" + relative[0],
+		root + "unused/../" + relative[0],
+		root + "./" + relative[0],
+		root + "/" + relative[0],
+		root + relative[0] + "/",
+		root + relative[0] + "\x00ignored",
+		root + relative[0] + "\\ignored",
+		root + relative[0] + " option=value",
+		"\"" + root + relative[0] + "\"",
+	} {
+		candidate := e
+		candidate.Modprobe.Lines = append([]string{}, e.Modprobe.Lines...)
+		candidate.Modprobe.Lines[0] = "insmod " + name
+		if err := fixtureSourceClosure(candidate); err == nil {
+			t.Errorf("untrusted/noncanonical source path accepted: %q", name)
 		}
 	}
 }

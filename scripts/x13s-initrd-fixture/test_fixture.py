@@ -7,8 +7,10 @@ import json
 import lzma
 import os
 from pathlib import Path
+import stat
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -217,6 +219,158 @@ class FixtureProducerTests(unittest.TestCase):
                 NAMESPACE["digest"](path, 2)
             with self.assertRaises(ValueError):
                 NAMESPACE["digest"](Path(directory), 3)
+
+    def test_initrd_handoff_preserves_private_mode_identity_and_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            image = out / "initrd.img"
+            image.write_bytes(b"070701fixture")
+            image.chmod(0o600)
+            before = image.stat()
+            with mock.patch("os.fchown", wraps=os.fchown) as chown:
+                result = NAMESPACE["handoff_initrd"](out)
+            self.assertEqual(result, NAMESPACE["digest"](image))
+            after = image.stat()
+            self.assertEqual((before.st_dev, before.st_ino, before.st_size),
+                             (after.st_dev, after.st_ino, after.st_size))
+            self.assertEqual((after.st_uid, after.st_gid), (out.stat().st_uid, out.stat().st_gid))
+            self.assertEqual(stat.S_IMODE(after.st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(out.stat().st_mode), 0o700)
+            self.assertEqual(chown.call_count, 1)
+            self.assertEqual(chown.call_args.args[1:], (out.stat().st_uid, out.stat().st_gid))
+
+    def test_initrd_handoff_root_to_runner_on_exact_descriptor(self):
+        # No privileges needed: simulate only kernel ownership observations and
+        # fchown; all open/read/path/inode checks use a real owned temporary file.
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            image = out / "initrd.img"
+            image.write_bytes(b"070701fixture")
+            image.chmod(0o600)
+            original_fstat, changed = os.fstat, []
+            runner = (12345, 12346)
+            def observed(fd):
+                value = original_fstat(fd)
+                fields = {name: getattr(value, name) for name in dir(value) if name.startswith("st_")}
+                fields["st_uid"], fields["st_gid"] = (runner if stat.S_ISDIR(value.st_mode) or changed
+                                                     else (0, 0))
+                return SimpleNamespace(**fields)
+            def chown(fd, uid, gid):
+                self.assertEqual(original_fstat(fd).st_ino, image.stat().st_ino)
+                self.assertEqual((uid, gid), runner)
+                changed.append(fd)
+            original_stat = os.stat
+            def path_stat(path, **kwargs):
+                value = original_stat(path, **kwargs)
+                if Path(path) == out:
+                    fields = {name: getattr(value, name) for name in dir(value) if name.startswith("st_")}
+                    fields["st_uid"], fields["st_gid"] = runner
+                    return SimpleNamespace(**fields)
+                return value
+            with mock.patch("os.fstat", side_effect=observed), \
+                    mock.patch("os.stat", side_effect=path_stat), \
+                    mock.patch("os.geteuid", return_value=0), \
+                    mock.patch("os.fchown", side_effect=chown):
+                result = NAMESPACE["handoff_initrd"](out)
+            self.assertEqual(len(changed), 1)
+            self.assertEqual(result, NAMESPACE["digest"](image))
+            self.assertEqual(stat.S_IMODE(image.stat().st_mode), 0o600)
+
+    def test_initrd_handoff_rejects_symlinks_and_path_escape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            out = base / "out"
+            out.mkdir(mode=0o700)
+            outside = base / "other.img"
+            outside.write_bytes(b"070701outside")
+            outside.chmod(0o600)
+            image = out / "initrd.img"
+            image.symlink_to(outside)
+            alias = base / "alias"
+            alias.symlink_to(out, target_is_directory=True)
+            with mock.patch("os.fchown", side_effect=AssertionError("ownership changed")):
+                for path in (out, alias, out / ".." / "out", Path("relative")):
+                    with self.subTest(path=path), self.assertRaises((ValueError, OSError)):
+                        NAMESPACE["handoff_initrd"](path)
+                image.unlink()
+                os.link(outside, image)
+                with self.assertRaises(ValueError):
+                    NAMESPACE["handoff_initrd"](out)
+            self.assertEqual(outside.read_bytes(), b"070701outside")
+            self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o600)
+
+    def test_initrd_handoff_rejects_nonprivate_nonregular_and_unbounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            image = out / "initrd.img"
+            image.write_bytes(b"070701fixture")
+            image.chmod(0o600)
+            with mock.patch("os.fchown", side_effect=AssertionError("ownership changed")):
+                out.chmod(0o755)
+                with self.assertRaises(ValueError):
+                    NAMESPACE["handoff_initrd"](out)
+                out.chmod(0o700)
+                image.chmod(0o644)
+                with self.assertRaises(ValueError):
+                    NAMESPACE["handoff_initrd"](out)
+                image.chmod(0o600)
+                with mock.patch.dict(NAMESPACE, {"LIMIT": 6}), self.assertRaises(ValueError):
+                    NAMESPACE["handoff_initrd"](out)
+                image.write_bytes(b"wrong!")
+                with self.assertRaises(ValueError):
+                    NAMESPACE["handoff_initrd"](out)
+                image.unlink()
+                image.mkdir(mode=0o700)
+                with self.assertRaises(ValueError):
+                    NAMESPACE["handoff_initrd"](out)
+
+    def test_initrd_handoff_rejects_path_replacement_before_chown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            image = out / "initrd.img"
+            image.write_bytes(b"070701fixture")
+            image.chmod(0o600)
+            original_read, replaced = os.read, []
+            def replacing_read(fd, size):
+                value = original_read(fd, size)
+                if not replaced:
+                    image.rename(out / "original.img")
+                    image.write_bytes(b"070701fixture")
+                    image.chmod(0o600)
+                    replaced.append(True)
+                return value
+            with mock.patch("os.read", side_effect=replacing_read), \
+                    mock.patch("os.fchown", side_effect=AssertionError("ownership changed")), \
+                    self.assertRaisesRegex(ValueError, "changed"):
+                NAMESPACE["handoff_initrd"](out)
+
+    def test_modprobe_config_evidence_is_exact_bounded_copied_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            (out / "evidence").mkdir()
+            source = out / "source/usr/lib/modprobe.d/systemd.conf"
+            source.parent.mkdir(parents=True)
+            data = b"# package config\noptions example value=1\n"
+            source.write_bytes(data)
+            item = {"archive_path": "usr/lib/modprobe.d/systemd.conf",
+                    "source_path": str(source.relative_to(out)), **NAMESPACE["digest"](source)}
+            record = NAMESPACE["record_modprobe_config"]
+            record(out, [item])
+            evidence = json.loads((out / "evidence/source-modprobe-config.json").read_text())
+            self.assertEqual(evidence, [{
+                "archive_path": item["archive_path"], "size": item["size"],
+                "sha256": item["sha256"], "text": data.decode()}])
+            for items, maximum in (([item], len(data) - 1), ([item], 100),
+                                   ([item, item], 400),
+                                   ([{**item, "sha256": "0" * 64}], 1024),
+                                   ([{**item, "source_path": "../outside"}], 1024),
+                                   ([{**item, "source_path": "config/systemd.conf"}], 1024)):
+                with self.subTest(items=items, maximum=maximum), self.assertRaises(ValueError):
+                    record(out, items, maximum)
+            source.unlink()
+            source.symlink_to(out / "evidence/source-modprobe-config.json")
+            with self.assertRaises(ValueError):
+                record(out, [item])
 
     def test_xz_decoding_limit_truncation_and_trailing_data(self):
         with tempfile.TemporaryDirectory() as directory:

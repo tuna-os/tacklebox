@@ -74,6 +74,66 @@ def digest(path, maximum=LIMIT):
     return {"size": count, "sha256": h.hexdigest()}
 
 
+def handoff_initrd(out):
+    # Dracut creates root-owned 0600 output. Hand only that open artifact to the
+    # caller owning the private bind-mounted /out, without changing its mode.
+    out = Path(out)
+    if not out.is_absolute() or ".." in out.parts:
+        fail("initrd handoff requires an absolute contained output directory")
+    directory = os.open(out, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        owner = os.fstat(directory)
+        if not stat.S_ISDIR(owner.st_mode) or stat.S_IMODE(owner.st_mode) != 0o700:
+            fail("initrd handoff output directory must be private mode 0700")
+        fd = os.open("initrd.img", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=directory)
+        try:
+            before = os.fstat(fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                    or stat.S_IMODE(before.st_mode) != 0o600
+                    or before.st_uid != os.geteuid() or not 6 <= before.st_size <= LIMIT):
+                fail("initrd handoff requires a bounded owned single-link 0600 regular file")
+
+            def identity(value):
+                return (value.st_dev, value.st_ino, value.st_mode, value.st_nlink,
+                        value.st_size, value.st_mtime_ns)
+
+            def contained():
+                current = os.stat(out, follow_symlinks=False)
+                if ((current.st_dev, current.st_ino, current.st_mode, current.st_uid, current.st_gid)
+                        != (owner.st_dev, owner.st_ino, owner.st_mode, owner.st_uid, owner.st_gid)):
+                    fail("initrd handoff output directory changed")
+                if identity(os.stat("initrd.img", dir_fd=directory, follow_symlinks=False)) != identity(before):
+                    fail("initrd handoff artifact path changed")
+
+            header = os.read(fd, 6)
+            if header != b"070701":
+                fail("dracut did not produce raw newc; full audit remains the Go test")
+            h, count = hashlib.sha256(header), len(header)
+            while block := os.read(fd, min(1024 * 1024, LIMIT + 1 - count)):
+                count += len(block)
+                if count > LIMIT:
+                    fail("initrd handoff artifact grew beyond limit")
+                h.update(block)
+            after = os.fstat(fd)
+            if (identity(after) != identity(before) or count != before.st_size
+                    or (after.st_uid, after.st_gid, after.st_ctime_ns)
+                    != (before.st_uid, before.st_gid, before.st_ctime_ns)):
+                fail("initrd handoff artifact changed during inspection")
+            contained()
+            os.fchown(fd, owner.st_uid, owner.st_gid)
+            after = os.fstat(fd)
+            if (identity(after) != identity(before)
+                    or (after.st_uid, after.st_gid) != (owner.st_uid, owner.st_gid)):
+                fail("initrd handoff ownership or file identity mismatch")
+            contained()
+            return {"size": count, "sha256": h.hexdigest()}
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory)
+
+
 def write_json(path, value):
     path = Path(path)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
@@ -88,6 +148,31 @@ def read_json(path):
     if len(data) > 4 << 20:
         fail("JSON input grew beyond limit")
     return json.loads(data)
+
+
+def record_modprobe_config(out, configs, maximum=1 << 20):
+    # Public image-package config only, copied by internal_emit; no host config
+    # is mounted. Retain exact text so a strict consumer rejection is actionable.
+    evidence = []
+    for item in configs:
+        relative = safe_relative(item["source_path"])
+        if relative.parts[0] != "source":
+            fail("modprobe evidence must come from copied source")
+        path = Path(out) / relative
+        if path.is_symlink() or not path.is_file():
+            fail("modprobe evidence source is not a regular copied file")
+        with path.open("rb") as source:
+            data = source.read(maximum + 1)
+        if len(data) > maximum:
+            fail("modprobe config evidence exceeds bound")
+        if (len(data), hashlib.sha256(data).hexdigest()) != (item["size"], item["sha256"]):
+            fail("modprobe config evidence differs from observed source")
+        evidence.append({"archive_path": item["archive_path"], "size": item["size"],
+                         "sha256": item["sha256"], "text": data.decode("utf-8")})
+        encoded = json.dumps(evidence, indent=2, sort_keys=True) + "\n"
+        if len(encoded.encode("utf-8")) > maximum:
+            fail("aggregate modprobe config evidence exceeds bound")
+    write_json(Path(out) / "evidence/source-modprobe-config.json", evidence)
 
 
 def run(args, timeout=120, maximum=4 << 20, check=True, env=None, file_maximum=None):
@@ -540,6 +625,7 @@ def internal_emit():
                 shutil.copyfile(resolved, dest)
                 expected["modprobe_config"].append({"source_path": str(rel),
                     "archive_path": str(source).lstrip("/"), **digest(resolved, 1 << 20)})
+    record_modprobe_config(out, expected["modprobe_config"])
     cfg = config.read_text()
     for name in ("qcadsp8280.mbn", "qccdsp8280.mbn", "qcslpi8280.mbn"):
         logical = "qcom/sc8280xp/LENOVO/21BX/" + name
@@ -566,10 +652,7 @@ def internal_emit():
            "SOURCE_DATE_EPOCH": str(PINS["source_date_epoch"])}
     _, log = run(command, timeout=600, file_maximum=LIMIT, env=env)
     (out / "evidence/dracut-stdout.log").write_text(log)
-    expected["initrd"] = {"path": "initrd.img", **digest(out / "initrd.img")}
-    with (out / "initrd.img").open("rb") as image:
-        if image.read(6) != b"070701":
-            fail("dracut did not produce raw newc; full audit remains the Go test")
+    expected["initrd"] = {"path": "initrd.img", **handoff_initrd(out)}
     expected["dracut_command"] = command
     expected["build_environment"] = env
     expected["tools"] = {}
