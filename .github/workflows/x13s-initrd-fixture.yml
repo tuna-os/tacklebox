@@ -69,12 +69,15 @@ jobs:
           import shutil
           source = Path(os.environ['RUNNER_TEMP']) / 'x13s-initrd'
           target = Path('fixture-receipts')
+          if any((base / name).is_symlink() for base in (source, target)
+                 for name in ('', 'evidence', 'verification')):
+              raise SystemExit('fixture evidence directory is a symlink')
           target.mkdir(exist_ok=True)
           total = 0
           count = 0
-          if source.is_symlink() or (source / 'evidence').is_symlink():
-              raise SystemExit('fixture evidence directory is a symlink')
           candidates = list(source.glob('*.json')) + list((source / 'evidence').glob('*'))
+          candidates += [source / 'verification' / name for name in (
+              'closure-comparison.json', 'source-modprobe.txt', 'emitted-modprobe.txt', 'verified.json')]
           for path in sorted(candidates):
               if path.is_symlink() or not path.is_file():
                   continue
@@ -86,6 +89,8 @@ jobs:
               if total > 16 * 1024 * 1024 or count > 64:
                   raise SystemExit('fixture evidence exceeds upload budget')
               destination = target / path.relative_to(source)
+              if destination.is_symlink():
+                  raise SystemExit('fixture evidence destination is a symlink')
               destination.parent.mkdir(parents=True, exist_ok=True)
               shutil.copyfile(path, destination)
           PY

@@ -676,6 +676,46 @@ def safe_relative(value):
     return p
 
 
+def record_closure_comparison(result, expected, receipt, args, text, modules, builtins, source):
+    # Persist evidence before the unchanged ordered comparison can fail. These
+    # files describe trusted dry-run output; they do not authorize extra modules.
+    raw_limit = 4 << 20
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        observed = os.fstat(stream.fileno())
+        if not stat.S_ISREG(observed.st_mode) or observed.st_size > raw_limit:
+            fail("invalid or excessive source modprobe evidence")
+        source_raw = stream.read(raw_limit + 1)
+    emitted_raw = text.encode("utf-8")
+    if len(source_raw) > raw_limit or len(emitted_raw) > raw_limit:
+        fail("modprobe evidence exceeds raw output bound")
+    comparison = {
+        "schema_version": 1, "kernel_release": KVER,
+        "initrd_sha256": receipt["initrd_sha256"], "initrd_size": receipt["initrd_size"],
+        "expected_modules": [m["archive_path"] for m in expected["modules"]],
+        "observed_modules": modules, "expected_builtins": expected["builtins"],
+        "observed_builtins": builtins,
+        "source_modprobe": {"path": "source-modprobe.txt", "args": expected["modprobe"]["args"],
+                           "size": len(source_raw), "sha256": hashlib.sha256(source_raw).hexdigest(),
+                           "expected_sha256": expected["modprobe"]["stdout_sha256"]},
+        "emitted_modprobe": {"path": "emitted-modprobe.txt", "args": args,
+                            "size": len(emitted_raw), "sha256": hashlib.sha256(emitted_raw).hexdigest()},
+    }
+    encoded = (json.dumps(comparison, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(encoded) > 1 << 20:
+        fail("closure comparison evidence exceeds JSON bound")
+    directory = os.open(result, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for name, data in (("source-modprobe.txt", source_raw), ("emitted-modprobe.txt", emitted_raw),
+                           ("closure-comparison.json", encoded)):
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=directory)
+            with os.fdopen(fd, "wb") as output:
+                output.write(data)
+    finally:
+        os.close(directory)
+
+
 def internal_verify():
     expected = read_json("/input/expected.json")
     receipt = read_json("/input/audit-root.json")
@@ -711,14 +751,16 @@ def internal_verify():
             fail(f"modprobe escaped staged selected release: {value}")
         normalized.append("usr/" + value.removeprefix("/audit/"))
     wanted = [m["archive_path"] for m in expected["modules"]]
+    record_closure_comparison("/result", expected, receipt, args, text, normalized, builtins,
+                             "/input/evidence/source-modprobe.txt")
     if normalized != wanted or builtins != expected["builtins"]:
-        fail("emitted indexes resolve a different module/softdep closure")
+        fail("emitted indexes resolve a different module/softdep closure; "
+             "see verification/closure-comparison.json and raw modprobe evidence")
     write_json(Path("/result/verified.json"), {
         "schema_version": 1, "initrd_sha256": receipt["initrd_sha256"],
         "kernel_release": KVER, "module_closure": normalized, "builtins": builtins,
         "modprobe_command": args, "modprobe_stdout_sha256": hashlib.sha256(text.encode()).hexdigest(),
         "scope": "native fixture emitted bytes and PAS dependency resolution; no hardware qualification"})
-    Path("/result/emitted-modprobe.txt").write_text(text)
 
 
 def host(mode, output):

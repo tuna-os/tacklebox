@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import textwrap
 import time
 from types import SimpleNamespace
 import unittest
@@ -67,6 +68,19 @@ def keyring_observations(db, keys=""):
                           "_pkgverify_level=digest\n_pkgverify_flags=0x20100\n"),
         "key-list": (0, keys),
     }
+
+
+def closure_observations():
+    prefix = "usr/lib/modules/" + NAMESPACE["KVER"] + "/kernel/"
+    modules = [prefix + "dependency.ko", prefix + "qcom_q6v5_pas.ko"]
+    raw = "".join("insmod /" + name + "\n" for name in modules)
+    expected = {"modules": [{"archive_path": name} for name in modules],
+                "builtins": ["builtin_a", "builtin_b"], "initrd": {"sha256": "b" * 64},
+                "modprobe": {"args": ["modprobe", "--show-depends", "qcom_q6v5_pas"],
+                            "stdout_sha256": hashlib.sha256(raw.encode()).hexdigest()}}
+    receipt = {"schema_version": 1, "kernel_release": NAMESPACE["KVER"],
+               "initrd_sha256": "b" * 64, "initrd_size": 78459904, "files": []}
+    return expected, receipt, modules, raw
 
 
 class FixtureProducerTests(unittest.TestCase):
@@ -435,6 +449,122 @@ class FixtureProducerTests(unittest.TestCase):
             with mock.patch.dict(NAMESPACE, {"run": lambda *a, text=text, **k: (0, text)}), \
                     self.subTest(text=text), self.assertRaises(ValueError):
                 NAMESPACE["closure"]()
+
+    def test_closure_failure_preserves_ordered_evidence_before_rejection(self):
+        expected, receipt, modules, source_raw = closure_observations()
+        observed = list(reversed(modules))
+        paths = ["/audit/" + name.removeprefix("usr/") for name in observed]
+        emitted_raw = "".join("insmod " + name + "\n" for name in paths)
+        args = ["modprobe", "--show-depends", "--dirname=/audit", "qcom_q6v5_pas"]
+        record = NAMESPACE["record_closure_comparison"]
+        with tempfile.TemporaryDirectory() as directory:
+            result, source = Path(directory) / "verification", Path(directory) / "source.txt"
+            result.mkdir()
+            source.write_text(source_raw)
+            def capture(_result, *values):
+                record(result, *values[:-1], source)
+            with mock.patch.dict(NAMESPACE, {
+                    "read_json": lambda name: expected if name.endswith("expected.json") else receipt,
+                    "closure": lambda *unused: (args, emitted_raw, paths, ["builtin_b", "builtin_a"]),
+                    "record_closure_comparison": capture,
+                    "write_json": mock.Mock(side_effect=AssertionError("success marker written"))}), \
+                    mock.patch("os.walk", return_value=[]), \
+                    self.assertRaisesRegex(ValueError, "different module/softdep closure"):
+                NAMESPACE["internal_verify"]()
+            comparison = json.loads((result / "closure-comparison.json").read_text())
+            self.assertEqual(comparison["expected_modules"], modules)
+            self.assertEqual(comparison["observed_modules"], observed)
+            self.assertEqual(comparison["expected_builtins"], ["builtin_a", "builtin_b"])
+            self.assertEqual(comparison["observed_builtins"], ["builtin_b", "builtin_a"])
+            self.assertEqual(comparison["initrd_sha256"], receipt["initrd_sha256"])
+            self.assertEqual(comparison["initrd_size"], receipt["initrd_size"])
+            self.assertEqual(comparison["emitted_modprobe"]["args"], args)
+            self.assertEqual(comparison["source_modprobe"]["args"], expected["modprobe"]["args"])
+            for name, raw in (("source", source_raw), ("emitted", emitted_raw)):
+                value = (result / (name + "-modprobe.txt")).read_bytes()
+                self.assertEqual(value, raw.encode())
+                self.assertEqual(comparison[name + "_modprobe"]["sha256"], hashlib.sha256(value).hexdigest())
+            self.assertFalse((result / "verified.json").exists())
+
+    def test_closure_evidence_bounds_and_symlink_rejection(self):
+        expected, receipt, modules, raw = closure_observations()
+        record = NAMESPACE["record_closure_comparison"]
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            result, source = base / "verification", base / "source.txt"
+            result.mkdir()
+            source.write_text(raw)
+            for text, observed in (("x" * ((4 << 20) + 1), modules), (raw, ["x" * (1 << 20)])):
+                with self.subTest(size=len(text)), self.assertRaises(ValueError):
+                    record(result, expected, receipt, [], text, observed, [], source)
+            with source.open("wb") as stream:
+                stream.truncate((4 << 20) + 1)
+            with self.assertRaisesRegex(ValueError, "excessive source"):
+                record(result, expected, receipt, [], raw, modules, [], source)
+            source.write_text(raw)
+            self.assertEqual(list(result.iterdir()), [])
+            alias = base / "alias"
+            alias.symlink_to(source)
+            with self.assertRaises(OSError):
+                record(result, expected, receipt, [], raw, modules, [], alias)
+            alias.unlink()
+            alias.symlink_to(result, target_is_directory=True)
+            with self.assertRaises(OSError):
+                record(alias, expected, receipt, [], raw, modules, [], source)
+            (result / "source-modprobe.txt").symlink_to(source)
+            with self.assertRaises(OSError):
+                record(result, expected, receipt, [], raw, modules, [], source)
+            self.assertEqual(source.read_text(), raw)
+
+    def test_workflow_collects_only_allowlisted_verification_files_on_failure(self):
+        workflow = (DIRECTORY.parents[1] / ".github/workflows/x13s-initrd-fixture.yml").read_text()
+        script = textwrap.dedent(workflow.split("python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0])
+        self.assertIn("- name: Collect bounded evidence\n        if: always()", workflow)
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            source = base / "x13s-initrd"
+            result = source / "verification"
+            result.mkdir(parents=True)
+            (source / "evidence").mkdir()
+            names = ("closure-comparison.json", "source-modprobe.txt", "emitted-modprobe.txt", "verified.json")
+            for name in names + ("arbitrary.txt",):
+                (result / name).write_text(name)
+            previous = Path.cwd()
+            try:
+                os.chdir(base)
+                with mock.patch.dict(os.environ, {"RUNNER_TEMP": directory}):
+                    exec(compile(script, "workflow-evidence-collector", "exec"), {})
+                    copied = base / "fixture-receipts/verification"
+                    self.assertEqual({p.name for p in copied.iterdir()}, set(names))
+                    outside = base / "outside"
+                    outside.mkdir()
+                    for name in ("", "evidence", "verification"):
+                        destination = base / "fixture-receipts" / name
+                        saved = base / ("saved-target-" + (name or "root"))
+                        existed = destination.exists()
+                        if existed:
+                            destination.rename(saved)
+                        destination.symlink_to(outside, target_is_directory=True)
+                        with self.subTest(target=name), self.assertRaisesRegex(SystemExit, "symlink"):
+                            exec(compile(script, "workflow-evidence-collector", "exec"), {})
+                        destination.unlink()
+                        if existed:
+                            saved.rename(destination)
+                    escaped = outside / "sentinel"
+                    escaped.write_text("unchanged")
+                    destination = copied / "closure-comparison.json"
+                    destination.unlink()
+                    destination.symlink_to(escaped)
+                    with self.assertRaisesRegex(SystemExit, "symlink"):
+                        exec(compile(script, "workflow-evidence-collector", "exec"), {})
+                    self.assertEqual(escaped.read_text(), "unchanged")
+                    destination.unlink()
+                    result.rename(source / "saved")
+                    result.symlink_to(source / "saved", target_is_directory=True)
+                    with self.assertRaisesRegex(SystemExit, "symlink"):
+                        exec(compile(script, "workflow-evidence-collector", "exec"), {})
+            finally:
+                os.chdir(previous)
 
     def test_vermagic_preserves_significant_trailing_space(self):
         value = NAMESPACE["KVER"] + " SMP preempt mod_unload aarch64 \n"
