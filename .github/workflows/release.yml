@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -30,17 +30,43 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
         run: |
-          VERSION="${GITHUB_REF_NAME:-dev}"
           go build -trimpath -ldflags "-s -w" -o "tacklebox-linux-${GOARCH}" ./cmd/tacklebox
           sha256sum "tacklebox-linux-${GOARCH}" > "tacklebox-linux-${GOARCH}.sha256"
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" tacklebox-linux-* --clobber || gh release create "$GITHUB_REF_NAME" tacklebox-linux-* --generate-notes
-      - name: Upload artifact (non-tag runs)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Upload binary artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tacklebox-linux-${{ matrix.goarch }}
           path: tacklebox-linux-*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download binary artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tacklebox-linux-*
+          merge-multiple: true
+      - name: Verify release inputs
+        run: |
+          for checksum in tacklebox-linux-*.sha256; do
+            sha256sum --check "$checksum"
+          done
+          test -f "docs/releases/${GITHUB_REF_NAME}.md"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" tacklebox-linux-* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" tacklebox-linux-* \
+              --verify-tag \
+              --title "Tacklebox ${GITHUB_REF_NAME}" \
+              --notes-file "docs/releases/${GITHUB_REF_NAME}.md"
+          fi

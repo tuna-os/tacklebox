@@ -335,8 +335,15 @@ packages that provide the ISO tools, for both local builds and CI runners.
 
 ## 📦 Releases & Operations
 
-`.github/workflows/release-image.yml` publishes `ghcr.io/tuna-os/tacklebox`
-on every `main` push and `v*` tag. If a bad image reaches `:latest`, see
+`.github/workflows/release.yml` publishes static binaries for Linux on AMD64
+and ARM64, with checksums, for every `v*` tag. A tag must have a matching
+`docs/releases/<tag>.md` file; the workflow verifies both checksums before it
+creates the GitHub Release.
+
+`.github/workflows/release-image.yml` publishes the multi-architecture
+`ghcr.io/tuna-os/tacklebox` image on every `main` push and `v*` tag. The
+workflow adds two tags for each version: one with a leading `v` and one
+without it. If a bad image reaches `:latest`, see
 [`runbooks/rollback-a-bad-tacklebox-image.md`](runbooks/rollback-a-bad-tacklebox-image.md).
 Boot/update and build/ISO-generation failures have their own runbooks in
 [`runbooks/`](runbooks/).
