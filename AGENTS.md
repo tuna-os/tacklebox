@@ -31,6 +31,7 @@ suite on CI means a green suite locally.
 | `lint-test` | every PR | ~2 min | `go vet`, `go test`, `go build`, integration `Help` tests, every `examples/`+`fixtures/` recipe parses, shellcheck on the dracut modules |
 | `verify-smoke` | after `lint-test` | ≤25 min | 2-env block image → `verify` → `update` → `add`/`remove` → QEMU boot |
 | `iso-smoke` | after `lint-test` | ≤60 min | per-env, dedup, 6-env dedup, delta and offline-store ISOs, each QEMU-booted |
+| `required-checks` | after all CI jobs (`if: always()`) | ~10s | terminal gate: asserts `lint-test`, `verify-smoke`, and `iso-smoke` completed with `success` |
 
 `ci.yml` also runs on a daily schedule (04:20 UTC), deliberately: base images
 drift under this repo (dracut, systemd, bootc), and a broken live boot should
@@ -38,11 +39,12 @@ page here rather than a downstream.
 
 Two structural notes:
 
-- **There is no `required-checks` aggregator job.** Most tuna-os repos have
-  one (`if: always()` + `test "${{ needs.X.result }}" = success`) so a
-  skipped or cancelled job reports failure instead of an absent check. If
-  branch protection or agent auto-merge is ever pointed at this repo, that
-  gap needs closing first.
+- **Terminal `required-checks` aggregator job.** `ci.yml` defines a terminal
+  `required-checks` job (`if: always()`,
+  `needs: [lint-test, verify-smoke, iso-smoke]`) that asserts each dependency
+  completed with `success`. This provides a stable contract for branch protection
+  and merge automation, ensuring skipped or cancelled dependencies report as a
+  failed terminal check rather than an absent check.
 - **`iso-smoke` runs on a self-hosted RunsOn runner**
   (`runs-on=…/runner=build-amd64`), not a GitHub runner, because the GitHub
   image's podman wedges the customize commit (tunaOS#1893). A fork without

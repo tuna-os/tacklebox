@@ -62,7 +62,7 @@ tacklebox/
 │   └── systemd/               # boot-time updater units
 ├── examples/                  # human-curated example recipes
 ├── fixtures/                  # CI fixture recipes
-└── .github/workflows/ci.yml   # lint-test + verify-smoke pipeline
+└── .github/workflows/ci.yml   # lint-test, verify-smoke, iso-smoke + required-checks pipeline
 ```
 
 There are two image-assembly paths. The `cmd/tacklebox` path shells out to
@@ -330,6 +330,10 @@ Tacklebox core orchestration is wrapped by the native desktop manager in [`tuna-
   dedup ISO into `alpha` with a required-pattern assertion that the
   `tbox-root` subtree pivot logged `rebased OK`. This is the only job
   that exercises the live/ISO boot path end to end.
+- **`required-checks`** (~10s) — terminal aggregate gate (`if: always()`).
+  Asserts that `lint-test`, `verify-smoke`, and `iso-smoke` each completed
+  with `success`. Serves as the single stable contract for branch protection
+  and merge automation.
 
 `scripts/test-boot.sh <image> [timeout] [required-pattern…]` is shared by
 both QEMU steps: extra args are literal strings that must also appear in

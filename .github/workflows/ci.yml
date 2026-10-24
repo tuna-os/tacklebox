@@ -581,3 +581,26 @@ jobs:
               echo '```' >> "$GITHUB_STEP_SUMMARY"
             fi
           done
+
+  # ── Terminal gate: aggregate required status check ─────────────────────────
+  # Converts skipped, cancelled, or failed dependency jobs into one stable
+  # repository gate. Branch protection and merge automation should require
+  # only `required-checks` rather than individual upstream jobs.
+  required-checks:
+    if: always()
+    needs: [lint-test, verify-smoke, iso-smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: require mandatory CI jobs
+        shell: bash
+        env:
+          LINT_TEST_RESULT: ${{ needs.lint-test.result }}
+          VERIFY_SMOKE_RESULT: ${{ needs.verify-smoke.result }}
+          ISO_SMOKE_RESULT: ${{ needs.iso-smoke.result }}
+        run: |
+          for result in "$LINT_TEST_RESULT" "$VERIFY_SMOKE_RESULT" "$ISO_SMOKE_RESULT"; do
+            if [ "$result" != success ]; then
+              printf 'required CI job result was %s\n' "$result"
+              exit 1
+            fi
+          done
