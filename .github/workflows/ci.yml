@@ -348,11 +348,38 @@ jobs:
         run: |
           set -euo pipefail
           sudo install -d /etc/apt/keyrings
-          curl -fsSL https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/Release.key \
-            | gpg --dearmor | sudo tee /etc/apt/keyrings/kubic.gpg >/dev/null
+          # The community mirror can return transient 5xx responses.
+          # Retry before dearmoring so a failed download cannot install a keyring.
+          key_file=$(mktemp)
+          trap 'rm -f "$key_file"' EXIT
+          key_url=https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/Release.key
+          ok=0
+          for i in 1 2 3; do
+            echo ">>> fetch Kubic release key (attempt $i/3)"
+            if curl -fsSL --retry 0 "$key_url" -o "$key_file" && [ -s "$key_file" ]; then
+              ok=1; break
+            fi
+            if [ "$i" -lt 3 ]; then sleep $((i * 10)); fi
+          done
+          if [ "$ok" -eq 0 ]; then
+            echo "::error::failed to fetch Kubic release key after 3 attempts"
+            exit 1
+          fi
+          gpg --dearmor < "$key_file" | sudo tee /etc/apt/keyrings/kubic.gpg >/dev/null
           echo 'deb [signed-by=/etc/apt/keyrings/kubic.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/ /' \
             | sudo tee /etc/apt/sources.list.d/kubic.list
-          sudo apt-get update -qq
+          ok=0
+          for i in 1 2 3; do
+            echo ">>> update apt indexes (attempt $i/3)"
+            if sudo apt-get -o APT::Update::Error-Mode=any update -qq; then
+              ok=1; break
+            fi
+            if [ "$i" -lt 3 ]; then sleep $((i * 10)); fi
+          done
+          if [ "$ok" -eq 0 ]; then
+            echo "::error::failed to update apt indexes after 3 attempts"
+            exit 1
+          fi
           # Force the Kubic stack: apt kept the image's 4.9.3+conmon2.1.10
           # (conmon journald failure). Remove the old podman/conmon so the
           # Kubic podman 6.x + matching conmon/crun come in fresh.
