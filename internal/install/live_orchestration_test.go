@@ -121,7 +121,7 @@ func TestStashSquashfs_WithCache(t *testing.T) {
 		t.Fatalf("stashSquashfs: %v", err)
 	}
 
-	if !m.anyCallContains("mkdir -p "+filepath.Dir(cachePath)) {
+	if !m.anyCallContains("mkdir -p " + filepath.Dir(cachePath)) {
 		t.Error("expected the cache dir to be created")
 	}
 	if !m.anyCallContains("mv " + tmpPath + " " + cachePath) {

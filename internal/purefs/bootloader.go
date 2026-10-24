@@ -45,6 +45,7 @@ type BootChain struct {
 	// every candidate for the same reason).
 	Vendor string
 }
+
 // sdBootCandidatesFor lists the systemd-boot PE probes in preference order
 // for one architecture — see the Debian note on BootChain.SdBoot. (Debian
 // ships only the .signed name, an sbat-signed PE that boots unchanged.)
@@ -52,6 +53,7 @@ func sdBootCandidatesFor(arch string) []string {
 	pe := "usr/lib/systemd/boot/efi/systemd-boot" + efiArchSuffix(arch) + ".efi"
 	return []string{pe, pe + ".signed"}
 }
+
 // UEFIBootNames maps an OCI architecture to the arch-correct UEFI fallback
 // loader and GRUB binary basenames staged under /EFI/BOOT:
 // amd64 -> BOOTX64.EFI/grubx64.efi, arm64 -> BOOTAA64.EFI/grubaa64.efi.

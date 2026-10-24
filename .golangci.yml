@@ -1,3 +1,18 @@
 version: "2"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
 linters:
   default: standard
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -QF1001
+        - -QF1002
+        - -QF1003
+        - -QF1006
+        - -QF1012
+        - -ST1000

@@ -365,19 +365,6 @@ func binInTree(root *oci.Node, name string) bool {
 	return false
 }
 
-func hasPrefixChild(root *oci.Node, dir, prefix string) bool {
-	d := root.Lookup(dir)
-	if d == nil || d.Type != oci.TypeDir {
-		return false
-	}
-	for name := range d.Children {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
 // addUserToGroup ensures group exists and lists user as a member, editing
 // /etc/group in place. Idempotent: a re-run neither duplicates the member nor
 // re-creates the group.

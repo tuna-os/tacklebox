@@ -205,8 +205,6 @@ func resolveDevice(targetArg string, addCleanup func(func())) (string, error) {
 // recreates each env's tbox-install/<id> subtree, then rewrites its BLS
 // entry. BLS entries for envs NOT in this recipe are left untouched.
 func runEnvsUpdate(r recipe.MediaRecipe, storeMount, espMount string, parallel int, track func(string, func() error) error) error {
-	type fakeTarget struct{}
-
 	if parallel <= 1 {
 		for _, env := range r.BootableEnvironments {
 			if err := updateEnvBootc(env, r, storeMount, espMount, track); err != nil {

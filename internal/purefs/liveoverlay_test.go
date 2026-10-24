@@ -255,9 +255,9 @@ func TestGraftLiveOverlayOptionalMissingIsNoop(t *testing.T) {
 func TestVerifyLiveOverlayBase(t *testing.T) {
 	const base = "sha256:base-digest"
 	cases := []struct {
-		name      string
-		overlay   *oci.Manifest
-		actual    string
+		name       string
+		overlay    *oci.Manifest
+		actual     string
 		wantReason string
 	}{
 		{"nil-overlay", nil, base, ""},

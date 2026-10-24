@@ -29,11 +29,13 @@ Never post account credentials or API keys in issues or pull requests.
 Run the fast checks used for every pull request:
 
 ```bash
+just check
 just build
-just test
 go vet ./...
 go test -tags=integration -run='Help' ./...
 ```
+
+You can format Go files with `just fmt`.
 
 If you change an example or fixture recipe, make sure that every JSON file
 still parses:

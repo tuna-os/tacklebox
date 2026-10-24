@@ -28,7 +28,7 @@ suite on CI means a green suite locally.
 
 | Job | Trigger | Cost | What it proves |
 |---|---|---|---|
-| `lint-test` | every PR | ~2 min | `go vet`, `go test`, `go build`, integration `Help` tests, every `examples/`+`fixtures/` recipe parses, shellcheck on the dracut modules |
+| `lint-test` | every PR | ~2 min | `gofmt`, `golangci-lint`, `go vet`, `go test`, `go build`, integration `Help` tests, every `examples/`+`fixtures/` recipe parses, shellcheck on the dracut modules |
 | `verify-smoke` | after `lint-test` | ≤25 min | 2-env block image → `verify` → `update` → `add`/`remove` → QEMU boot |
 | `iso-smoke` | after `lint-test` | ≤60 min | per-env, dedup, 6-env dedup, delta and offline-store ISOs, each QEMU-booted |
 
@@ -74,18 +74,17 @@ Before assuming a red `iso-smoke` is your change, check `podman --version` /
 ## Checks
 
 ```bash
+just check                       # format check, lint, unit tests
+just fmt                         # reformat Go code with gofmt
 just build && just test          # go build -o tacklebox ./cmd/tacklebox; go test ./...
 go vet ./...
 go test -tags=integration -run='Help' ./...
 for r in examples/*.json fixtures/*.json; do python3 -m json.tool "$r" >/dev/null; done
 ```
 
-> **Nothing checks formatting or lints.** `.golangci.yml` is present but no
-> workflow runs `golangci-lint`, and neither CI nor the justfile runs `gofmt`.
-> `gofmt -l ./cmd ./internal` currently reports three files
-> (`internal/install/live_orchestration_test.go`, `internal/install/remora.go`,
-> `internal/purefs/uki_test.go`). Reformatting them is a separate, mechanical
-> change — do not sweep it into an unrelated PR.
+CI and `just check` enforce `gofmt` and `golangci-lint` (running repo-wide checks
+and an `errcheck` ratchet on PR diffs via `--new-from-merge-base`). Format code
+with `just fmt` prior to commit.
 
 Two tests are environment-gated rather than skipped, so a local `go test ./...`
 can be red for reasons that are not your change: `purefs`

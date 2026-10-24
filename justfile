@@ -12,6 +12,33 @@ build:
 test:
     go test ./...
 
+# Format Go source files
+fmt:
+    gofmt -w cmd internal
+
+# Check formatting of Go source files
+fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=$(gofmt -l cmd internal)
+    if [ -n "$files" ]; then
+        printf 'Unformatted Go files:\n%s\n' "$files"
+        exit 1
+    fi
+
+# Run linters
+lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v golangci-lint >/dev/null 2>&1; then
+        golangci-lint run --disable=errcheck ./...
+    else
+        go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run --disable=errcheck ./...
+    fi
+
+# Fast local validation (formatting check, lint, tests)
+check: fmt-check lint test
+
 # Provision a real disk (CAUTION: wipes the disk!)
 provision-usb device="/dev/sda" recipe=recipe_path: build
     sudo ./tacklebox build {{recipe}} {{device}} -b {{output_base}}-usb

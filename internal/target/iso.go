@@ -100,7 +100,7 @@ func (i *IsoTarget) InstallMode() InstallMode { return InstallModeLive }
 // in cmd/tacklebox/build.go via a small interface.
 func (i *IsoTarget) IsoLabel() string { return i.Label }
 
-// IsoTarget puts per-env kernel/initrd under /images/pxeboot/<env>/
+// KernelPath puts per-env kernel/initrd under /images/pxeboot/<env>/
 // inside the FAT ESP, where live ISOs conventionally keep them.
 func (i *IsoTarget) KernelPath(envID string) string { return "/images/pxeboot/" + envID + "/vmlinuz" }
 func (i *IsoTarget) InitrdPath(envID string) string {
