@@ -26,8 +26,13 @@ jobs:
       contents: read
     env:
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      # The job's tacklebox output base; ci-cleanup removes only what is
+      # claimed under it (and /mnt/iso-out) by this job.
+      TBX_CI_OUT: /var/tmp/tbx
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
@@ -52,12 +57,13 @@ jobs:
             systemd-boot systemd-boot-efi podman rclone
 
       - name: build tacklebox
-        run: go build -o tacklebox ./cmd/tacklebox
+        run: just build
 
+      # /var/tmp/tbx: build intermediates (squashfs, initramfs, iso tree)
+      # /mnt/iso-out: final ISO destination (freed ~14 GiB by docker cleanup)
+      # Claiming also writes the ownership marker ci-cleanup requires.
       - name: prepare output dirs
-        run: |
-          sudo install -d -o "$(id -u)" -g "$(id -g)" /var/tmp/tbx
-          sudo install -d -o "$(id -u)" -g "$(id -g)" /mnt/iso-out
+        run: just ci-claim /var/tmp/tbx /mnt/iso-out
 
       - name: restore build caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -70,24 +76,16 @@ jobs:
             tbox-bazzite-gnome-cache-
 
       - name: pre-pull images
-        run: |
-          jq -r '.bootable_environments[].image' examples/bazzite-gnome.json | \
-            xargs -P3 -I{} sudo podman pull {}
+        run: just ci-pull-recipe-images examples/bazzite-gnome.json 3
 
       - name: build Bazzite GNOME ISO
-        run: |
-          sudo ./tacklebox build examples/bazzite-gnome.json \
-            --iso /mnt/iso-out/bazzite-gnome.iso -b /var/tmp/tbx
+        run: just ci-example-iso-build bazzite-gnome
 
       - name: verify ISO
-        run: |
-          sudo ./tacklebox verify /mnt/iso-out/bazzite-gnome.iso
+        run: just ci-example-iso-verify bazzite-gnome
 
       - name: checksums
-        run: |
-          cd /mnt/iso-out
-          sha256sum bazzite-gnome.iso > SHA256SUMS
-          cat SHA256SUMS
+        run: just ci-isos-checksum /mnt/iso-out bazzite-gnome.iso
 
       - name: upload to R2
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && env.R2_BUCKET != '' }}
@@ -119,11 +117,10 @@ jobs:
 
       - name: artifact summary
         if: always()
-        run: |
-          echo '## Bazzite GNOME ISO build' >> "$GITHUB_STEP_SUMMARY"
-          ls -lh /mnt/iso-out/bazzite-gnome.iso 2>/dev/null | awk '{print "- `" $NF "` (" $5 ")"}' >> "$GITHUB_STEP_SUMMARY"
-          if [ -f /mnt/iso-out/SHA256SUMS ]; then
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat /mnt/iso-out/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: just ci-summary-isos 'Bazzite GNOME ISO build' /mnt/iso-out
+
+      # Last step, always: remove the pulled images, containers and the ISO
+      # THIS job created (ownership-scoped; the build caches are kept).
+      - name: cleanup (job-owned images, mounts, scratch)
+        if: always()
+        run: just ci-cleanup /mnt/iso-out

@@ -60,6 +60,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
@@ -83,13 +85,15 @@ jobs:
             systemd-boot systemd-boot-efi podman rclone
 
       - name: build tacklebox
-        run: go build -o tacklebox ./cmd/tacklebox
+        run: just build
 
       # The caches only pay off for registry-image recipes (stable image
       # IDs between runs); the fixture images are rebuilt per run and miss.
       # Restoring a stale snapshot is harmless either way.
+      # Also writes the ownership marker ci-cleanup requires before it will
+      # touch anything under /mnt/tbx.
       - name: prepare output base for cache restore
-        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /mnt/tbx
+        run: just ci-prepare-out
 
       - name: restore build caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -104,19 +108,14 @@ jobs:
       # ── Default PoC: the fixture pair, both layouts ─────────────────────
       - name: build fixture live images
         if: inputs.recipe == ''
-        run: |
-          podman build -f fixtures/iso-smoke.Containerfile \
-            --build-arg MARKER=alpha -t localhost/tbox-iso-alpha:latest fixtures
-          podman build -f fixtures/iso-smoke.Containerfile \
-            --build-arg MARKER=beta -t localhost/tbox-iso-beta:latest fixtures
+        # Labelled with the job's owner id so ci-cleanup finds them.
+        run: just ci-fixture-images podman alpha beta
 
       - name: build PoC ISOs (per-env + dedup layouts)
         if: inputs.recipe == ''
         run: |
-          sudo ./tacklebox build fixtures/iso-2env.json \
-            --iso /mnt/tbx/tacklebox-poc-perenv.iso -b /mnt/tbx
-          sudo ./tacklebox build fixtures/iso-dedup-2env.json \
-            --iso /mnt/tbx/tacklebox-poc-dedup.iso -b /mnt/tbx
+          just ci-iso-build iso-2env tacklebox-poc-perenv
+          just ci-iso-build iso-dedup-2env tacklebox-poc-dedup
 
       # ── Custom PoC: a caller-supplied recipe ────────────────────────────
       - name: build PoC ISO (custom recipe)
@@ -128,16 +127,10 @@ jobs:
             --iso /mnt/tbx/tacklebox-poc-custom.iso -b /mnt/tbx
 
       - name: verify ISOs
-        run: |
-          for iso in /mnt/tbx/*.iso; do
-            ./tacklebox verify "$iso"
-          done
+        run: just ci-isos-verify /mnt/tbx
 
       - name: checksums
-        run: |
-          cd /mnt/tbx
-          sha256sum ./*.iso > SHA256SUMS
-          cat SHA256SUMS
+        run: just ci-isos-checksum /mnt/tbx
 
       - name: upload to R2
         if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && env.R2_BUCKET != '' }}
@@ -173,11 +166,10 @@ jobs:
 
       - name: artifact summary
         if: always()
-        run: |
-          echo '## PoC ISO builds' >> "$GITHUB_STEP_SUMMARY"
-          ls -lh /mnt/tbx/*.iso 2>/dev/null | awk '{print "- `" $NF "` (" $5 ")"}' >> "$GITHUB_STEP_SUMMARY"
-          if [ -f /mnt/tbx/SHA256SUMS ]; then
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            cat /mnt/tbx/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: just ci-summary-isos 'PoC ISO builds' /mnt/tbx
+
+      # Last step, always: remove the labelled fixture images/containers and
+      # the ISOs/scratch THIS job created (ownership-scoped, caches kept).
+      - name: cleanup (job-owned images, mounts, scratch)
+        if: always()
+        run: just ci-cleanup

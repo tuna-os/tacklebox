@@ -65,6 +65,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
@@ -106,7 +108,9 @@ jobs:
           slug="$(basename "$repo")-${tag}"
           echo "SLUG=${slug}" >> "$GITHUB_ENV"
           echo "ISO=${PWD}/out/pure-${slug}.iso" >> "$GITHUB_ENV"
-          mkdir -p out
+          # Claim the ISO dir and the purebuild scratch root: ci-cleanup removes
+          # only directories this job claimed.
+          just ci-claim "${PWD}/out" "${RUNNER_TEMP}/pure-scratch"
 
       - name: build ISO (pure-Go, auto tbox initrd overlay)
         run: |
@@ -114,7 +118,7 @@ jobs:
             --image "$IMAGE" \
             --out "$ISO" \
             --label "$(echo "${SLUG}" | tr 'a-z-' 'A-Z_' | cut -c1-32)" \
-            --workdir "${RUNNER_TEMP}/purebuild"
+            --workdir "${RUNNER_TEMP}/pure-scratch/purebuild"
 
       # Which copy of the parse hook actually boots. The combined initrd is
       # overlay-then-stock, and the segment order is forced (the kernel
@@ -125,36 +129,7 @@ jobs:
       # this is evidence for tacklebox#166, not a gate.
       - name: inspect the combined initrd
         if: always()
-        run: |
-          img="${RUNNER_TEMP}/purebuild/initrd-tbox.img"
-          [ -f "$img" ] || { echo "no combined initrd (built with --initrd?)"; exit 0; }
-          # The first version of this step grepped lsinitrd's output and
-          # concluded the overlay's copy was the only one present. It was
-          # not evidence: every path it printed was from the early cpio,
-          # no stock hook appeared at all, and stderr was discarded — so a
-          # main-image listing that failed outright is indistinguishable
-          # from one that contained nothing. Print the whole thing, per
-          # section, with errors, and let the counts show which sections
-          # were actually read.
-          lsinitrd "$img" > /tmp/ls.txt 2> /tmp/ls.err || true
-          echo "### lsinitrd: $(wc -l < /tmp/ls.txt) lines, stderr:"
-          cat /tmp/ls.err
-          echo "### section headers"
-          grep -n -i "image:\|early cpio\|^Version" /tmp/ls.txt || true
-          echo "### total entries vs dracut cmdline hooks seen"
-          echo "entries: $(grep -c '^[-dl]' /tmp/ls.txt || true)"
-          grep -n "dracut/hooks/cmdline" /tmp/ls.txt || echo "(no cmdline hooks listed at all — listing is incomplete)"
-          echo "### every copy of the parse hook, in listing order"
-          grep -n "parse-tbox-live" /tmp/ls.txt || echo "(none)"
-          echo "### stock initramfs from the image, listed on its own"
-          stock=$(find "${RUNNER_TEMP}/purebuild/blobs" -type f -size +10M -size -400M 2>/dev/null | head -20)
-          for f in $stock; do
-            if lsinitrd "$f" > /tmp/s.txt 2>/dev/null && grep -q "dracut" /tmp/s.txt; then
-              echo "--- $f ($(wc -l < /tmp/s.txt) entries)"
-              grep "parse-tbox-live\|hooks/cmdline" /tmp/s.txt || echo "  (image bakes no tbox hook)"
-              break
-            fi
-          done
+        run: just ci-pure-inspect-initrd "${RUNNER_TEMP}/pure-scratch/purebuild"
 
       # Deliberately not `tacklebox verify`: that reads the multi-env
       # recipe metadata a purebuild ISO never writes, so a failure there
@@ -162,13 +137,7 @@ jobs:
       # is checked is what holds for any ISO9660 image — and it is a FORMAT
       # proof only. The boot gate below is the proof that matters.
       - name: verify ISO format
-        run: |
-          ls -l "$ISO"
-          size=$(stat -c%s "$ISO")
-          [ "$size" -gt 104857600 ] || { echo "::error::ISO is only ${size} bytes"; exit 1; }
-          magic=$(dd if="$ISO" bs=2048 skip=16 count=1 status=none | dd bs=1 skip=1 count=5 status=none)
-          [ "$magic" = "CD001" ] || { echo "::error::no CD001 at sector 16, got '${magic}'"; exit 1; }
-          echo ">>> ${ISO} ${size} bytes, CD001 present"
+        run: just ci-pure-verify-iso "$ISO"
 
       # The link this workflow is really for. tacklebox#166: the embedded
       # initrd overlay has never been booted, only unit-tested. Anything
@@ -224,3 +193,10 @@ jobs:
             echo "- builder: cmd/purebuild (pure-Go, auto tbox initrd overlay)"
             echo "- boot gate: ${{ github.event.inputs.boot_test != 'false' && 'run' || 'SKIPPED — boots-live stays untested' }}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # Last step, always: remove the ISO and the purebuild blob store this job
+      # created (ownership-scoped to the two claimed directories) and stop any
+      # QEMU still holding them.
+      - name: cleanup (job-owned scratch)
+        if: always()
+        run: just ci-cleanup "${PWD}/out" "${RUNNER_TEMP}/pure-scratch"

@@ -29,51 +29,38 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
 
       - name: go vet
-        run: go vet ./...
+        run: just vet
 
       - name: go test
-        run: go test ./...
+        run: just test
 
       - name: go test with coverage summary
-        run: go test -cover -covermode=set ./...
+        run: just test-cover
 
       # Integration-tag help checks: builds the binary and execs --help
       # for every subcommand. Confirms the CLI surface matches what CI depends on.
       - name: go test (integration tag, help-only)
-        run: go test -tags=integration -run='Help' ./...
+        run: just test-integration-help
 
       - name: go build
-        run: go build ./...
+        run: just build-all
 
       - name: browser WASM compile and API contract
-        run: |
-          GOOS=js GOARCH=wasm go build -o /tmp/tbwasm.wasm ./cmd/tbwasm
-          GOOS=js GOARCH=wasm go test -timeout=3m -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./cmd/tbwasm
+        run: just wasm
 
       # Stage 2: every example recipe must parse successfully. The build
       # tool itself enforces the schema; we just feed each one to a no-op
       # invocation and check exit status. --help short-circuits before any
       # actual I/O so this is fast.
       - name: recipe schema parses
-        run: |
-          go build -o tacklebox ./cmd/tacklebox
-          fail=0
-          for r in examples/*.json fixtures/*.json; do
-            [ -f "$r" ] || continue
-            # Use a syntactic-only parse: jq if installed, else go's parser
-            # via `tacklebox build --help` (rejects the recipe arg before
-            # opening anything).
-            if ! python3 -c "import json,sys; json.load(open('$r'))"; then
-              echo "::error file=$r::JSON parse failed"
-              fail=1
-            fi
-          done
-          exit $fail
+        run: just check-recipes
 
       - name: shellcheck dracut modules
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # master as of 2026-06-09
@@ -101,6 +88,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
@@ -134,32 +123,20 @@ jobs:
       # at runc for exactly that pairing: a no-op on images whose crun and
       # podman already agree.
       - name: match podman's OCI runtime to its spec version
-        run: |
-          podman_ver=$(podman --version | awk '{print $3}')
-          crun_ver=$(crun --version 2>/dev/null | awk 'NR==1{print $3}')
-          echo ">>> podman=$podman_ver crun=${crun_ver:-absent}"
-          if dpkg --compare-versions "$podman_ver" ge 5 &&
-             [ -n "$crun_ver" ] && dpkg --compare-versions "$crun_ver" lt 1.15; then
-            command -v runc >/dev/null || {
-              echo "::error::crun $crun_ver cannot run podman $podman_ver's spec and there is no runc to fall back to"
-              exit 1
-            }
-            sudo install -d /etc/containers/containers.conf.d
-            printf '[engine]\nruntime = "runc"\n' |
-              sudo tee /etc/containers/containers.conf.d/10-tbox-runc.conf
-            podman info --format '>>> OCI runtime: {{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}'
-          fi
+        run: just ci-podman-runtime
 
       - name: build tacklebox
-        run: go build -o tacklebox ./cmd/tacklebox
+        run: just build
 
       # Persist the image-ID-keyed build caches across runs. tacklebox keys
       # cache entries by image ID internally, so restoring a stale snapshot
       # is harmless (changed images simply miss). Rolling key: every run
       # saves a fresh snapshot, restore picks the most recent. Saves the
       # ~2 min/env dracut initramfs rebuild on cache-warm runs.
+      # Also writes the ownership marker ci-cleanup requires before it will
+      # touch anything under /mnt/tbx.
       - name: prepare output base for cache restore
-        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /mnt/tbx
+        run: just ci-prepare-out
 
       - name: restore build caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -173,31 +150,18 @@ jobs:
 
       - name: pre-pull fixture images
         # Quay CDN occasionally drops blobs mid-transfer (unexpected EOF).
-        # Retry up to 3 times with exponential backoff.
-        run: |
-          for img in quay.io/centos-bootc/centos-bootc:stream10 quay.io/fedora/fedora-bootc:44; do
-            ok=0
-            for i in 1 2 3; do
-              echo ">>> pull $img (attempt $i/3)"
-              if sudo podman pull "$img"; then ok=1; break; fi
-              sleep $((i * 10))
-            done
-            if [ "$ok" -eq 0 ]; then
-              echo "::error::failed to pull $img after 3 attempts"
-              exit 1
-            fi
-          done
+        # Retry up to 3 times with exponential backoff. Pulls are recorded so
+        # ci-cleanup removes only what this job added to the store.
+        run: just ci-pull-images quay.io/centos-bootc/centos-bootc:stream10 quay.io/fedora/fedora-bootc:44
 
       - name: tacklebox build (2-env block image)
-        run: |
-          sudo mkdir -p /mnt/tbx
-          sudo ./tacklebox build fixtures/smoke-2env.json -b /mnt/tbx
+        run: just ci-smoke-build
 
       - name: tacklebox verify
-        run: sudo ./tacklebox verify /mnt/tbx/tacklebox.img
+        run: just ci-smoke-verify
 
       - name: tacklebox status check
-        run: sudo ./tacklebox status /mnt/tbx/tacklebox.img
+        run: just ci-smoke-status
 
       # ── Stage 3b: update smoke ───────────────────────────────────────────
       # Re-installs both envs on the already-built image using
@@ -211,19 +175,17 @@ jobs:
       # hit the initramfs cache the build populated minutes earlier (the
       # cache-reuse regression check).
       - name: tacklebox update (re-install same recipe)
-        run: |
-          sudo ./tacklebox update --yes fixtures/smoke-2env.json \
-            /mnt/tbx/tacklebox.img -b /mnt/tbx
+        run: just ci-smoke-update
 
       - name: tacklebox verify (post-update)
-        run: sudo ./tacklebox verify /mnt/tbx/tacklebox.img
+        run: just ci-smoke-verify
 
       # ── Stage 3c: UnmountDevice loop smoke (integration test) ────────────
       # Runs the Go integration test that creates a loop device, mounts a
       # partition, and asserts UnmountDevice clears it. Faster than the full
       # build smoke and directly exercises the new pre-flight unmount code.
       - name: UnmountDevice loop smoke (integration)
-        run: go test -tags=integration -v -run=TestUnmountDevice_LoopSmoke ./internal/blockdev/...
+        run: just test-unmount-smoke
 
       # ── Stage 3d: add / remove smoke ────────────────────────────────────
       # Adds a third env (using the already-pulled centos-bootc image) to
@@ -231,28 +193,24 @@ jobs:
       # env and verifies the image is back to 2-env. Exercises the full
       # add/remove mutation pipeline without reformatting.
       - name: tacklebox add (3rd env)
-        run: |
-          sudo ./tacklebox add fixtures/smoke-add.json \
-            /mnt/tbx/tacklebox.img --yes -b /mnt/tbx
+        run: just ci-smoke-add
 
       - name: tacklebox verify (post-add, 3 envs)
-        run: sudo ./tacklebox verify /mnt/tbx/tacklebox.img
+        run: just ci-smoke-verify
 
       - name: tacklebox status (post-add)
-        run: sudo ./tacklebox status /mnt/tbx/tacklebox.img
+        run: just ci-smoke-status
 
       - name: tacklebox remove (the added env)
-        run: |
-          sudo ./tacklebox remove centos-add \
-            /mnt/tbx/tacklebox.img --yes -b /mnt/tbx
+        run: just ci-smoke-remove
 
       - name: tacklebox verify (post-remove, back to 2 envs)
-        run: sudo ./tacklebox verify /mnt/tbx/tacklebox.img
+        run: just ci-smoke-verify
 
       # Stage 4: Boot smoke. We use TCG (no KVM on free runners) so it's
       # slow (~3 min to login).
       - name: tacklebox boot smoke (Stage 4)
-        run: sudo ./scripts/test-boot.sh /mnt/tbx/tacklebox.img 600
+        run: just ci-smoke-boot
 
       - name: upload boot log
         if: failure()
@@ -264,16 +222,14 @@ jobs:
 
       - name: artifact summary
         if: always()
-        run: |
-          echo '## tacklebox build artefacts' >> "$GITHUB_STEP_SUMMARY"
-          ls -lh /mnt/tbx/ 2>/dev/null | awk 'NR>1 {print "- `" $NF "` (" $5 ")"}' >> "$GITHUB_STEP_SUMMARY"
-          df -h / /mnt 2>/dev/null >> "$GITHUB_STEP_SUMMARY"
-          if [ -f qemu-boot.log ]; then
-            echo '### QEMU Boot Log (tail)' >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            tail -n 50 qemu-boot.log >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: just ci-summary-smoke
+
+      # Last step, always: detach loop devices, unmount, stop QEMU, remove the
+      # pulled images and scratch THIS job created (ownership-scoped; the build
+      # caches actions/cache saves in its post step are kept).
+      - name: cleanup (job-owned loop devices, mounts, images, scratch)
+        if: always()
+        run: just ci-cleanup
 
   # ── Stage 3-ISO: two-env ISO smoke (per-env + dedup layouts) ──────────────
   # Builds BOTH ISO layouts from one pair of fixture images (STOCK
@@ -297,6 +253,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
@@ -323,21 +281,7 @@ jobs:
 
       # Same crun/podman spec-version mismatch as verify-smoke; see there.
       - name: match podman's OCI runtime to its spec version
-        run: |
-          podman_ver=$(podman --version | awk '{print $3}')
-          crun_ver=$(crun --version 2>/dev/null | awk 'NR==1{print $3}')
-          echo ">>> podman=$podman_ver crun=${crun_ver:-absent}"
-          if dpkg --compare-versions "$podman_ver" ge 5 &&
-             [ -n "$crun_ver" ] && dpkg --compare-versions "$crun_ver" lt 1.15; then
-            command -v runc >/dev/null || {
-              echo "::error::crun $crun_ver cannot run podman $podman_ver's spec and there is no runc to fall back to"
-              exit 1
-            }
-            sudo install -d /etc/containers/containers.conf.d
-            printf '[engine]\nruntime = "runc"\n' |
-              sudo tee /etc/containers/containers.conf.d/10-tbox-runc.conf
-            podman info --format '>>> OCI runtime: {{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Version}}'
-          fi
+        run: just ci-podman-runtime
 
       # podman 5.8.4 (what both the GitHub runner and the ubuntu24 RunsOn image
       # ship) is broken for this workload: the customize commit wedges and
@@ -345,71 +289,32 @@ jobs:
       # unstable podman (6.x) and drop the image's 5.8.4 shadow from
       # /usr/local/bin so the pinned podman wins on PATH.
       - name: install podman 6.x from Kubic unstable
-        run: |
-          set -euo pipefail
-          sudo install -d /etc/apt/keyrings
-          curl -fsSL https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/Release.key \
-            | gpg --dearmor | sudo tee /etc/apt/keyrings/kubic.gpg >/dev/null
-          echo 'deb [signed-by=/etc/apt/keyrings/kubic.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/ /' \
-            | sudo tee /etc/apt/sources.list.d/kubic.list
-          sudo apt-get update -qq
-          # Force the Kubic stack: apt kept the image's 4.9.3+conmon2.1.10
-          # (conmon journald failure). Remove the old podman/conmon so the
-          # Kubic podman 6.x + matching conmon/crun come in fresh.
-          sudo apt-get remove -y podman conmon crun || true
-          sudo apt-get install -y podman
-          # conmon 2.1.10 on this image lacks journald support and dies on the
-          # customize run ("[conmon:e]: Include journald in compilation path").
-          # Force a file log driver so conmon never touches journald.
-          sudo install -d /etc/containers/containers.conf.d
-          printf '[engine]\nlog_driver = "k8s-file"\n' | \
-            sudo tee /etc/containers/containers.conf.d/10-tbox-log.conf
-          for p in /usr/local/bin/podman /usr/local/sbin/podman; do
-            if [ -e "$p" ] && ! dpkg -S "$p" >/dev/null 2>&1; then
-              echo ">>> removing non-apt podman shadow: $p"
-              sudo rm -f "$p"
-            fi
-          done
-          hash -r
-          echo ">>> podman now: $(podman --version) / conmon $(conmon --version 2>/dev/null | head -1 || echo none)"
+        run: just ci-podman-kubic
 
       - name: build tacklebox
-        run: go build -o tacklebox ./cmd/tacklebox
+        run: just build
 
       # Plain podman (no sudo): the images must land in the runner user's
       # store, which is where the live pipeline reads from.
       # k8s-file log driver for all podman runs resolves the runner journald
       # gap (tuna-os/tunaOS#1893).
       - name: build fixture live images
-        run: |
-          # sudo (root) podman: the RunsOn image's rootless re-exec is broken
-          # ("cannot re-exec process"); the tacklebox build below is root too.
-          sudo podman build -f fixtures/iso-smoke.Containerfile \
-            --build-arg MARKER=alpha -t localhost/tbox-iso-alpha:latest fixtures
-          sudo podman build -f fixtures/iso-smoke.Containerfile \
-            --build-arg MARKER=beta -t localhost/tbox-iso-beta:latest fixtures
-          sudo podman build -f fixtures/iso-smoke.Containerfile \
-            --build-arg MARKER=gamma -t localhost/tbox-iso-gamma:latest fixtures
-          sudo podman build -f fixtures/iso-smoke.Containerfile \
-            --build-arg MARKER=delta -t localhost/tbox-iso-delta:latest fixtures
-          sudo podman build -f fixtures/iso-smoke.Containerfile \
-            --build-arg MARKER=epsilon -t localhost/tbox-iso-epsilon:latest fixtures
-          sudo podman build -f fixtures/iso-smoke.Containerfile \
-            --build-arg MARKER=zeta -t localhost/tbox-iso-zeta:latest fixtures
+        # sudo (root) podman: the RunsOn image's rootless re-exec is broken
+        # ("cannot re-exec process"); the tacklebox build below is root too.
+        # Images are labelled with the job's owner id so ci-cleanup finds them.
+        run: just ci-fixture-images "sudo podman" alpha beta gamma delta epsilon zeta
 
       - name: build per-env ISO
-        run: |
-          sudo mkdir -p /mnt/tbx
-          sudo ./tacklebox build fixtures/iso-2env.json --iso /mnt/tbx/smoke.iso -b /mnt/tbx
+        run: just ci-iso-build iso-2env smoke
 
       - name: verify per-env ISO
-        run: ./tacklebox verify /mnt/tbx/smoke.iso
+        run: just ci-iso-verify smoke
 
       # Boot gate: verify checks structure; this checks the thing users
       # do — boot it. Catches non-executable generators, sysroot.mount
       # regressions, ESP/El Torito breakage, unmountable rootfs images.
       - name: live boot gate (QEMU/OVMF to login)
-        run: sudo ./scripts/test-live-boot.sh /mnt/tbx/smoke.iso 900
+        run: just ci-iso-live-boot
 
       - name: upload live boot log
         if: failure()
@@ -424,63 +329,35 @@ jobs:
       # from beta's — this exercises the full path: recipe parsing, script
       # resolution, container run, commit, derived-image squash.
       - name: assert live_customize applied
-        run: |
-          xorriso -osirrox on -indev /mnt/tbx/smoke.iso \
-            -extract /LiveOS/alpha.rootfs.sfs /tmp/alpha.sfs \
-            -extract /LiveOS/beta.rootfs.sfs /tmp/beta.sfs
-          unsquashfs -l /tmp/alpha.sfs 'usr/share/tbox-live-customize-marker' \
-            | grep -q tbox-live-customize-marker \
-            || { echo "::error::alpha rootfs missing live_customize marker"; exit 1; }
-          if unsquashfs -l /tmp/beta.sfs 'usr/share/tbox-live-customize-marker' 2>/dev/null \
-            | grep -q tbox-live-customize-marker; then
-            echo "::error::beta (no live_customize) unexpectedly contains the marker"
-            exit 1
-          fi
-          echo "live_customize marker present in alpha, absent in beta"
-          rm -f /tmp/alpha.sfs /tmp/beta.sfs
+        run: just ci-iso-assert-live-customize
 
       - name: build dedup ISO
-        run: sudo ./tacklebox build fixtures/iso-dedup-2env.json --iso /mnt/tbx/dedup.iso -b /mnt/tbx
+        run: just ci-iso-build iso-dedup-2env dedup
 
       - name: verify dedup ISO
-        run: ./tacklebox verify /mnt/tbx/dedup.iso
+        run: just ci-iso-verify dedup
 
       # The fixture envs differ by one marker file, so the combined squashfs
       # should be roughly half the size of two per-env squashfs files. The
       # 90% bound is deliberately loose — it catches "dedup silently does
       # nothing" without being flaky about compression noise.
       - name: assert dedup shrinks the ISO
-        run: |
-          per_env=$(stat -c%s /mnt/tbx/smoke.iso)
-          dedup=$(stat -c%s /mnt/tbx/dedup.iso)
-          echo "per-env ISO: ${per_env} bytes; dedup ISO: ${dedup} bytes"
-          if [ "$dedup" -ge $((per_env * 9 / 10)) ]; then
-            echo "::error::dedup ISO (${dedup}) is not meaningfully smaller than per-env ISO (${per_env})"
-            exit 1
-          fi
+        run: just ci-iso-assert-dedup-shrinks
 
       # ── 6-env dedup smoke ────────────────────────────
 
       - name: build 6-env dedup ISO
-        run: sudo ./tacklebox build fixtures/iso-dedup-6env.json --iso /mnt/tbx/dedup-6env.iso -b /mnt/tbx
+        run: just ci-iso-build iso-dedup-6env dedup-6env
 
       - name: verify 6-env dedup ISO
-        run: ./tacklebox verify /mnt/tbx/dedup-6env.iso
+        run: just ci-iso-verify dedup-6env
 
       # 6 nearly-identical envs should produce an ISO barely larger than 2.
       # Bound: 6-env < 2 × 2-env (very conservative, real ratio is much
       # tighter — each additional env adds only a marker file worth of
       # unique content).
       - name: assert 6-env dedup scales
-        run: |
-          dedup2=$(stat -c%s /mnt/tbx/dedup.iso)
-          dedup6=$(stat -c%s /mnt/tbx/dedup-6env.iso)
-          echo "2-env dedup ISO: ${dedup2} bytes; 6-env dedup ISO: ${dedup6} bytes"
-          if [ "$dedup6" -ge $((dedup2 * 2)) ]; then
-            echo "::error::6-env ISO (${dedup6}) is too large — expected ≤ 2× 2-env (${dedup2})"
-            exit 1
-          fi
-          echo "6-env/dedup2 ratio: $(echo "scale=2; $dedup6 / $dedup2" | bc)"
+        run: just ci-iso-assert-6env-scales
 
       # ── delta layout smoke ──────────────────────────────────────────────
       # dedup_layout=delta: alpha is the base squashfs, beta boots
@@ -488,77 +365,29 @@ jobs:
       # be tiny (fixtures differ by one marker file) and must contain the
       # marker — proof the tree-diff caught the divergent file.
       - name: build delta ISO
-        run: sudo ./tacklebox build fixtures/iso-delta-2env.json --iso /mnt/tbx/delta.iso -b /mnt/tbx
+        run: just ci-iso-build iso-delta-2env delta
 
       - name: verify delta ISO
-        run: ./tacklebox verify /mnt/tbx/delta.iso
+        run: just ci-iso-verify delta
 
       - name: assert delta is small and carries the marker
-        run: |
-          xorriso -osirrox on -indev /mnt/tbx/delta.iso \
-            -extract /LiveOS/beta.delta.sfs /tmp/beta.delta.sfs
-          size=$(stat -c%s /tmp/beta.delta.sfs)
-          echo "beta.delta.sfs: ${size} bytes"
-          # The fixtures differ by one marker file (plus initramfs-adjacent
-          # noise); anything over 64 MiB means the diff degenerated into a
-          # near-full copy.
-          if [ "$size" -ge $((64 * 1024 * 1024)) ]; then
-            echo "::error::beta.delta.sfs (${size}B) is far too large for a one-file diff"
-            exit 1
-          fi
-          unsquashfs -l /tmp/beta.delta.sfs usr/share/tbox-env-marker \
-            | grep -q tbox-env-marker \
-            || { echo "::error::delta squashfs missing the env marker diff"; exit 1; }
-          rm -f /tmp/beta.delta.sfs
+        run: just ci-iso-assert-delta
 
       # ── offline store smoke ─────────────────────────────────────────────
       # Builds a dedup ISO with offline_payloads that embeds container images
       # as a separate store.squashfs.img in /LiveOS. The boot-time
       # tbox-offline-store.mount unit picks this up for air-gapped installs.
       - name: build offline-store ISO
-        run: |
-          sudo ./tacklebox build fixtures/iso-offline.json \
-            --iso /mnt/tbx/offline.iso -b /mnt/tbx
+        run: just ci-iso-build iso-offline offline
 
       - name: verify offline-store ISO
-        run: ./tacklebox verify /mnt/tbx/offline.iso
+        run: just ci-iso-verify offline
 
       # Boot all three ISOs in parallel to keep CI time under the 60-min
       # budget. Each QEMU VM gets 2G RAM (enough for a non-interactive
       # boot to login prompt). Output tee'd to step log + per-ISO file.
       - name: boot smoke, all ISOs (parallel)
-        run: |
-          fail=0
-
-          # 6-env dedup ISO: gamma env with tbox-root pivot
-          ( QEMU_LOG=qemu-iso-6env.log ./scripts/test-boot.sh /mnt/tbx/dedup-6env.iso 600 \
-              "tacklebox.env=gamma" "Tacklebox: rebased OK" \
-              2>&1 | tee -a qemu-iso-6env.out ) &
-          pid1=$!
-
-          # per-env ISO: beta env (non-dedup path)
-          ( QEMU_LOG=qemu-iso-perenv.log ./scripts/test-boot.sh /mnt/tbx/smoke.iso 600 \
-              "tacklebox.env=beta" \
-              2>&1 | tee -a qemu-iso-perenv.out ) &
-          pid2=$!
-
-          # dedup ISO: alpha env with tbox-root pivot
-          ( QEMU_LOG=qemu-iso-dedup.log ./scripts/test-boot.sh /mnt/tbx/dedup.iso 600 \
-              "tacklebox.env=alpha" "Tacklebox: rebased OK" \
-              2>&1 | tee -a qemu-iso-dedup.out ) &
-          pid3=$!
-
-          # delta ISO: beta env boots base + beta.delta.sfs lowerdir stack
-          ( QEMU_LOG=qemu-iso-delta.log ./scripts/test-boot.sh /mnt/tbx/delta.iso 600 \
-              "tacklebox.env=beta" "tacklebox.live.delta=beta.delta.sfs" \
-              2>&1 | tee -a qemu-iso-delta.out ) &
-          pid4=$!
-
-          wait $pid1 || { echo "::error::6-env dedup ISO boot failed"; fail=1; }
-          wait $pid2 || { echo "::error::per-env ISO boot failed"; fail=1; }
-          wait $pid3 || { echo "::error::dedup ISO boot failed"; fail=1; }
-          wait $pid4 || { echo "::error::delta ISO boot failed"; fail=1; }
-          exit $fail
+        run: just ci-iso-boot-all
 
       - name: upload boot logs
         if: failure()
@@ -570,14 +399,11 @@ jobs:
 
       - name: artifact summary
         if: always()
-        run: |
-          echo '## iso-smoke artefacts' >> "$GITHUB_STEP_SUMMARY"
-          ls -lh /mnt/tbx/*.iso 2>/dev/null | awk '{print "- `" $NF "` (" $5 ")"}' >> "$GITHUB_STEP_SUMMARY"
-          for log in qemu-iso-perenv.log qemu-iso-dedup.log qemu-iso-6env.log; do
-            if [ -f "$log" ]; then
-              echo "### $log (tail)" >> "$GITHUB_STEP_SUMMARY"
-              echo '```' >> "$GITHUB_STEP_SUMMARY"
-              tail -n 30 "$log" >> "$GITHUB_STEP_SUMMARY"
-              echo '```' >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+        run: just ci-summary-iso-smoke
+
+      # Last step, always: stop QEMU, unmount and detach loop devices, remove
+      # the labelled fixture images/containers and ISOs THIS job created.
+      # Scoped by ownership marker + CI_OWNER label; never a global prune.
+      - name: cleanup (job-owned QEMU, mounts, images, scratch)
+        if: always()
+        run: just ci-cleanup
