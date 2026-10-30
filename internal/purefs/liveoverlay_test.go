@@ -270,10 +270,18 @@ func TestVerifyLiveOverlayBase(t *testing.T) {
 		{"matching-actual", &oci.Manifest{Annotations: map[string]string{LiveOverlayActualBaseDigestAnnotation: base}}, base, ""},
 		{"matching-legacy", &oci.Manifest{Annotations: map[string]string{LiveOverlayBaseDigestAnnotation: base}}, base, ""},
 		{
-			"actual-spelling-wins",
+			"conflicting-keys-refused",
 			&oci.Manifest{Annotations: map[string]string{
 				LiveOverlayActualBaseDigestAnnotation: base,
-				LiveOverlayBaseDigestAnnotation:       "sha256:stale",
+				LiveOverlayBaseDigestAnnotation:       "sha256:other-base",
+			}},
+			base, OverlayReasonBaseDigestMismatch,
+		},
+		{
+			"both-keys-agree",
+			&oci.Manifest{Annotations: map[string]string{
+				LiveOverlayActualBaseDigestAnnotation: base,
+				LiveOverlayBaseDigestAnnotation:       base,
 			}},
 			base, "",
 		},
@@ -304,6 +312,13 @@ func TestVerifyLiveOverlayBase(t *testing.T) {
 			if mismatch.Reason != tc.wantReason {
 				t.Errorf("reason = %q, want %q", mismatch.Reason, tc.wantReason)
 			}
+			if tc.name == "conflicting-keys-refused" {
+				msg := err.Error()
+				if mismatch.Want != base || mismatch.Got != base || mismatch.LegacyGot != "sha256:other-base" || !strings.Contains(msg, base) || !strings.Contains(msg, "sha256:other-base") {
+					t.Errorf("conflict must name both bindings: %+v (%s)", mismatch, msg)
+				}
+				return
+			}
 			if mismatch.Want != tc.actual || (tc.wantReason == OverlayReasonBaseDigestMismatch && mismatch.Got != "sha256:other-base") {
 				t.Errorf("want/got = %s/%s, inconsistent selected base or overlay annotation", mismatch.Want, mismatch.Got)
 			}
@@ -323,7 +338,9 @@ func TestOverlayBindingPrecedesFetchAndRootMutation(t *testing.T) {
 		{"mismatched", base, "", OverlayReasonBaseDigestMismatch, map[string]string{LiveOverlayBaseDigestAnnotation: stale}},
 		{"missing-selected-base", "", "", OverlayReasonBaseDigestMissing, map[string]string{LiveOverlayBaseDigestAnnotation: base}},
 		{"caller-pin-mismatch", base, stale, OverlayReasonBaseDigestMismatch, map[string]string{LiveOverlayBaseDigestAnnotation: base}},
-		{"actual-binding-wins-over-legacy", base, "", OverlayReasonBaseDigestMismatch, map[string]string{LiveOverlayActualBaseDigestAnnotation: stale, LiveOverlayBaseDigestAnnotation: base}},
+		{"conflicting-bindings-actual-matches", base, "", OverlayReasonBaseDigestMismatch, map[string]string{LiveOverlayActualBaseDigestAnnotation: base, LiveOverlayBaseDigestAnnotation: stale}},
+		{"conflicting-bindings-legacy-matches", base, "", OverlayReasonBaseDigestMismatch, map[string]string{LiveOverlayActualBaseDigestAnnotation: stale, LiveOverlayBaseDigestAnnotation: base}},
+		{"matching-both-keys", base, "", "", map[string]string{LiveOverlayActualBaseDigestAnnotation: base, LiveOverlayBaseDigestAnnotation: base}},
 		{"matching", base, base, "", map[string]string{LiveOverlayActualBaseDigestAnnotation: base}},
 		{"matching-legacy-key", base, "", "", map[string]string{LiveOverlayBaseDigestAnnotation: base}},
 	} {
