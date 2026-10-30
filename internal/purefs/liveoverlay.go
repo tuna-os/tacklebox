@@ -46,6 +46,9 @@ type OverlayMismatchError struct {
 	Reason string
 	Want   string
 	Got    string
+	// LegacyGot is the legacy base-digest annotation when it conflicts with
+	// the actual-base-digest annotation carried in Got.
+	LegacyGot string
 }
 
 func (e *OverlayMismatchError) Error() string {
@@ -58,6 +61,9 @@ func (e *OverlayMismatchError) Error() string {
 	case OverlayReasonDigestMismatch:
 		return fmt.Sprintf("live overlay digest mismatch: got %s want %s", e.Got, e.Want)
 	case OverlayReasonBaseDigestMismatch:
+		if e.LegacyGot != "" {
+			return fmt.Sprintf("live overlay base digest mismatch: conflicting base bindings %s=%s and %s=%s", LiveOverlayActualBaseDigestAnnotation, e.Got, LiveOverlayBaseDigestAnnotation, e.LegacyGot)
+		}
 		return fmt.Sprintf("live overlay base digest mismatch: overlay built against %s, selected base is %s", e.Got, e.Want)
 	case OverlayReasonBaseDigestMissing:
 		return fmt.Sprintf("live overlay base digest binding missing (selected base %s)", e.Want)
@@ -209,7 +215,16 @@ func VerifyLiveOverlayBase(overlayManifest *oci.Manifest, actualBaseDigest strin
 	if want == "" {
 		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMissing}
 	}
-	got := liveOverlayBaseAnnotation(overlayManifest)
+	// Either spelling may bind the base, but two bindings that disagree are a
+	// mismatch (as in the tunaOS catalog contract), never a precedence choice.
+	got := strings.TrimSpace(overlayManifest.Annotations[LiveOverlayActualBaseDigestAnnotation])
+	legacy := strings.TrimSpace(overlayManifest.Annotations[LiveOverlayBaseDigestAnnotation])
+	if got != "" && legacy != "" && got != legacy {
+		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMismatch, Want: want, Got: got, LegacyGot: legacy}
+	}
+	if got == "" {
+		got = legacy
+	}
 	if got == "" {
 		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMissing, Want: want}
 	}
