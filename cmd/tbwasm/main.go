@@ -610,6 +610,15 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 	if v := opts.Get("liveMarker"); v.Type() == js.TypeString {
 		liveMarker = v.String()
 	}
+	// engineDigest is the host's sha256 over the exact tbox.wasm bytes it
+	// instantiated. When present, the build must embed a complete
+	// etc/tunaos/live-source.json receipt or refuse.
+	engineDigest := ""
+	if v := opts.Get("engineDigest"); v.Type() == js.TypeString {
+		engineDigest = v.String()
+	} else if v.Type() != js.TypeUndefined && v.Type() != js.TypeNull {
+		reqErr = errors.Join(reqErr, fmt.Errorf("engineDigest must be a string"))
+	}
 	return operationPromise(func() (result any, buildErr error) {
 		cleanup := func(arena *opfsArena) {
 			if arena != nil {
@@ -708,6 +717,13 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 				return nil, fmt.Errorf("apply live overlay: %w", err)
 			}
 			observed.Overlay = *overlayObserved
+		}
+		if engineDigest != "" {
+			if err := purefs.WriteLiveSourceReceipt(root, store, purefs.NewLiveSourceInputs(
+				activeReq, gImage, gManifestDigest, platform, &observed.Overlay, engineDigest,
+			)); err != nil {
+				return nil, err
+			}
 		}
 		emitProgress("overlay", 1, 1)
 		reportMem("overlay")

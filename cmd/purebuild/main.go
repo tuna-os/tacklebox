@@ -115,6 +115,7 @@ type pureBuildConfig struct {
 	Strict          bool
 	Overlays        []string
 	LiveMarker      string
+	EngineDigest    string // sha256 of this executable; set → receipt required
 	Packages        []string
 	Flatpaks        []string
 	ExtraRun        []string
@@ -274,6 +275,7 @@ func main() {
 		strict      = flag.Bool("strict", false, "fail instead of warn when the image's flatpak preinstall.d asks for a flatpak the rootfs does not carry")
 		overlays    stringList
 		liveMarker  = flag.String("live-marker", "", "readiness string the baked tbox-live-ready.service prints to the serial console (default "+purefs.DefaultLiveMarker+")")
+		liveSource  = flag.Bool("live-source-receipt", false, "complete the overlay's etc/tunaos/live-source.json with the base, overlay and engine digests this build used (engine = sha256 of this executable); refuses if any is unavailable")
 	)
 	flag.Var(&overlays, "overlay", "uncompressed tar applied onto the rootfs after the live setup, with layer semantics (repeatable; applied in order). For test harnesses that must add, say, an SSH key to otherwise-shipped media without rebuilding the image")
 	flag.Parse()
@@ -296,6 +298,13 @@ func main() {
 		Strict:      *strict,
 		Overlays:    overlays,
 		LiveMarker:  *liveMarker,
+	}
+	if *liveSource {
+		digest, err := executableDigest()
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.EngineDigest = digest
 	}
 	if *requestPath != "" {
 		if _, err := loadAndApplyBuildRequest(*requestPath, &cfg); err != nil {
@@ -487,6 +496,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	// skip curated TunaOS overlay grafting. A BuildRequest pinning an
 	// overlay digest makes the overlay required: a missing overlay or a
 	// digest mismatch is a blocker, never a silent uncustomized baseline.
+	var overlayObserved *purefs.OverlayObservation
 	if cfg.Request != nil && cfg.Request.CustomImage {
 		log.Printf(">>> custom image %s — skipping curated TunaOS live overlay", normImage)
 	} else {
@@ -496,7 +506,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 			expectedOverlay = strings.TrimSpace(cfg.Request.ResolvedInputs.LiveOverlayDigest)
 			expectedOverlayBase = strings.TrimSpace(cfg.Request.ResolvedInputs.LiveOverlayBaseDigest)
 		}
-		applied, _, _, err := purefs.GraftLiveOverlayObserved(root, store, client, normImage, manifest, purefs.GraftOptions{
+		applied, _, observed, err := purefs.GraftLiveOverlayObserved(root, store, client, normImage, manifest, purefs.GraftOptions{
 			Platform:              cfg.Platform,
 			ExpectedOverlayDigest: expectedOverlay,
 			BaseDigest:            resolvedDigest,
@@ -512,6 +522,13 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		} else {
 			log.Printf(">>> no live overlay for %s — plain baseline", normImage)
 		}
+		overlayObserved = observed
+	}
+	if cfg.EngineDigest != "" {
+		if err := writeLiveSourceReceipt(root, store, cfg, resolvedDigest, overlayObserved); err != nil {
+			return err
+		}
+		log.Printf(">>> live-source receipt written (engine %s)", cfg.EngineDigest)
 	}
 
 	if err := purefs.EnsureLiveUser(root, store, "liveuser", 1000); err != nil {
