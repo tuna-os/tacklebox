@@ -280,6 +280,9 @@ func main() {
 	flag.Var(&overlays, "overlay", "uncompressed tar applied onto the rootfs after the live setup, with layer semantics (repeatable; applied in order). For test harnesses that must add, say, an SSH key to otherwise-shipped media without rebuilding the image")
 	flag.Parse()
 	if *ddi != "" {
+		if *liveSource {
+			log.Fatal("--live-source-receipt: --ddi media has no verified overlay to bind; refusing")
+		}
 		buildFromDdiForPlatform(*ddi, *ddiStem, *label, *workdir, *out, *platform)
 		return
 	}

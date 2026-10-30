@@ -13,7 +13,12 @@ import (
 
 // executableDigest hashes the running purebuild binary, as tunaOS
 // scripts/lib/tacklebox.sh hashes the tacklebox binary for native media.
+// /proc/self/exe names the mapped image even if the path was replaced
+// after exec; os.Executable is the fallback where procfs is absent.
 func executableDigest() (string, error) {
+	if d, err := fileDigest("/proc/self/exe"); err == nil {
+		return d, nil
+	}
 	path, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("engine digest: locate executable: %w", err)
@@ -38,6 +43,6 @@ func fileDigest(path string) (string, error) {
 // same input mapping, same writer, same refusals.
 func writeLiveSourceReceipt(root *oci.Node, store oci.BlobStore, cfg *pureBuildConfig, baseDigest string, overlay *purefs.OverlayObservation) error {
 	return purefs.WriteLiveSourceReceipt(root, store, purefs.NewLiveSourceInputs(
-		cfg.Request, cfg.Image, baseDigest, cfg.Platform, overlay, cfg.EngineDigest,
+		cfg.Request, purefs.NormalizeImageRef(cfg.Image), baseDigest, cfg.Platform, overlay, cfg.EngineDigest,
 	))
 }

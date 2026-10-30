@@ -613,9 +613,11 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 	// engineDigest is the host's sha256 over the exact tbox.wasm bytes it
 	// instantiated. When present, the build must embed a complete
 	// etc/tunaos/live-source.json receipt or refuse.
-	engineDigest := ""
+	engineDigest, wantReceipt := "", false
 	if v := opts.Get("engineDigest"); v.Type() == js.TypeString {
-		engineDigest = v.String()
+		// Present means requested: an empty or malformed digest is refused
+		// by the writer rather than silently skipping the receipt.
+		engineDigest, wantReceipt = v.String(), true
 	} else if v.Type() != js.TypeUndefined && v.Type() != js.TypeNull {
 		reqErr = errors.Join(reqErr, fmt.Errorf("engineDigest must be a string"))
 	}
@@ -718,7 +720,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			}
 			observed.Overlay = *overlayObserved
 		}
-		if engineDigest != "" {
+		if wantReceipt {
 			if err := purefs.WriteLiveSourceReceipt(root, store, purefs.NewLiveSourceInputs(
 				activeReq, gImage, gManifestDigest, platform, &observed.Overlay, engineDigest,
 			)); err != nil {

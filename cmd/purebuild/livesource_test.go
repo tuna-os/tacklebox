@@ -117,6 +117,25 @@ func TestLiveSourceReceipt_NativeMatchesWasmExceptEngine(t *testing.T) {
 	}
 }
 
+// Without a build request the native --image flag is the raw reference
+// while tbwasm passes its normalized gImage; both must record the same one.
+func TestLiveSourceReceipt_NoRequestBaseImageMatchesWasm(t *testing.T) {
+	cfg := &pureBuildConfig{Image: "ghcr.io/tuna-os/skipjack:gnome", Platform: "linux/amd64", EngineDigest: lsWasm}
+	nativeRoot, nativeStore := lsTree(t, true)
+	if err := writeLiveSourceReceipt(nativeRoot, nativeStore, cfg, lsBase, lsApplied()); err != nil {
+		t.Fatal(err)
+	}
+	wasmRoot, wasmStore := lsTree(t, true)
+	if err := purefs.WriteLiveSourceReceipt(wasmRoot, wasmStore, purefs.NewLiveSourceInputs(
+		nil, purefs.NormalizeImageRef(cfg.Image), lsBase, "linux/amd64", lsApplied(), lsWasm,
+	)); err != nil {
+		t.Fatal(err)
+	}
+	if n, w := lsRead(t, nativeRoot, nativeStore)["base_image"], lsRead(t, wasmRoot, wasmStore)["base_image"]; n != w {
+		t.Fatalf("base_image: native %q, wasm %q", n, w)
+	}
+}
+
 func TestLiveSourceReceipt_NativeRefusesLikeWasm(t *testing.T) {
 	engine, err := executableDigest()
 	if err != nil {
