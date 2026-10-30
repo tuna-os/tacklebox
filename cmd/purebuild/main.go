@@ -496,21 +496,17 @@ func runPureBuild(cfg *pureBuildConfig) error {
 			expectedOverlay = strings.TrimSpace(cfg.Request.ResolvedInputs.LiveOverlayDigest)
 			expectedOverlayBase = strings.TrimSpace(cfg.Request.ResolvedInputs.LiveOverlayBaseDigest)
 		}
-		applied, overlayManifest, err := purefs.GraftLiveOverlayWithOptions(root, store, client, normImage, manifest, purefs.GraftOptions{
+		applied, _, _, err := purefs.GraftLiveOverlayObserved(root, store, client, normImage, manifest, purefs.GraftOptions{
 			Platform:              cfg.Platform,
 			ExpectedOverlayDigest: expectedOverlay,
+			BaseDigest:            resolvedDigest,
+			ExpectedBaseDigest:    expectedOverlayBase,
 			Progress:              func(i, n int) { fmt.Printf("\r    overlay layer %d/%d", i+1, n) },
 		})
 		if err != nil {
 			return fmt.Errorf("apply live overlay: %w", err)
 		}
-		if applied && overlayManifest != nil {
-			if expectedOverlayBase != "" && expectedOverlayBase != resolvedDigest {
-				return &purefs.OverlayMismatchError{Reason: purefs.OverlayReasonBaseDigestMismatch, Want: resolvedDigest, Got: expectedOverlayBase}
-			}
-			if verr := purefs.VerifyLiveOverlayBase(manifest, overlayManifest, resolvedDigest); verr != nil {
-				return fmt.Errorf("live overlay base verification: %w", verr)
-			}
+		if applied {
 			fmt.Println()
 			log.Printf(">>> live overlay grafted")
 		} else {

@@ -685,7 +685,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		}
 
 		// Live-overlay parity artifact (tunaOS#673) — see
-		// purefs.GraftLiveOverlayForPlatform. Shared with cmd/purebuild so
+		// purefs.GraftLiveOverlayObserved. Shared with cmd/purebuild so
 		// the native build produces the byte-identical artifact this one
 		// does; that shared call is the only thing making the two paths
 		// comparable. Custom images (CustomImage: true) do not graft a
@@ -698,24 +698,16 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 				expectedOverlay = strings.TrimSpace(activeReq.ResolvedInputs.LiveOverlayDigest)
 				expectedOverlayBase = strings.TrimSpace(activeReq.ResolvedInputs.LiveOverlayBaseDigest)
 			}
-			applied, overlayManifest, overlayObserved, err := purefs.GraftLiveOverlayObserved(root, store, gClient, gImage, gManifest, purefs.GraftOptions{
+			_, _, overlayObserved, err := purefs.GraftLiveOverlayObserved(root, store, gClient, gImage, gManifest, purefs.GraftOptions{
 				Platform:              platform,
 				ExpectedOverlayDigest: expectedOverlay,
+				BaseDigest:            gManifestDigest,
+				ExpectedBaseDigest:    expectedOverlayBase,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("apply live overlay: %w", err)
 			}
 			observed.Overlay = *overlayObserved
-			if applied && overlayManifest != nil {
-				if expectedOverlayBase != "" && expectedOverlayBase != gManifestDigest {
-					return nil, &purefs.OverlayMismatchError{Reason: purefs.OverlayReasonBaseDigestMismatch, Want: gManifestDigest, Got: expectedOverlayBase}
-				}
-				matched, err := purefs.VerifyObservedOverlayBase(gManifest, overlayManifest, gManifestDigest)
-				if err != nil {
-					return nil, fmt.Errorf("live overlay base verification: %w", err)
-				}
-				observed.Overlay.BaseAnnotationMatched = matched
-			}
 		}
 		emitProgress("overlay", 1, 1)
 		reportMem("overlay")
