@@ -617,8 +617,16 @@ if [ -f "/usr/lib/modules/$kver/devicetree" ]; then
 fi
 if [ -d /usr/lib/bootc/kargs.d ]; then
   mkdir /dest/kargs.d
-  for f in /usr/lib/bootc/kargs.d/*.toml; do
-    [ -f "$f" ] || continue
+  for f in /usr/lib/bootc/kargs.d/*.toml /usr/lib/bootc/kargs.d/.?*.toml; do
+    if [ ! -f "$f" ]; then
+      # Unmatched glob: skip. Anything else that exists (directory,
+      # broken link) is refused, as bootc and the pure paths refuse it.
+      if [ -e "$f" ] || [ -L "$f" ]; then
+        echo "kargs.d/${f##*/}: not a regular file" >&2
+        exit 1
+      fi
+      continue
+    fi
     cp "$f" /dest/kargs.d/
   done
 fi
