@@ -108,20 +108,22 @@ do not want to start from an empty file.
 
 ### kernel arguments and device trees
 
-Every boot entry gets, in this order: the arguments tacklebox needs to boot
-the env, then the arguments the env's own image declares in
-`/usr/lib/bootc/kargs.d`, then the recipe's `kargs`. Tacklebox reads
-`kargs.d` the way bootc does when it installs that image: the `*.toml` files
-in name order, each file's `kargs` list, and a file with
-`match-architectures` only when it names the image's architecture
-(`x86_64`, `aarch64`, …). An unknown key in one of these files fails the
+Every boot entry gets arguments in this order. First come the arguments
+tacklebox needs to boot the env. Next come the arguments that the env's own
+image declares in `/usr/lib/bootc/kargs.d`. Last come the recipe's `kargs`.
+
+Tacklebox reads `kargs.d` the way bootc does when it installs that image. It
+reads the `*.toml` files in name order and takes each file's `kargs` list. It
+uses a file with `match-architectures` only when that file names the image's
+architecture (`x86_64`, `aarch64`, …). An unknown key in one of these files fails the
 build, as it fails `bootc install`. Each env reads its own image, so envs
 with different hardware arguments can share one media.
 
-When an image ships a device tree for its kernel at
-`/usr/lib/modules/<kver>/devicetree` (the file ostree loads for installed
-systems), tacklebox copies it next to the env's kernel and initrd on the
-ESP and adds a `devicetree` line to the env's boot entry. Images without one
+An image can ship a device tree for its kernel at
+`/usr/lib/modules/<kver>/devicetree`. Ostree loads this file for installed
+systems. If the image has this file, tacklebox copies it next to the env's
+kernel and initrd on the ESP. Tacklebox then adds a `devicetree` line to the
+env's boot entry. Images without one
 get the same entries as before.
 
 ### modes
