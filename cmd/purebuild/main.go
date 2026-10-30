@@ -688,6 +688,16 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		initrdOnDisk = combined
 	}
 
+	// The image's own kernel arguments (bootc kargs.d) and the device tree
+	// it ships for the kernel go into the live entry, as bootc and ostree
+	// give them to the installed system. Read before the EROFS pass, which
+	// consumes the blob store.
+	imageKargs, err := purefs.ImageKargs(root, store, effArch)
+	if err != nil {
+		return err
+	}
+	dtbTreePath := purefs.KernelDevicetree(root, kver)
+
 	// Resolve the boot chain from the payload binaries matching the
 	// requested architecture — a multi-arch tree must not boot the wrong
 	// arch's loader. The host fallback likewise follows the target arch.
@@ -712,6 +722,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	for _, kp := range []string{
 		"usr/lib/modules/" + kver + "/vmlinuz",
 		"usr/lib/modules/" + kver + "/initramfs.img",
+		dtbTreePath,
 		chain.SdBoot, chain.Shim, chain.Grub, chain.MokMgr,
 	} {
 		if kp == "" {
@@ -745,27 +756,30 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		return err
 	}
 
-	kargs := fmt.Sprintf(
+	kargs := purefs.AppendKargs(fmt.Sprintf(
 		"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
 			" tacklebox.live.overlay.size=8192 enforcing=0"+
 			" tacklebox.env=%s console=ttyS0,115200n8",
 		cfg.Label, sfsName, envID,
-	)
+	), imageKargs)
 	kernelPath := "/images/pxeboot/" + envID + "/vmlinuz"
 	initrdPath := "/images/pxeboot/" + envID + "/initrd.img"
+	devicetreePath := ""
+	if dtbTreePath != "" {
+		devicetreePath = "/images/pxeboot/" + envID + "/devicetree"
+	}
 
 	var espExtras []purefs.EspFile
 	switch chain.Kind {
 	case "sdboot":
-		entry := fmt.Sprintf("title TunaOS %s (live)\nlinux %s\ninitrd %s\noptions %s\n",
-			envID, kernelPath, initrdPath, kargs)
+		entry := purefs.LiveBLSEntry("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
 		bootDiskFiles = []bootDiskFile{{"/EFI/BOOT/" + bootLoaderName, sdBootDisk}}
 		espExtras = []purefs.EspFile{
 			{Path: "/loader/loader.conf", Source: purefs.StringSource("timeout 3\n")},
 			{Path: "/loader/entries/" + envID + ".conf", Source: purefs.StringSource(entry)},
 		}
 	case "grub2":
-		grubCfg := purefs.LiveGrubCfg("TunaOS "+envID+" (live)", kernelPath, initrdPath, kargs)
+		grubCfg := purefs.LiveGrubCfg("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
 		cfgPath := filepath.Join(cfg.Workdir, "grub.cfg")
 		if err := os.WriteFile(cfgPath, []byte(grubCfg), 0o644); err != nil {
 			return err
@@ -799,6 +813,13 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		purefs.EspFile{Path: kernelPath, Source: kernelSrc},
 		purefs.EspFile{Path: initrdPath, Source: initrdSource},
 	)
+	var dtbSrc func() (io.ReadCloser, error)
+	if dtbTreePath != "" {
+		if dtbSrc, err = blob(dtbTreePath); err != nil {
+			return err
+		}
+		espFiles = append(espFiles, purefs.EspFile{Path: devicetreePath, Source: dtbSrc})
+	}
 	if err := purefs.WriteEsp(espPath, espFiles); err != nil {
 		return err
 	}
@@ -817,6 +838,11 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		inputs = append(inputs,
 			purefs.IsoInput{Path: kernelPath, Size: kn.Size, Source: kernelSrc},
 			purefs.IsoInput{Path: initrdPath, Size: mustStatSize(initrdOnDisk), Source: initrdSource},
+		)
+		if dtbTreePath != "" {
+			inputs = append(inputs, purefs.IsoInput{Path: devicetreePath, Size: root.Lookup(dtbTreePath).Size, Source: dtbSrc})
+		}
+		inputs = append(inputs,
 			purefs.IsoInput{Path: "/LiveOS/" + sfsName, Size: mustStatSize(sfsPath), Source: purefs.FileSource(sfsPath)},
 		)
 		if len(cfg.Flatpaks) > 0 {
@@ -973,6 +999,11 @@ func assembleWithXorriso(workdir, out, label, envID, espPath, sfsPath, sfsName s
 	// workdir if present.
 	if err := place(filepath.Join(px, "initrd.img"), initrdOnDisk); err != nil {
 		return err
+	}
+	if dtb := purefs.KernelDevicetree(root, kver); dtb != "" {
+		if err := place(filepath.Join(px, "devicetree"), root.Lookup(dtb).Ref); err != nil {
+			return err
+		}
 	}
 	if err := place(filepath.Join(isoRoot, "LiveOS", sfsName), sfsPath); err != nil {
 		return err
