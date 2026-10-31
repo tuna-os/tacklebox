@@ -44,6 +44,9 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+
 concurrency:
   group: pure-iso-${{ github.event.inputs.image }}
   cancel-in-progress: true
@@ -55,8 +58,6 @@ jobs:
     # edition plus a 900s boot gate needs headroom over the 60 iso-smoke
     # gets.
     timeout-minutes: 120
-    permissions:
-      contents: read
     env:
       # Job-level `if:` cannot see secrets, so the fork/no-secrets case is
       # detected through env like the other publishing workflows here.
