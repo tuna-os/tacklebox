@@ -26,6 +26,12 @@ installkernel() {
 install() {
     inst_hook cmdline 30 "$moddir/parse-tbox-live.sh"
     inst_script "$moddir/tbox-live-root.sh" "/sbin/tbox-live-root"
+    # Runtime policy is inert unless explicitly required by a candidate's
+    # initrd file or kernel argument. Driver/firmware preparation is a separate
+    # build-profile contract; absence must fail closed at runtime.
+    inst_script "$moddir/tbox-x13s-adsp.sh" "/lib/tbox-x13s-adsp.sh"
+    inst_hook pre-udev 30 "$moddir/tbox-x13s-adsp-pre-udev.sh"
+    inst_multiple cat grep modprobe readlink rm sed sleep tr udevadm
     if dracut_module_included "systemd"; then
         inst_script "$moddir/tbox-live-generator.sh" \
             "${systemdutildir}/system-generators/tbox-live-generator"
