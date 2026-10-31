@@ -33,6 +33,7 @@
 package purefs
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -68,6 +69,9 @@ const (
 	// signal file. An empty file: Fisherman's live probe treats existence
 	// as the opt-in, never content.
 	LiveISOModeTreePath = "etc/bootc-installer/live-iso-mode"
+	// InstallerRecipeTreePath is the optional frontend configuration shipped
+	// by the live overlay, not Fisherman's generated installation request.
+	InstallerRecipeTreePath = "etc/bootc-installer/recipe.json"
 	// defaultOCIManifestMediaType is recorded in the synthesized index when
 	// the resolved manifest carries no media type of its own.
 	defaultOCIManifestMediaType = "application/vnd.oci.image.manifest.v1+json"
@@ -166,29 +170,7 @@ func normalizeMediaPlatform(platform string) (string, error) {
 // path (OfflineLayoutLivePath); platform is "os/arch" (a bare arch is
 // accepted); catalogVersion/qualificationID are opaque provenance.
 func WriteMediaInputJSON(image, platformManifestDigest, indexDigest, configDigest, ociLayoutPath, targetImgref, platform, catalogVersion, qualificationID string) ([]byte, error) {
-	if strings.TrimSpace(image) == "" {
-		return nil, fmt.Errorf("media input image is empty")
-	}
-	if !validOfflineDigest(platformManifestDigest) {
-		return nil, fmt.Errorf("media input platformManifestDigest %q must be sha256:<64 lowercase hex>", platformManifestDigest)
-	}
-	if indexDigest != "" && !validOfflineDigest(indexDigest) {
-		return nil, fmt.Errorf("media input indexDigest %q must be sha256:<64 lowercase hex>", indexDigest)
-	}
-	if configDigest != "" && !validOfflineDigest(configDigest) {
-		return nil, fmt.Errorf("media input configDigest %q must be sha256:<64 lowercase hex>", configDigest)
-	}
-	if ociLayoutPath == "" || !path.IsAbs(ociLayoutPath) {
-		return nil, fmt.Errorf("media input ociLayoutPath %q must be absolute", ociLayoutPath)
-	}
-	if strings.TrimSpace(targetImgref) == "" {
-		return nil, fmt.Errorf("media input targetImgref is empty (image %q needs a day-2 update ref)", image)
-	}
-	platform, err := normalizeMediaPlatform(platform)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(offlineMediaInput{
+	in := offlineMediaInput{
 		SchemaVersion:          OfflineMediaSchemaVersion,
 		Kind:                   OfflineMediaKind,
 		Image:                  image,
@@ -200,7 +182,39 @@ func WriteMediaInputJSON(image, platformManifestDigest, indexDigest, configDiges
 		Platform:               platform,
 		CatalogVersion:         catalogVersion,
 		QualificationID:        qualificationID,
-	})
+	}
+	normalizedPlatform, err := validateOfflineMediaInput(&in)
+	if err != nil {
+		return nil, err
+	}
+	in.Platform = normalizedPlatform
+	return json.Marshal(in)
+}
+
+// validateOfflineMediaInput is the shared field validation for rendering and
+// finalizing MediaInput. It returns the existing platform normalization without
+// modifying the document: the renderer uses it, while finalization preserves
+// the supplied descriptor bytes. Schema/kind are checked separately on input.
+func validateOfflineMediaInput(in *offlineMediaInput) (string, error) {
+	if strings.TrimSpace(in.Image) == "" {
+		return "", fmt.Errorf("media input image is empty")
+	}
+	if !validOfflineDigest(in.PlatformManifestDigest) {
+		return "", fmt.Errorf("media input platformManifestDigest %q must be sha256:<64 lowercase hex>", in.PlatformManifestDigest)
+	}
+	if in.IndexDigest != "" && !validOfflineDigest(in.IndexDigest) {
+		return "", fmt.Errorf("media input indexDigest %q must be sha256:<64 lowercase hex>", in.IndexDigest)
+	}
+	if in.ConfigDigest != "" && !validOfflineDigest(in.ConfigDigest) {
+		return "", fmt.Errorf("media input configDigest %q must be sha256:<64 lowercase hex>", in.ConfigDigest)
+	}
+	if in.OCILayoutPath == "" || !path.IsAbs(in.OCILayoutPath) {
+		return "", fmt.Errorf("media input ociLayoutPath %q must be absolute", in.OCILayoutPath)
+	}
+	if strings.TrimSpace(in.TargetImgref) == "" {
+		return "", fmt.Errorf("media input targetImgref is empty (image %q needs a day-2 update ref)", in.Image)
+	}
+	return normalizeMediaPlatform(in.Platform)
 }
 
 // ShouldEmbedOfflineLayout reports whether the build carries an embedded
@@ -217,10 +231,11 @@ func ShouldEmbedOfflineLayout(req *BuildRequest) bool {
 	return ri.PlatformManifestDigest != "" || ri.IndexDigest != "" || ri.ConfigDigest != ""
 }
 
-// WriteLiveMarkerFiles writes the two live-root signals before rootfs
-// authoring: the live-iso-mode opt-in (empty file) and media-input.json.
-// Both land inside the bootable rootfs (Fisherman reads them at host
-// /etc paths), never in the ISO tree.
+// WriteLiveMarkerFiles finalizes the embedded source after all live overlays.
+// It writes the live-mode opt-in and MediaInput in the live root and binds an
+// existing frontend recipe to that same source. An absent frontend recipe is
+// allowed: other frontends build their own requests. The consumer must require
+// a valid live MediaInput before checking caches or touching installation disks.
 func WriteLiveMarkerFiles(root *oci.Node, store oci.BlobStore, mediaInputJSON []byte) error {
 	if root == nil {
 		return fmt.Errorf("live marker files: nil rootfs tree")
@@ -228,8 +243,29 @@ func WriteLiveMarkerFiles(root *oci.Node, store oci.BlobStore, mediaInputJSON []
 	if store == nil {
 		return fmt.Errorf("live marker files: nil blob store")
 	}
-	if len(mediaInputJSON) == 0 {
-		return fmt.Errorf("live marker files: empty media-input.json")
+	var in offlineMediaInput
+	if err := json.Unmarshal(mediaInputJSON, &in); err != nil {
+		return fmt.Errorf("live marker files: invalid media-input.json: %w", err)
+	}
+	if in.SchemaVersion != OfflineMediaSchemaVersion || in.Kind != OfflineMediaKind {
+		return fmt.Errorf("live marker files: unsupported media-input.json schema or kind")
+	}
+	// Reuse the producer's validation, including the expected manifest digest.
+	// Do not publish a frontend source pointing at an unvalidated descriptor.
+	if _, err := validateOfflineMediaInput(&in); err != nil {
+		return fmt.Errorf("live marker files: %w", err)
+	}
+	recipeNode, recipeJSON, err := embeddedInstallerRecipe(root, store, in)
+	if err != nil {
+		return err
+	}
+	if recipeNode != nil {
+		ref, size, err := store.Put(bytes.NewReader(recipeJSON))
+		if err != nil {
+			return fmt.Errorf("live marker files: write installer recipe: %w", err)
+		}
+		// Only content changes; retain the overlay's mode, ownership and metadata.
+		recipeNode.Ref, recipeNode.Size = ref, size
 	}
 	if err := writeFileNode(root, store, LiveISOModeTreePath, "", 0o644); err != nil {
 		return fmt.Errorf("live marker files: %w", err)
@@ -238,6 +274,64 @@ func WriteLiveMarkerFiles(root *oci.Node, store oci.BlobStore, mediaInputJSON []
 		return fmt.Errorf("live marker files: %w", err)
 	}
 	return nil
+}
+
+// embeddedInstallerRecipe patches only source-binding keys. RawMessage keeps
+// unknown/nested frontend settings and exact numeric values intact. In
+// particular, MediaInput contains no evidence for changing bootloader,
+// filesystem or composeFsBackend.
+func embeddedInstallerRecipe(root *oci.Node, store oci.BlobStore, in offlineMediaInput) (*oci.Node, []byte, error) {
+	n := root.Lookup(InstallerRecipeTreePath)
+	if n == nil {
+		return nil, nil, nil
+	}
+	if n.Type != oci.TypeFile {
+		return nil, nil, fmt.Errorf("live marker files: installer recipe is not a regular file")
+	}
+	body, err := readFile(store, n)
+	if err != nil {
+		return nil, nil, fmt.Errorf("live marker files: read installer recipe: %w", err)
+	}
+	var recipe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(body), &recipe); err != nil || recipe == nil {
+		return nil, nil, fmt.Errorf("live marker files: installer recipe is not a JSON object")
+	}
+	composefs := false
+	if raw, ok := recipe["composeFsBackend"]; ok {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &composefs) != nil {
+			return nil, nil, fmt.Errorf("live marker files: composeFsBackend must be a boolean")
+		}
+	}
+	imageType := "bootc"
+	if raw, ok := recipe["imageType"]; ok {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &imageType) != nil {
+			return nil, nil, fmt.Errorf("live marker files: imageType must be a string")
+		}
+	}
+	// String values always marshal successfully; reuse the encoded identities.
+	targetJSON, _ := json.Marshal(in.TargetImgref)
+	sourceJSON, _ := json.Marshal(in.Image)
+	recipe["imgref"] = targetJSON
+	recipe["targetImgref"] = targetJSON
+	recipe["image"] = sourceJSON
+	if !composefs && (imageType == "" || imageType == "bootc") {
+		// GNOME's existing bootc-direct override bypasses the stale cache
+		// check and lets Fisherman bind the required MediaInput instead.
+		recipe["image"] = json.RawMessage(`""`)
+	}
+	delete(recipe, "local_imgref")
+	if in.Image != in.TargetImgref {
+		// GNOME derives the tracking ref from imgref. When source and
+		// target differ, its source override must still be an image
+		// identity matching MediaInput.image, never an oci: transport
+		// which would bypass expected-digest binding.
+		recipe["local_imgref"] = sourceJSON
+	}
+	out, err := json.MarshalIndent(recipe, "", "  ")
+	if err != nil {
+		return nil, nil, fmt.Errorf("live marker files: encode installer recipe: %w", err)
+	}
+	return n, append(out, '\n'), nil
 }
 
 // offlineDescriptor is one entry of the synthesized index.json. Size and

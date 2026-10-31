@@ -180,10 +180,12 @@ func (b *BlockTarget) Cleanup() {
 // InstallMode returns Bootc — BlockTarget is the bootc-install path.
 func (b *BlockTarget) InstallMode() InstallMode { return InstallModeBootc }
 
-// KernelPath / InitrdPath: BlockTarget puts per-env kernels under
-// /EFI/<envID>/ on the ESP, so BLS entries reference them directly.
-func (b *BlockTarget) KernelPath(envID string) string { return "/EFI/" + envID + "/vmlinuz" }
-func (b *BlockTarget) InitrdPath(envID string) string { return "/EFI/" + envID + "/initrd.img" }
+// KernelPath / InitrdPath / DevicetreePath: BlockTarget puts per-env
+// kernels under /EFI/<envID>/ on the ESP, so BLS entries reference them
+// directly.
+func (b *BlockTarget) KernelPath(envID string) string     { return "/EFI/" + envID + "/vmlinuz" }
+func (b *BlockTarget) InitrdPath(envID string) string     { return "/EFI/" + envID + "/initrd.img" }
+func (b *BlockTarget) DevicetreePath(envID string) string { return "/EFI/" + envID + "/devicetree" }
 
 // FreeBytes reports available bytes under path. Exposed so the
 // orchestrator's free-space pre-flight can run before BlockTarget is

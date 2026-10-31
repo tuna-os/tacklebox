@@ -43,6 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
@@ -50,17 +52,12 @@ jobs:
       # Real execution, not just cross-compiled type-checking: this is the
       # first time pkg/blockdev/darwin's tests have actually run on darwin.
       - name: run pkg/blockdev/darwin tests natively
-        run: go test -v ./pkg/blockdev/darwin/...
+        run: just test-darwin
 
+      # The recipe detaches and removes the image on every exit path, so a
+      # failed diskutil assertion cannot leak the attached device.
       - name: hdiutil create + attach a virtual disk (the CI-testable proxy from #106's research)
-        run: |
-          hdiutil create -size 64m -layout GPTSPUD -fs "MS-DOS FAT32" -volname TBOXCI /tmp/tboxci.dmg
-          attach_out=$(hdiutil attach -nomount /tmp/tboxci.dmg)
-          echo "$attach_out"
-          dev=$(echo "$attach_out" | head -1 | awk '{print $1}')
-          echo "attached as $dev"
-          diskutil info "$dev" | grep -E "Virtual|Protocol|Removable Media"
-          hdiutil detach "$dev"
+        run: just ci-macos-disk-smoke
 
   windows-disk-primitives:
     runs-on: windows-latest
@@ -85,3 +82,16 @@ jobs:
       - name: Win32_DiskDrive query (the exact query iso-builder/native/blockdev_windows.go uses)
         shell: pwsh
         run: Get-CimInstance Win32_DiskDrive | Select-Object DeviceID,Model,Size,InterfaceType,MediaType | ConvertTo-Json
+
+      # Always: detach the virtual disk this job attached and remove its files.
+      # Only the paths created above are touched. Exits 0 when nothing exists.
+      - name: detach virtual disk
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path C:\tboxci.vhdx) {
+            "select vdisk file=C:\tboxci.vhdx`ndetach vdisk" | Out-File -Encoding ascii C:\tboxci-detach.txt
+            diskpart /s C:\tboxci-detach.txt
+          }
+          Remove-Item -Force -ErrorAction SilentlyContinue C:\tboxci.vhdx, C:\tboxci-diskpart.txt, C:\tboxci-detach.txt
+          exit 0
