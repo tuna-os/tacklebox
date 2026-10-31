@@ -173,10 +173,6 @@ the Tacklebox core. It finds connected drives and inspects installed
 environments, storage use, and savings from deduplication. It also manages the
 lifecycle and verifies boot in a virtual machine after a write.
 
-On macOS and Windows, the GUI needs a virtual machine (VM) backend for
-containers, such as Podman Machine or WSL2 with Podman. This backend runs
-the containerized `bootc` and `sgdisk` build operations.
-
 ## 📋 Recipe Schema
 
 Configure Tacklebox with simple JSON recipes:
@@ -339,9 +335,11 @@ packages that provide the ISO tools, for both local builds and CI runners.
 
 ### Desktop GUI (macOS & Windows)
 
-The GUI on macOS or Windows needs a virtual machine (VM) backend for
-containers, such as Podman Machine or WSL2 with Podman. This backend runs
-the containerized `bootc` and `sgdisk` build operations.
+`bootc install to-filesystem` needs the semantics of a Linux kernel, so the
+GUI runs that step in a Linux helper on other hosts. On macOS, the helper is
+a QEMU virtual machine with TCG, and `authopen` gives it access to the USB
+disk. On Windows, the helper is WSL2, and `usbipd-win` attaches the USB disk.
+See [host virtualization](ARCHITECTURE.md#cross-platform-gui-multi-boot-manager-integration).
 
 ## 📦 Releases & Operations
 
