@@ -391,6 +391,14 @@ ISO targets (`--iso`) also need:
 [`docs/github-iso-setup.md`](docs/github-iso-setup.md) lists the distribution
 packages that provide the ISO tools, for both local builds and CI runners.
 
+### Desktop GUI (macOS & Windows)
+
+`bootc install to-filesystem` needs the semantics of a Linux kernel, so the
+GUI runs that step in a Linux helper on other hosts. On macOS, the helper is
+a QEMU virtual machine with TCG, and `authopen` gives it access to the USB
+disk. On Windows, the helper is WSL2, and `usbipd-win` attaches the USB disk.
+See [host virtualization](ARCHITECTURE.md#cross-platform-gui-multi-boot-manager-integration).
+
 ## 📦 Releases & Operations
 
 `.github/workflows/release.yml` publishes static binaries for Linux on AMD64
