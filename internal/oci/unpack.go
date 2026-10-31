@@ -484,10 +484,6 @@ func (s *DirStore) Open(ref string) (io.ReadCloser, error) {
 	return os.Open(ref)
 }
 
-// ApplyTar builds a rootfs tree from a single uncompressed tar stream
-// (e.g. `podman export` of a customized container) instead of registry
-// layers — the native path for live_customize output until the customize
-// step itself is expressed as tree operations.
 // ApplyTarOnto applies an uncompressed tar stream onto an existing tree with
 // layer semantics: entries replace what is there, and OCI whiteouts
 // (.wh.<name>, .wh..wh..opq) delete. It is how a caller layers extra files

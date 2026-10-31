@@ -12,6 +12,32 @@ build:
 test:
     go test ./...
 
+# Format Go source files
+fmt:
+    gofmt -w cmd internal
+
+# Check formatting of Go source files
+fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=$(gofmt -l cmd internal)
+    if [ -n "$files" ]; then
+        printf 'Unformatted Go files:\n%s\n' "$files"
+        exit 1
+    fi
+
+# golangci-lint, pinned; `go run` builds and caches it on first use
+golangci_lint := "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0"
+
+# Run linters (everything except errcheck, repo-wide)
+lint:
+    {{golangci_lint}} run --disable=errcheck ./...
+
+# errcheck ratchet: only code new since the merge base with origin/<base>
+lint-new base="main":
+    git fetch --quiet origin {{base}}
+    {{golangci_lint}} run --default=none --enable=errcheck --new-from-merge-base=origin/{{base}} ./...
+
 # Provision a real disk (CAUTION: wipes the disk!)
 provision-usb device="/dev/sda" recipe=recipe_path: build
     sudo ./tacklebox build {{recipe}} {{device}} -b {{output_base}}-usb
@@ -86,7 +112,7 @@ ci-reap-stale:
     scripts/ci-reap-stale.sh
 
 # Local gate: what the lint-test job runs
-check: vet test check-recipes
+check: fmt-check lint vet test check-recipes
 
 # go vet
 vet:

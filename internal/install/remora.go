@@ -17,10 +17,10 @@ import (
 // or a URL remora can fetch). When Path is empty the inline fields carry the
 // manifest content to be written to a temp file and mounted into the container.
 type RemoraManifest struct {
-	Path     string          `json:"-"`
-	Packages []string        `json:"packages,omitempty"`
-	Remove   []string        `json:"remove,omitempty"`
-	Configs  []RemoraConfig  `json:"configs,omitempty"`
+	Path     string         `json:"-"`
+	Packages []string       `json:"packages,omitempty"`
+	Remove   []string       `json:"remove,omitempty"`
+	Configs  []RemoraConfig `json:"configs,omitempty"`
 }
 
 // RemoraConfig is one configuration file drop-in.
