@@ -21,10 +21,10 @@ import (
 //	    /EFI/BOOT/BOOT<ARCH>.EFI    systemd-boot
 //	    /loader/loader.conf
 //	    /loader/entries/<env>.conf
-//	    /images/pxeboot/<env>/{vmlinuz,initrd.img}
+//	    /images/pxeboot/<env>/{vmlinuz,initrd.img[,devicetree]}
 //	/EFI/BOOT/BOOT<ARCH>.EFI        fallback at ISO9660 root for
 //	                                firmware that ignores El Torito
-//	/images/pxeboot/<env>/{vmlinuz,initrd.img}    loopback boot copies
+//	/images/pxeboot/<env>/{vmlinuz,initrd.img[,devicetree]}    loopback boot copies
 //	/LiveOS/<env>.rootfs.sfs        per-env rootfs squashfs
 //	/LiveOS/combined.rootfs.sfs     (shared_store.dedup) ONE squashfs,
 //	                                one subtree per env, instead of the
@@ -37,7 +37,8 @@ import (
 //
 // The orchestrator's per-env install loop writes:
 //   - <env>.rootfs.sfs into StoreMount  (via install.InstallLive)
-//   - vmlinuz + initrd.img into EspMount/images/pxeboot/<env>/
+//   - vmlinuz + initrd.img (+ devicetree, when the image ships one) into
+//     EspMount/images/pxeboot/<env>/
 //   - BLS entry into EspMount/loader/entries/<env>.conf
 //
 // Finalize then:
@@ -100,11 +101,14 @@ func (i *IsoTarget) InstallMode() InstallMode { return InstallModeLive }
 // in cmd/tacklebox/build.go via a small interface.
 func (i *IsoTarget) IsoLabel() string { return i.Label }
 
-// IsoTarget puts per-env kernel/initrd under /images/pxeboot/<env>/
+// IsoTarget puts per-env kernel/initrd/devicetree under /images/pxeboot/<env>/
 // inside the FAT ESP, where live ISOs conventionally keep them.
 func (i *IsoTarget) KernelPath(envID string) string { return "/images/pxeboot/" + envID + "/vmlinuz" }
 func (i *IsoTarget) InitrdPath(envID string) string {
 	return "/images/pxeboot/" + envID + "/initrd.img"
+}
+func (i *IsoTarget) DevicetreePath(envID string) string {
+	return "/images/pxeboot/" + envID + "/devicetree"
 }
 
 func (i *IsoTarget) Prepare(_ Track) (*Mountpoints, error) {

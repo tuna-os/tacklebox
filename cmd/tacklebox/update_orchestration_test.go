@@ -47,6 +47,18 @@ type mockRunner struct {
 	// that don't care about the exact command can rely on this instead of
 	// enumerating every call.
 	defaultOutput []byte
+	// extract seeds, per image, what the boot-file extract container
+	// (install.fetchToStaging's `podman run … -v <dir>:/dest`) leaves in
+	// its /dest directory and the architecture it reports — standing in
+	// for an image's /usr/lib/modules/<kver>/devicetree and
+	// /usr/lib/bootc/kargs.d.
+	extract map[string]extractSeed
+}
+
+// extractSeed is one image's content as the extract container sees it.
+type extractSeed struct {
+	arch  string            // `uname -m` inside the image
+	files map[string]string // /dest-relative path -> content
 }
 
 func newMockRunner(t *testing.T) *mockRunner {
@@ -92,6 +104,9 @@ func (m *mockRunner) run(name string, args ...string) error {
 			os.WriteFile(args[2], data, 0644)
 		}
 	}
+	if err == nil && name == "sudo" && len(args) == 3 && args[0] == "mv" {
+		os.Rename(args[1], args[2])
+	}
 	return err
 }
 
@@ -120,7 +135,37 @@ func (m *mockRunner) output(name string, args ...string) ([]byte, error) {
 	if hasOut {
 		return out, nil
 	}
+	if dest, seed, ok := m.extractSeedFor(args); ok {
+		for rel, content := range seed.files {
+			p := filepath.Join(dest, rel)
+			os.MkdirAll(filepath.Dir(p), 0755)
+			os.WriteFile(p, []byte(content), 0644)
+		}
+		return append(append([]byte(nil), m.defaultOutput...), "ARCH="+seed.arch+"\n"...), nil
+	}
 	return m.defaultOutput, nil
+}
+
+// extractSeedFor recognises the extract container's `-v <dir>:/dest` and
+// returns that host dir with the seed of the image the run names.
+func (m *mockRunner) extractSeedFor(args []string) (string, extractSeed, bool) {
+	dest := ""
+	for i, a := range args {
+		if a == "-v" && i+1 < len(args) && strings.HasSuffix(args[i+1], ":/dest") {
+			dest = strings.TrimSuffix(args[i+1], ":/dest")
+		}
+	}
+	if dest == "" {
+		return "", extractSeed{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range args {
+		if seed, ok := m.extract[a]; ok {
+			return dest, seed, true
+		}
+	}
+	return "", extractSeed{}, false
 }
 
 func (m *mockRunner) callStrings() []string {

@@ -27,6 +27,9 @@ const (
 	// OverlayReasonBaseDigestMismatch: the overlay's base-digest
 	// annotation differs from the selected base platform manifest digest.
 	OverlayReasonBaseDigestMismatch = "overlay-base-digest-mismatch"
+	// OverlayReasonBaseDigestMissing: the selected base or the published
+	// overlay has no platform-manifest base binding.
+	OverlayReasonBaseDigestMissing = "overlay-base-digest-missing"
 )
 
 // ErrLiveOverlayMissing is the sentinel wrapped by OverlayMismatchError
@@ -56,6 +59,8 @@ func (e *OverlayMismatchError) Error() string {
 		return fmt.Sprintf("live overlay digest mismatch: got %s want %s", e.Got, e.Want)
 	case OverlayReasonBaseDigestMismatch:
 		return fmt.Sprintf("live overlay base digest mismatch: overlay built against %s, selected base is %s", e.Got, e.Want)
+	case OverlayReasonBaseDigestMissing:
+		return fmt.Sprintf("live overlay base digest binding missing (selected base %s)", e.Want)
 	default:
 		return fmt.Sprintf("live overlay mismatch (%s)", e.Reason)
 	}
@@ -68,7 +73,7 @@ func (e *OverlayMismatchError) Is(target error) bool {
 	return target == ErrLiveOverlayMissing && e.Reason == OverlayReasonMissing
 }
 
-// GraftOptions tunes GraftLiveOverlayWithOptions.
+// GraftOptions binds a published overlay to the actual selected base.
 type GraftOptions struct {
 	// Platform is the exact requested platform ("linux/amd64",
 	// "linux/amd64/v2", "linux/arm64", or an arch shorthand); "" means
@@ -79,6 +84,12 @@ type GraftOptions struct {
 	// requires the overlay's presence and refuses a digest mismatch
 	// rather than grafting the wrong delta.
 	ExpectedOverlayDigest string
+	// BaseDigest is the selected base platform manifest digest, obtained from
+	// the same resolution that produced baseManifest, not a request or tag.
+	BaseDigest string
+	// ExpectedBaseDigest is an optional caller pin, compared before any layer
+	// fetch or root mutation. It never substitutes for the observed base digest.
+	ExpectedBaseDigest string
 	// Required treats a missing overlay as a blocker even without a
 	// pinned digest.
 	Required bool
@@ -108,86 +119,11 @@ func LiveOverlayRef(image string) (oci.Ref, bool) {
 	return oci.Ref{Repo: LiveOverlayRepo, Tag: parts[0] + "-" + parts[1]}, true
 }
 
-// GraftLiveOverlay applies the published live-overlay delta for image onto an
-// already-unpacked root (tunaOS#673).
-//
-// tuna-os/<variant>:<flavor> images have a customize delta published at
-// tuna-os/live-overlay:<variant>-<flavor> carrying the live payload CI media
-// ship — installer flatpak, autostart, polkit rules. Grafting it is what makes
-// a natively-built ISO byte-comparable with the browser-built one; without it
-// the two paths diverge silently, which is how 27 broken overlays went
-// unnoticed.
-//
-// Layers already present in baseManifest are skipped, so only the delta is
-// fetched. Absence of an overlay is NOT an error — most variants don't have
-// one yet, and treating it as a hard dependency would deadlock every new
-// variant (the overlay is produced by the very build that would then require
-// it). Callers get applied=false and should fall through to the plain
-// baseline; the returned error is reserved for an overlay that exists but
-// could not be applied.
-//
-// progress, if non-nil, is called as layers land.
-func GraftLiveOverlay(
-	root *oci.Node,
-	store oci.BlobStore,
-	c *oci.Client,
-	image string,
-	baseManifest *oci.Manifest,
-	progress func(layer, total int),
-) (applied bool, err error) {
-	return GraftLiveOverlayForPlatform(root, store, c, image, baseManifest, "amd64", "", progress)
-}
-
-// GraftLiveOverlayForPlatform is the platform-aware overlay graft: it
-// resolves the overlay with ResolveManifestForPlatform for the exact
-// requested platform (never falling back across architectures or variants)
-// and verifies the optional expected overlay platform-manifest digest
-// (BuildRequest ResolvedInputs.LiveOverlayDigest) against the overlay
-// index's MATCHING descriptor — the platform digest and any index digest
-// are never conflated.
-//
-// A non-empty expectedDigest makes the overlay required: a missing overlay
-// or a digest mismatch returns a typed *OverlayMismatchError instead of
-// assembling an uncustomized live root. With no pin the historical
-// (false, nil) no-op is preserved for variants without a published
-// overlay, and the --rootfs-tar nil-client/member path stays a no-op.
-//
-// progress, if non-nil, is called as layers land.
-func GraftLiveOverlayForPlatform(
-	root *oci.Node,
-	store oci.BlobStore,
-	c *oci.Client,
-	image string,
-	baseManifest *oci.Manifest,
-	platform, expectedDigest string,
-	progress func(layer, total int),
-) (bool, error) {
-	applied, _, err := GraftLiveOverlayWithOptions(root, store, c, image, baseManifest, GraftOptions{
-		Platform:              platform,
-		ExpectedOverlayDigest: expectedDigest,
-		Progress:              progress,
-	})
-	return applied, err
-}
-
-// GraftLiveOverlayWithOptions is GraftLiveOverlayForPlatform with a
-// GraftOptions parameter. It additionally returns the resolved overlay
-// platform manifest (nil when nothing was grafted) so callers can run
-// VerifyLiveOverlayBase against the selected base digest.
-func GraftLiveOverlayWithOptions(
-	root *oci.Node,
-	store oci.BlobStore,
-	c *oci.Client,
-	image string,
-	baseManifest *oci.Manifest,
-	opts GraftOptions,
-) (applied bool, overlayManifest *oci.Manifest, err error) {
-	applied, manifest, _, err := GraftLiveOverlayObserved(root, store, c, image, baseManifest, opts)
-	return applied, manifest, err
-}
-
-// GraftLiveOverlayObserved returns the resolved digest only after layers apply.
-// Absence is explicit and errors never return a successful observation.
+// GraftLiveOverlayObserved applies a published customize delta to its exact base.
+// A present overlay must carry a matching platform-manifest base annotation.
+// Verify the binding before fetching layers or mutating the selected root.
+// Missing optional overlays and already-customized nil-client inputs stay no-ops.
+// Return an applied observation only after every overlay layer succeeds.
 func GraftLiveOverlayObserved(
 	root *oci.Node,
 	store oci.BlobStore,
@@ -232,6 +168,12 @@ func GraftLiveOverlayObserved(
 			return false, nil, nil, &OverlayMismatchError{Image: image, Reason: OverlayReasonMissing, Want: platform, Got: err.Error()}
 		}
 	}
+	if expectedBase := strings.TrimSpace(opts.ExpectedBaseDigest); expectedBase != "" && expectedBase != strings.TrimSpace(opts.BaseDigest) {
+		return false, nil, nil, &OverlayMismatchError{Reason: OverlayReasonBaseDigestMismatch, Want: opts.BaseDigest, Got: expectedBase}
+	}
+	if err := VerifyLiveOverlayBase(m, opts.BaseDigest); err != nil {
+		return false, nil, nil, err
+	}
 	skip := make(map[string]bool, len(baseManifest.Layers))
 	for _, l := range baseManifest.Layers {
 		skip[l.Digest] = true
@@ -239,23 +181,18 @@ func GraftLiveOverlayObserved(
 	if err := c.UnpackOnto(root, ref, m, store, skip, opts.Progress); err != nil {
 		return false, nil, nil, fmt.Errorf("apply live overlay %s:%s: %w", ref.Repo, ref.Tag, err)
 	}
-	return true, m, &OverlayObservation{Status: "applied", ManifestDigest: digest, LayersApplied: true}, nil
+	return true, m, &OverlayObservation{Status: "applied", ManifestDigest: digest, LayersApplied: true, BaseAnnotationMatched: true}, nil
 }
 
-// VerifyLiveOverlayBase checks the grafted overlay's base-digest annotation
-// (org.tunaos.live-overlay.actual-base-digest, or the legacy
-// org.tunaos.live-overlay.base-digest spelling) against actualBaseDigest —
-// the selected base platform manifest digest — and returns a typed
-// *OverlayMismatchError naming both digests on mismatch. Overlays carrying
-// no annotation (or a nil/empty compare set) verify trivially: there is
-// nothing pinned to check against.
-func VerifyLiveOverlayBase(baseManifest, overlayManifest *oci.Manifest, actualBaseDigest string) error {
+// VerifyLiveOverlayBase requires a manifest-level binding to the selected base.
+// Config labels and index-descriptor annotations cannot replace this binding.
+func VerifyLiveOverlayBase(overlayManifest *oci.Manifest, actualBaseDigest string) error {
 	if overlayManifest == nil {
 		return nil
 	}
 	want := strings.TrimSpace(actualBaseDigest)
 	if want == "" {
-		return nil
+		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMissing}
 	}
 	var got string
 	if overlayManifest.Annotations != nil {
@@ -265,7 +202,7 @@ func VerifyLiveOverlayBase(baseManifest, overlayManifest *oci.Manifest, actualBa
 		}
 	}
 	if got == "" {
-		return nil
+		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMissing, Want: want}
 	}
 	if got != want {
 		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMismatch, Want: want, Got: got}
