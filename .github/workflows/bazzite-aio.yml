@@ -20,6 +20,10 @@ on:
     # Weekly, Tuesday 05:00 UTC (staggered from the Monday weekly PoC build)
     - cron: '0 5 * * 2'
 
+permissions:
+  contents: read
+  packages: read
+
 concurrency:
   group: bazzite-aio
   cancel-in-progress: true
@@ -30,6 +34,7 @@ jobs:
     timeout-minutes: 150
     permissions:
       contents: read
+      packages: read
     env:
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
       # The job's tacklebox output base; ci-cleanup removes only what is

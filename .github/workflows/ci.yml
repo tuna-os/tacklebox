@@ -10,6 +10,10 @@ on:
     # bootc) — a broken live boot should page this repo, not a downstream.
     - cron: '20 4 * * *'
 
+permissions:
+  contents: read
+  packages: read
+
 # Without this, every push to a branch/PR (including Renovate's frequent
 # rebases) queues a brand-new run instead of superseding the last one for
 # that ref. Observed 2026-07-20: 26 queued runs piled up on this repo alone

@@ -14,6 +14,10 @@ on:
     # Weekly, Wednesday 07:00 UTC (staggered 2h after KDE build)
     - cron: '0 7 * * 3'
 
+permissions:
+  contents: read
+  packages: read
+
 concurrency:
   group: bazzite-gnome
   cancel-in-progress: true
@@ -24,6 +28,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
+      packages: read
     env:
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
       # The job's tacklebox output base; ci-cleanup removes only what is

@@ -29,6 +29,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: read
+
 # See ci.yml's concurrency block for why this matters — this workflow's
 # macOS/Windows jobs draw from the same scarce shared-runner pool, so
 # stale duplicate runs here are just as costly to leave queued.
