@@ -55,7 +55,8 @@ tacklebox/
 │   ├── blockdev/              # sgdisk + mkfs wrappers
 │   ├── oci/                   # registry client, layer unpacking, content stores
 │   ├── purefs/                # rootless EROFS, FAT ESP, and ISO9660 authoring
-│   └── runner/                # subprocess wrapper (verbose toggle, sudo)
+│   ├── runner/                # subprocess wrapper (verbose toggle, sudo)
+│   └── verify/                # artifact verification (ISO/block, BLS, and content layout)
 ├── embedded.go                # go:embed of src/dracut/ (consumed by initramfs.go)
 ├── src/
 │   ├── dracut/95tbox-root/    # initramfs module (per-env root pivot)

@@ -43,10 +43,10 @@ Two structural notes:
   skipped or cancelled job reports failure instead of an absent check. If
   branch protection or agent auto-merge is ever pointed at this repo, that
   gap needs closing first.
-- **`iso-smoke` runs on a self-hosted RunsOn runner**
-  (`runs-on=…/runner=build-amd64`), not a GitHub runner, because the GitHub
-  image's podman wedges the customize commit (tunaOS#1893). A fork without
-  that runner configured cannot run this job at all.
+- **`iso-smoke` runs on GitHub-hosted Ubuntu 24.04.** RunsOn jobs for
+  PRs #401 and #410 waited without a runner until cancellation. The job
+  replaces the image's Podman stack with Kubic packages and uses file
+  logging to address the runtime issues described below (tunaOS#1893).
 
 The `concurrency` group is load-bearing, not tidiness: without it, 26 stale
 runs piled up on 2026-07-20 (mostly Renovate rebases) and saturated the shared
