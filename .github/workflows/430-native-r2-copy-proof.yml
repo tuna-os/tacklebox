@@ -1,0 +1,164 @@
+name: Temporary native R2 copy proof
+
+on:
+  push:
+    branches: [lab/430-native-r2-copy-proof]
+
+permissions:
+  contents: read
+
+jobs:
+  native-r2-copy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_REGION: auto
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+    steps:
+      - name: Install production distribution rclone
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rclone
+          rclone version
+
+      - name: Prove native single-request and multipart remote copies
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          # No checkout, published pointers, public URLs, or artifact uploads.
+          # Native INFO output stays private to this job's temporary directory;
+          # only exit codes, hashes, and path kinds reach the job summary/log.
+          for name in R2_BUCKET RCLONE_CONFIG_R2_ACCESS_KEY_ID \
+            RCLONE_CONFIG_R2_SECRET_ACCESS_KEY RCLONE_CONFIG_R2_ENDPOINT; do
+            if [[ -z "${!name:-}" ]]; then
+              printf 'pathkind=configuration exitcode=1\n'
+              exit 1
+            fi
+          done
+          if [[ ! "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ || \
+                ! "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]+$ ]]; then
+            printf 'pathkind=run-identity exitcode=1\n'
+            exit 1
+          fi
+          PREFIX="R2:${R2_BUCKET}/tacklebox/ci-copy-smoke/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          WORK=""
+          OWNED=0
+          STAGE=fixture
+          cleanup() {
+            result=$?
+            printf 'pathkind=%s exitcode=%s\n' "$STAGE" "$result"
+            trap - EXIT INT TERM
+            set +e
+            if [[ "$OWNED" == 1 ]]; then
+              # Delete only the three exact keys this run can write. Never purge.
+              for key in dated.iso latest.iso multipart-latest.iso; do
+                rclone deletefile --log-level INFO --s3-no-check-bucket \
+                  --retries 1 --low-level-retries 1 "${PREFIX}/${key}" \
+                  > "${WORK}/cleanup-${key}.log" 2>&1
+                code=$?
+                printf 'pathkind=cleanup-%s exitcode=%s\n' "$key" "$code"
+                if [[ "$code" != 0 && "$result" == 0 ]]; then result=$code; fi
+              done
+            fi
+            if [[ -n "$WORK" ]]; then
+              rm -rf -- "$WORK"
+              code=$?
+              printf 'pathkind=local-cleanup exitcode=%s\n' "$code"
+              if [[ "$code" != 0 && "$result" == 0 ]]; then result=$code; fi
+            fi
+            printf 'pathkind=proof exitcode=%s\n' "$result"
+            exit "$result"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          WORK=$(mktemp -d "${RUNNER_TEMP}/native-r2-copy.XXXXXXXX")
+          # An isolated config prevents a runner-local remote from changing R2.
+          export RCLONE_CONFIG="${WORK}/rclone.conf"
+          : > "$RCLONE_CONFIG"
+          export FIXTURE="${WORK}/fixture.iso"
+          EXPECTED=$(python3 - <<'PY'
+          import hashlib
+          import os
+          block = bytes(range(256)) * 4096
+          expected = hashlib.sha256()
+          with open(os.environ["FIXTURE"], "wb") as fixture:
+              for _ in range(11):
+                  fixture.write(block)
+                  expected.update(block)
+          print(expected.hexdigest())
+          PY
+          )
+          [[ $(stat -c %s "$FIXTURE") == 11534336 ]]
+          [[ "$EXPECTED" =~ ^[0-9a-f]{64}$ ]]
+          actual=$(sha256sum "$FIXTURE")
+          [[ "${actual%% *}" == "$EXPECTED" ]]
+          printf 'pathkind=fixture sha256=%s exitcode=0\n' "$EXPECTED"
+
+          native() {
+            local kind=$1 code
+            STAGE=$kind
+            shift
+            if "$@" > "${WORK}/${kind}.log" 2>&1; then
+              code=0
+            else
+              code=$?
+            fi
+            printf 'pathkind=%s exitcode=%s\n' "$kind" "$code"
+            return "$code"
+          }
+          check_server_copy() {
+            local kind=$1
+            STAGE="${kind}-server-side-copy"
+            if grep -Fq 'Copied (server-side copy)' "${WORK}/${kind}.log"; then
+              printf 'pathkind=%s-server-side-copy exitcode=0\n' "$kind"
+            else
+              printf 'pathkind=%s-server-side-copy exitcode=1\n' "$kind"
+              return 1
+            fi
+          }
+          check_download() {
+            local kind=$1 key=$2 digest
+            native "$kind" rclone copyto --log-level INFO --s3-no-check-bucket \
+              "${PREFIX}/${key}" "${WORK}/${kind}.iso"
+            digest=$(sha256sum "${WORK}/${kind}.iso")
+            digest=${digest%% *}
+            printf 'pathkind=%s sha256=%s\n' "$kind" "$digest"
+            [[ "$digest" == "$EXPECTED" ]]
+          }
+
+          OWNED=1
+          native upload rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
+            "$FIXTURE" "${PREFIX}/dated.iso"
+          check_download dated-before dated.iso
+          # Same copyto flags as the PR promotion; both endpoints are remote.
+          native latest-copy rclone copyto --log-level INFO --s3-no-check-bucket \
+            "${PREFIX}/dated.iso" "${PREFIX}/latest.iso"
+          check_server_copy latest-copy
+          check_download latest latest.iso
+          # 11 MiB exceeds the cutoff and needs three legal >=5 MiB parts
+          # (the final part is allowed to be smaller).
+          native multipart-copy rclone copyto --log-level INFO --s3-no-check-bucket \
+            --s3-copy-cutoff 1M --s3-chunk-size 5M \
+            "${PREFIX}/dated.iso" "${PREFIX}/multipart-latest.iso"
+          check_server_copy multipart-copy
+          check_download multipart multipart-latest.iso
+          check_download dated-after-copies dated.iso
+
+          # This source is never created and is not an owned writable key.
+          if native missing-source rclone copyto --log-level INFO --s3-no-check-bucket \
+            "${PREFIX}/missing-source.iso" "${PREFIX}/latest.iso"; then
+            printf 'pathkind=missing-source-unexpected-success exitcode=1\n'
+            exit 1
+          fi
+          check_download latest-after-missing latest.iso
+          check_download dated-after-missing dated.iso
+          check_download multipart-after-missing multipart-latest.iso
