@@ -104,7 +104,8 @@ The media has one JSON recipe:
 ```
 
 `tacklebox recipe-gen` produces a recipe from a simple environment list if you
-do not want to start from an empty file.
+do not want to start from an empty file. See the
+[recipe-gen input reference](RECIPE-GEN.md) for fields, defaults, and examples.
 
 ### kernel arguments and device trees
 
