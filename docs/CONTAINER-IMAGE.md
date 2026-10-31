@@ -50,8 +50,8 @@ keeps image storage outside the outer container's writable layer.
 
 Builds need network access to pull OS images and any recipe downloads. The
 default container network is enough. You do not need to publish ports or use
-the host network. Private image pulls need credentials inside the container,
-Mount an auth file read-only, for example, and set `REGISTRY_AUTH_FILE` to
+the host network. Private image pulls need credentials inside the container.
+For example, mount an auth file read-only and set `REGISTRY_AUTH_FILE` to
 its container path. The container does not inherit registry logins from the host.
 
 Use container paths for recipe file references. The examples use `/work` as
