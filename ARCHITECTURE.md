@@ -33,7 +33,8 @@ targets, tbox-live).
 tacklebox/
 ├── cmd/tacklebox/             # CLI entry points (cobra subcommands)
 │   ├── main.go                # root command + persistent --output-base flag
-│   ├── build.go               # the `build` orchestrator
+│   ├── build.go               # `build` CLI lifecycle and target orchestration
+│   ├── build_install.go       # target install strategies and per-env pipeline
 │   ├── update.go              # the `update` command (host-side USB refresh)
 │   ├── update_all.go          # `update-all` boot-time cross-env updater
 │   ├── status.go              # the `status` command (inspect installed envs)
@@ -73,7 +74,9 @@ browser builder); it creates live ISOs without Podman, mount operations,
 
 ## The build flow
 
-`tacklebox build <recipe.json> [TARGET | --iso PATH]` runs in `cmd/tacklebox/build.go`:
+`tacklebox build <recipe.json> [TARGET | --iso PATH]` is orchestrated by
+`cmd/tacklebox/build.go`; target-specific install strategies live in
+`cmd/tacklebox/build_install.go`:
 
 1. **Parse** the recipe into `recipe.MediaRecipe`.
 2. **Validate** — bootable_envs is non-empty, size parses, target arg shape sane.
@@ -86,7 +89,8 @@ browser builder); it creates live ISOs without Podman, mount operations,
    - BlockTarget: `truncate` + `losetup` + `sgdisk` + `mkfs` + `mount` ESP+STORE + `bootctl install`.
    - IsoTarget: scratch `iso-root/` + `esp-staging/` dirs.
 6. **Pre-pull** all unique image refs in parallel.
-7. **Per-env install loop** (`installEnv`), dispatched on `Target.InstallMode()`:
+7. **Per-env install** is selected by `Target.InstallMode()` and shared-store
+   dedup policy in `build_install.go`:
    - Both modes start with **initramfs preparation** (`install.PrepareInitramfs`):
      - Compute cache key from image ID + required module set. Module set is
        determined by target type — ISO: `[tbox-live, tbox-root]`;
