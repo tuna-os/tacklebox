@@ -210,17 +210,134 @@ networking under virtualization is not dependable for multi-GB pulls.
 
 ## 6. Day-2: update / add / remove
 
-Media built by tacklebox stays mutable:
+These host-side commands mutate an existing **block device or raw disk image**
+(`/dev/sdX` or `tacklebox.img`). They reuse the ESP and STORE and do not
+repartition or reformat them; `TBOX_PERSIST` is left untouched. You cannot
+change ISOs in place: edit the recipe and rebuild the ISO instead.
+
+Run from a separate Linux host or rescue system, with the target unmounted
+and any VM using the image stopped. Do not remove or reinstall the environment
+you booted into: these commands delete its files and have no active-env
+safety check. Back up important media first; mutations are not transactional,
+so a failed install can leave a partial environment. Commands prompt for
+confirmation; `--yes` skips it and is required when stdin is not a terminal.
+
+| Goal | Command | Behavior |
+|---|---|---|
+| Refresh an existing ID or change its image | `update RECIPE TARGET` | Reinstalls every env listed in the recipe, clearing its STORE subtree. Unlisted envs and their BLS entries remain. Can also install new IDs. |
+| Extend the environment set | `add RECIPE TARGET` | Installs only new IDs and synchronizes the saved recipe roster across all envs. |
+| Drop environments | `remove ID [ID...] TARGET` | Deletes the named envs and synchronizes the surviving roster. |
+
+### Add: recipe format and storage
+
+`extra.json` uses the same media-recipe object as `build` and `update`, with a
+nonempty `bootable_environments` array. It is not a bare environment object
+or array. It may list only the new environments; you need not copy the whole
+existing roster. For example, add a parallel live installer option:
 
 ```sh
-sudo tacklebox update  --yes my.json  /dev/sdX -b /var/tmp/tbx  # reinstall all envs
-sudo tacklebox add     extra.json    /dev/sdX --yes             # add env(s)
-sudo tacklebox remove  kde           /dev/sdX --yes             # drop an env
-tacklebox status /dev/sdX                                        # what's on it
+cat > extra.json <<'EOF'
+{
+  "media_name": "TUNAOS",
+  "size": "40G",
+  "bootable_environments": [
+    {
+      "id": "installer",
+      "image": "ghcr.io/you/your-os:stable",
+      "title": "Your OS installer",
+      "modes": ["live"]
+    }
+  ]
+}
+EOF
+sudo tacklebox add extra.json /dev/sdX --yes -b /var/tmp/tbx
+# Or select one ID from a larger recipe (repeat --env for more):
+sudo tacklebox add all.json tacklebox.img --env installer --yes -b /var/tmp/tbx
 ```
 
-`update` reuses the initramfs/squash caches keyed by image ID, so
-unchanged envs are fast.
+The supplied `size` does not resize existing media. Each new ID gets a
+`TBOX_STORE/tbox-install/<id>` subtree, ESP `/EFI/<id>/` kernel and initrd,
+and `loader/entries/<id>-<mode>.conf` Boot Loader Specification (BLS) entries.
+`add` keeps other env content and the existing default boot selection.
+It merges the new entries into the media's saved recipe and writes that
+recipe to `/etc/tacklebox/recipe.json` in every env for the `update-all` timer.
+If older media has no saved recipe, `add` uses the supplied recipe's media
+settings as its base. In that case, use a recipe that describes the intended
+settings.
+
+Without `--env`, `add` skips IDs that are already on the target; if all are
+present, `add` succeeds with “Nothing to add”. With `--env`, an ID absent from
+the input recipe or already installed is an error. An empty env array is an
+error. To refresh an existing ID, use `update`; do not remove the ID first.
+
+`add` pulls the new images into root's container store and uses the block
+install pipeline. Like block `update`, it reuses the prepared initramfs files
+in `<output-base>/initramfs-cache`, keyed by image ID and required module set
+(`tbox-root`). Use the same `-b` directory as the original build to share that
+cache; the cache has no entry for a changed image ID. `skip_initramfs_rebuild`
+bypasses this preparation. Squashfs caches are for ISO builds and are not used
+by these block mutations. Cache reuse does not skip the bootc installation itself.
+
+Allow space for the installed OS in STORE, the kernel/initrd in the ESP, and
+image pulls and temporary files on the host. Before the install, `add` checks
+for at least **160 MiB free on the ESP per new env**. It does not grow either
+partition or guarantee STORE capacity; free space or rebuild larger media if needed.
+
+### Remove: IDs, boot entries, and defaults
+
+Use the environment **ID**, such as `kde`, not its menu title or `kde-live`
+BLS entry name. Inspect the target first:
+
+```sh
+sudo tacklebox status /dev/sdX
+sudo tacklebox remove kde /dev/sdX --yes -b /var/tmp/tbx
+# Multiple IDs; TARGET is always last among the positional arguments:
+sudo tacklebox remove kde installer tacklebox.img --yes -b /var/tmp/tbx
+```
+
+`remove` (alias `rm`) deletes each named STORE subtree, ESP `/EFI/<id>/`
+directory, and its BLS entries for all modes. Other env content and
+`TBOX_PERSIST` remain. If you remove the default env, the first remaining ID
+in alphabetical order becomes the default. `remove` also updates the saved
+recipe in the remaining envs so that `update-all` no longer includes removed IDs.
+On older media without a saved recipe, removal warns and skips that roster
+synchronization.
+
+Unknown IDs cause an error before deletion, and `remove` refuses to delete
+every remaining env. `--yes` does not bypass these checks. Removal frees the
+env's on-media space. It does not purge container images on the host,
+initramfs or squashfs caches, or the shared persistence data.
+
+### Refresh or swap an environment
+
+To upgrade one env, change its image reference in a recipe that lists only
+that env, and run `update`. You do not need to run `remove` first:
+
+```sh
+sudo tacklebox update kde-refresh.json /dev/sdX --yes -b /var/tmp/tbx
+```
+
+Keep the same ID and modes for an ordinary refresh. `update` leaves unlisted
+envs in place; if you omit an ID, `update` does not remove it. Unlike `add`,
+it does not merge the roster across untouched envs, so keep your complete
+source recipe in sync for future operations.
+
+To replace an env with a different ID, add the replacement first if you can.
+Then remove the old ID after you confirm that the new option boots:
+
+```sh
+sudo tacklebox add extra.json /dev/sdX --yes -b /var/tmp/tbx
+sudo tacklebox verify /dev/sdX
+# Boot-test the replacement, then return to the separate host:
+sudo tacklebox remove kde /dev/sdX --yes -b /var/tmp/tbx
+sudo tacklebox status /dev/sdX
+sudo tacklebox verify /dev/sdX
+```
+
+This order needs room for both envs temporarily and avoids the last-env
+removal guard. If space forces removal first, another env must remain
+installed. Neither command rolls back earlier changes after an error; before
+you try again or boot the target, inspect it with `status` and `verify`.
 
 ## 7. Verifying and boot-testing
 
