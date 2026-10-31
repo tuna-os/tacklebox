@@ -10,16 +10,12 @@ on:
     # bootc) — a broken live boot should page this repo, not a downstream.
     - cron: '20 4 * * *'
 
-# Without this, every push to a branch/PR (including Renovate's frequent
-# rebases) queues a brand-new run instead of superseding the last one for
-# that ref. Observed 2026-07-20: 26 queued runs piled up on this repo alone
-# — many of them stale duplicates from earlier rebases of the same PR —
-# saturating the shared macOS/Windows runner pool for hours and starving
-# genuinely new work. github.head_ref is empty on push/schedule, so this
-# still groups correctly (falls back to github.ref) for non-PR triggers.
+# Supersede stale PR runs to keep the shared runner pool available.
+# Every push, schedule, or manual run needs its own verdict: a shared group
+# can evict pending runs even when cancel-in-progress is false.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ── Stage 1+2: lint + unit + recipe schema parse ────────────────────────────
