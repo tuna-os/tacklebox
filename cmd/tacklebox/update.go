@@ -283,10 +283,10 @@ func updateEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, storeM
 	}); err != nil {
 		return fmt.Errorf("prepare initramfs for %s: %w", env.ID, err)
 	}
-	var kver string
+	var boot install.BootFiles
 	if err := track("extract:"+env.ID, func() error {
 		var err error
-		kver, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverride)
+		boot, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverride)
 		return err
 	}); err != nil {
 		return err
@@ -304,12 +304,13 @@ func updateEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, storeM
 		ostreeBootcsum = csum
 	}
 
-	// Re-write BLS entries; overwrite any existing ones for this env.
+	// Re-write BLS entries; overwrite any existing ones for this env, with
+	// the same options and device tree installEnvBootc gives them.
 	for _, mode := range env.Modes {
 		id := fmt.Sprintf("%s-%s", env.ID, mode)
-		options := kernelcmdline.Build(env.ID, mode, backend, blockdev.UsbSafe, ostreeBootcsum)
+		options := envBootOptions(kernelcmdline.Build(env.ID, mode, backend, blockdev.UsbSafe, ostreeBootcsum), boot, r)
 		isDefault := env.ID == r.DefaultBoot
-		if err := install.WriteBLSEntry(espMount, id, envTitle(env, string(mode)), "/EFI/"+env.ID+"/vmlinuz", "/EFI/"+env.ID+"/initrd.img", options, isDefault); err != nil {
+		if err := install.WriteBLSEntry(espMount, id, envTitle(env, string(mode)), "/EFI/"+env.ID+"/vmlinuz", "/EFI/"+env.ID+"/initrd.img", envDevicetree(boot, "/EFI/"+env.ID+"/devicetree"), options, isDefault); err != nil {
 			return err
 		}
 	}
@@ -320,6 +321,6 @@ func updateEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, storeM
 		fmt.Fprintf(os.Stderr, ">>> WARNING: failed to provision update tools into %s: %v\n", env.ID, err)
 	}
 
-	fmt.Printf(">>> Updated %s (kernel=%s)\n", env.ID, kver)
+	fmt.Printf(">>> Updated %s (kernel=%s)\n", env.ID, boot.Kver)
 	return nil
 }

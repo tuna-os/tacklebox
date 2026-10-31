@@ -29,6 +29,7 @@ func (f *fakeTarget) Cleanup()                                                {}
 func (f *fakeTarget) InstallMode() target.InstallMode                         { return f.mode }
 func (f *fakeTarget) KernelPath(envID string) string                          { return "/EFI/" + envID + "/vmlinuz" }
 func (f *fakeTarget) InitrdPath(envID string) string                          { return "/EFI/" + envID + "/initrd.img" }
+func (f *fakeTarget) DevicetreePath(envID string) string                      { return "/EFI/" + envID + "/devicetree" }
 
 // --- compressArtifact ---
 
