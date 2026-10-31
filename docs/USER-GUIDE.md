@@ -154,8 +154,10 @@ script directory and uses it as the current directory. Changes affect only the
 live squash and not installed systems. Use scripts to add a brand, preload
 Flatpaks, or set up a kiosk. The distro-agnostic basics (live user,
 autologin, networking) are already handled by the embedded baseline
-that runs before your scripts; `TBOX_LIVE_USER` / `TBOX_DESKTOP`
-override its defaults.
+that runs before your scripts. `TBOX_LIVE_USER` / `TBOX_DESKTOP` in the
+source image's container environment override its defaults; host exports are
+not forwarded. See the [environment variables reference](ENVIRONMENT-VARIABLES.md)
+for defaults, scope, and build/boot tuning.
 
 `TBOX_CUSTOMIZE_TIMEOUT=<seconds>` optionally bounds the script container (the
 default is disabled). After the scripts finish, Tacklebox commits that

@@ -19,6 +19,8 @@ The guide covers prerequisites, verified `just` setup, credentials, provider
 costs, and how to stop with Ctrl+C. Your subscription quota or API charges apply.
 Never post account credentials or API keys in issues or pull requests.
 
+Build tuning and boot troubleshooting: [environment variables reference](docs/ENVIRONMENT-VARIABLES.md).
+
 ## ✨ Key Features
 
 * **🚀 Multi-Boot Control:** Automatically installs and manages `systemd-boot`
