@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -149,6 +150,7 @@ func buildDdiIso(_ js.Value, args []js.Value) any {
 
 		emitProgress("iso", 0, 1)
 		jw := &jsChunkWriter{cb: onChunk}
+		isoOutput := bufio.NewWriterSize(jw, browserWriteBufferSize)
 		inputs := []purefs.IsoInput{
 			{Path: "/EFI/efi.img", Size: int64(len(esp)), Source: bytesSource(esp)},
 			{Path: "/EFI/BOOT/" + ddiBootName, Size: int64(len(sdboot)), Source: bytesSource(sdboot)},
@@ -156,8 +158,11 @@ func buildDdiIso(_ js.Value, args []js.Value) any {
 			{Path: initrdPath, Size: int64(len(initrd)), Source: bytesSource(initrd)},
 			{Path: "/LiveOS/" + sfsName, Size: sfsSize, Source: sfsSource},
 		}
-		if err := purefs.WriteIso9660(jw, label, inputs, "/EFI/efi.img"); err != nil {
+		if err := purefs.WriteIso9660(isoOutput, label, inputs, "/EFI/efi.img"); err != nil {
 			return nil, err
+		}
+		if err := isoOutput.Flush(); err != nil {
+			return nil, fmt.Errorf("flush ISO output: %w", err)
 		}
 		emitProgress("iso", 1, 1)
 		reportMem("ddi-iso")
@@ -195,8 +200,12 @@ func fetchRootToArena(url, name, wantSha string, arena *opfsArena) error {
 		}
 		body = xr
 	}
-	if _, err := io.Copy(arenaWriter{arena}, body); err != nil {
+	output := bufio.NewWriterSize(arenaWriter{arena}, browserWriteBufferSize)
+	if _, err := io.Copy(output, body); err != nil {
 		return fmt.Errorf("%s: %w", name, err)
+	}
+	if err := output.Flush(); err != nil {
+		return fmt.Errorf("%s: flush output: %w", name, err)
 	}
 	if wantSha != "" {
 		if got := hex.EncodeToString(h.Sum(nil)); got != strings.ToLower(wantSha) {

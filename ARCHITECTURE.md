@@ -162,6 +162,15 @@ and `internal/purefs` packages. Their data flow is:
    exposes promise-based JavaScript calls (`tboxIntrospect`, `tboxBuildIso`,
    and `tboxBuildDdiIso`) and sends the ISO to the caller in chunks.
 
+Browser EROFS, ISO, and DDI root-copy output uses bounded 1 MiB write buffers.
+Each successful path flushes its buffer before it seals an arena or reports
+completion and byte counts. Sink promises still apply backpressure, and write
+or flush errors reject the operation. The buffers do not hold a whole ISO.
+
+An arena read closes pending writes and uses a snapshot of the file.
+Only a later write opens the arena again and keeps the committed bytes.
+Repeated reads do not open another stream for writes or copy the file.
+
 `cmd/purebuild` also accepts a rootfs tar or a systemd-sysupdate DDI artifact
 instead of an OCI reference. These inputs join the flow after registry unpack;
 the filesystem and ISO authoring stages remain shared. Changes to the shared
