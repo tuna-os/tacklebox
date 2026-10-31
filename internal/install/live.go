@@ -81,7 +81,7 @@ func InstallLive(image, dstSquashfs, compression string) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpPath)
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(tmpPath)))
 
 	// Single podman unshare session: mount → squashfs → unmount.
 	// shellEscape is applied to every variable interpolated into the script.
@@ -134,13 +134,11 @@ func InstallLiveWithStore(image, storePath, dstSquashfs, compression string) err
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpPath)
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(tmpPath)))
 
-	// VFS store path may be under a root-owned staging tree; podman unshare
-	// runs as the original user. Make storePath world-readable so the unshare
-	// user can copy from it.
-	if err := os.Chmod(storePath, 0755); err != nil {
-		return fmt.Errorf("chmod VFS store %s: %w", storePath, err)
+	// Keep the VFS root private while granting the selected unshare user access.
+	if err := privateBuildDir(storePath); err != nil {
+		return err
 	}
 
 	script := fmt.Sprintf(`set -eu
@@ -236,7 +234,7 @@ func InstallLiveCombined(envs []LiveEnv, dstSquashfs, compression string) error 
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpPath)
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(tmpPath)))
 
 	fmt.Printf(">>> [live] squashing %d envs into %s (cross-env dedup, podman unshare)\n", len(envs), dstSquashfs)
 	if err := RunUnshare(combinedSquashScript(envs, mksquashfsPath, tmpPath, level, block)); err != nil {
@@ -347,20 +345,17 @@ func installDelta(baseImage string, env LiveEnv, dstSquashfs, compression string
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpPath)
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(tmpPath)))
 
 	// World-writable staging dir for the diff output: created by the
 	// (possibly root) tacklebox process, written by the unshare user.
 	// Lives under TMPDIR like tempSquashFile, cleaned up via sudo because
 	// the userns leaves subuid-owned entries behind.
-	stage, err := os.MkdirTemp("", "tbox-delta-*")
+	stage, err := tempBuildDir("", "tbox-delta-*")
 	if err != nil {
 		return fmt.Errorf("mktemp delta stage: %w", err)
 	}
-	defer func() { _ = runner.Run("sudo", "rm", "-rf", stage) }()
-	if err := os.Chmod(stage, 0777); err != nil {
-		return fmt.Errorf("chmod delta stage: %w", err)
-	}
+	defer func() { _ = runner.Run("sudo", "rm", "-rf", filepath.Dir(stage)) }()
 
 	var excludeFlags strings.Builder
 	for _, x := range squashExcludes {
@@ -415,16 +410,20 @@ func squashCacheName(parts []string, level, block string) string {
 // tempSquashFile creates the user-writable scratch file mksquashfs writes
 // to inside podman unshare (see InstallLive for why the chmod).
 func tempSquashFile() (string, error) {
-	tmpF, err := os.CreateTemp("", "tbox-live-*.squashfs")
+	dir, err := tempBuildDir("", "tbox-live-*")
 	if err != nil {
-		return "", fmt.Errorf("create temp squashfs: %w", err)
+		return "", err
 	}
-	tmpF.Close()
-	if err := os.Chmod(tmpF.Name(), 0666); err != nil {
-		os.Remove(tmpF.Name())
-		return "", fmt.Errorf("chmod temp squashfs: %w", err)
+	file := filepath.Join(dir, "output.squashfs")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		os.RemoveAll(filepath.Dir(dir))
+		return "", err
 	}
-	return tmpF.Name(), nil
+	if err := os.Chmod(file, 0666); err != nil {
+		os.RemoveAll(filepath.Dir(dir))
+		return "", err
+	}
+	return file, nil
 }
 
 // stashSquashfs moves a freshly-built squashfs into the cache (when
@@ -683,15 +682,11 @@ func fetchToStaging(image string) (stagedFiles, error) {
 
 	// Use a user-writable temp dir for the podman run so rootless podman
 	// can write the output files without needing elevated permissions.
-	tmpDir, err := os.MkdirTemp("", "tbox-extract-*")
+	tmpDir, err := tempBuildDir("", "tbox-extract-*")
 	if err != nil {
 		return stagedFiles{}, fmt.Errorf("mktemp: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
-	// World-writable so the user running inside podman unshare can write here.
-	if err := os.Chmod(tmpDir, 0777); err != nil {
-		return stagedFiles{}, fmt.Errorf("chmod tmpdir: %w", err)
-	}
+	defer os.RemoveAll(filepath.Dir(tmpDir))
 
 	if runner.Verbose {
 		fmt.Printf(">>> Extracting boot files from %s\n", image)

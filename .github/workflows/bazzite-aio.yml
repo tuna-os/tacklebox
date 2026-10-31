@@ -20,6 +20,9 @@ on:
     # Weekly, Tuesday 05:00 UTC (staggered from the Monday weekly PoC build)
     - cron: '0 5 * * 2'
 
+permissions:
+  contents: read
+
 concurrency:
   group: bazzite-aio
   cancel-in-progress: true
@@ -28,8 +31,6 @@ jobs:
   build-bazzite-aio:
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    permissions:
-      contents: read
     env:
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
       # The job's tacklebox output base; ci-cleanup removes only what is
@@ -45,7 +46,7 @@ jobs:
           go-version-file: go.mod
 
       - name: free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main as of 2026-06-09
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
           android: true

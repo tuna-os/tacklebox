@@ -278,14 +278,14 @@ func TestResolveImageIDs_UnresolvableDisablesCaching(t *testing.T) {
 
 // --- tempSquashFile ---
 // Real filesystem, no mocking needed or wanted — this is the actual
-// contract callers depend on (a genuinely world-writable temp file).
+// contract callers depend on (container-writable output in a private parent).
 
 func TestTempSquashFile_CreatesWorldWritableFile(t *testing.T) {
 	path, err := tempSquashFile()
 	if err != nil {
 		t.Fatalf("tempSquashFile: %v", err)
 	}
-	defer os.Remove(path)
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(path)))
 
 	info, err := os.Stat(path)
 	if err != nil {
@@ -294,7 +294,7 @@ func TestTempSquashFile_CreatesWorldWritableFile(t *testing.T) {
 	if info.Mode().Perm() != 0666 {
 		t.Errorf("perm = %o, want 0666 (world-writable — mksquashfs runs as a different user inside podman unshare)", info.Mode().Perm())
 	}
-	if !strings.Contains(filepath.Base(path), "tbox-live-") {
+	if !strings.Contains(filepath.Base(filepath.Dir(filepath.Dir(path))), "tbox-live-") {
 		t.Errorf("temp file name %q doesn't match the expected tbox-live-* pattern", path)
 	}
 }

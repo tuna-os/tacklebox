@@ -130,6 +130,7 @@ It also does not change catalogs that independent frontends maintain.
 
 *   [User guide](docs/USER-GUIDE.md) — commands, recipe reference, ISO/dedup layouts, day-2 operations, problem diagnosis
 *   [Architecture](ARCHITECTURE.md) — build pipeline, boot chain, package layout
+*   [Environment variables](docs/ENVIRONMENT-VARIABLES.md) — build settings, live image settings, and boot kernel arguments
 *   [GitHub ISO setup](docs/github-iso-setup.md) — ISO builds in CI, with the necessary host packages
 *   [Runbooks](runbooks/) — build/ISO generation and boot/update problem diagnosis
 
@@ -170,6 +171,8 @@ sudo install -m 0755 tacklebox /usr/local/bin/tacklebox
 A container image is also published as `ghcr.io/tuna-os/tacklebox:latest` for
 CI and other container-based workflows. Pin a version or `sha-*` tag when you
 need reproducible builds.
+See [container image usage](docs/CONTAINER-IMAGE.md) for Docker and Podman
+commands, required mounts, and CI setup.
 
 ### Build a Multi-Boot Image
 ```bash
@@ -276,12 +279,30 @@ customize run and the re-squash:
 
 ```json
 {
-  "id": "tunaos-kde",
-  "image": "ghcr.io/tuna-os/yellowfin:kde",
-  "live_customize": ["live/customize-live.sh"],
+  "id": "bluefin",
+  "image": "ghcr.io/ublue-os/bluefin:stable",
+  "live_customize": ["customize-scripts/example-customize.sh"],
   "modes": ["live"]
 }
 ```
+
+See the complete [example recipe](examples/iso-with-customize.json) and
+[commented customization script](examples/customize-scripts/example-customize.sh).
+The script adds a console banner and masks SSH in the live environment. From
+the repository root, with the [ISO requirements](#-requirements) installed:
+
+```bash
+sudo env TBOX_CUSTOMIZE_CAPS=net_admin tacklebox build examples/iso-with-customize.json --iso ./custom-live.iso
+```
+
+The extra capability supports Flatpak deployment, including any preinstalls
+declared by the image and processed by the baseline. The script also has
+commented commands that install a Flatpak; uncomment them to add GNOME Calculator.
+The image must include `flatpak`, and installation needs network access.
+The baseline sets up the live user and autologin before this script runs.
+Customizations affect the live environment, not the source image or installed
+systems. After boot, check `/etc/issue.d/tacklebox-example.issue` and
+`systemctl is-enabled sshd.service` (which should report `masked`).
 
 `title` is optional and sets the human-facing boot menu entry name
 (e.g. "Bluefin (GNOME)"); the env `id` is used when omitted.
@@ -373,10 +394,25 @@ ISO targets (`--iso`) also need:
 [`docs/github-iso-setup.md`](docs/github-iso-setup.md) lists the distribution
 packages that provide the ISO tools, for both local builds and CI runners.
 
+### Desktop GUI (macOS & Windows)
+
+`bootc install to-filesystem` needs the semantics of a Linux kernel, so the
+GUI runs that step in a Linux helper on other hosts. On macOS, the helper is
+a QEMU virtual machine with TCG, and `authopen` gives it access to the USB
+disk. On Windows, the helper is WSL2, and `usbipd-win` attaches the USB disk.
+See [host virtualization](ARCHITECTURE.md#cross-platform-gui-multi-boot-manager-integration).
+
 ## 📦 Releases & Operations
 
-`.github/workflows/release-image.yml` publishes `ghcr.io/tuna-os/tacklebox`
-on every `main` push and `v*` tag. If a bad image reaches `:latest`, see
+`.github/workflows/release.yml` publishes static binaries for Linux on AMD64
+and ARM64, with checksums, for every `v*` tag. A tag must have a matching
+`docs/releases/<tag>.md` file; the workflow verifies both checksums before it
+creates the GitHub Release.
+
+`.github/workflows/release-image.yml` publishes the multi-architecture
+`ghcr.io/tuna-os/tacklebox` image on every `main` push and `v*` tag. The
+workflow adds two tags for each version: one with a leading `v` and one
+without it. If a bad image reaches `:latest`, see
 [`runbooks/rollback-a-bad-tacklebox-image.md`](runbooks/rollback-a-bad-tacklebox-image.md).
 Boot/update and build/ISO-generation failures have their own runbooks in
 [`runbooks/`](runbooks/).

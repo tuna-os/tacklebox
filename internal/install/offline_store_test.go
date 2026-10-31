@@ -121,11 +121,13 @@ func TestBuildOfflineStore_EmptyImages(t *testing.T) {
 	}
 }
 
-func TestBuildOfflineStore_CreatesWorldWritableDirs(t *testing.T) {
+func TestBuildOfflineStore_CreatesPrivateDirs(t *testing.T) {
 	// BuildOfflineStore calls ClearEnvDir which uses RunCombined (unmockable).
 	// Skip if sudo is not available.
 	skipIfNoSudo(t)
 
+	// Pin root context so privateBuildDir does not chown to SUDO_USER.
+	t.Setenv("TACKLEBOX_CONTEXT", "root")
 	tmp := t.TempDir()
 	stagingRoot := filepath.Join(tmp, "staging")
 
@@ -151,8 +153,8 @@ func TestBuildOfflineStore_CreatesWorldWritableDirs(t *testing.T) {
 		t.Skip("skopeo succeeded unexpectedly")
 	}
 
-	// Verify a world-writable store directory was created under stagingRoot
-	// without hardcoding its internal name.
+	// Verify the store directories under stagingRoot are private (0700) and
+	// none is world-writable, without hardcoding their internal names.
 	entries, err := os.ReadDir(stagingRoot)
 	if err != nil {
 		t.Fatalf("ReadDir stagingRoot: %v", err)
@@ -167,13 +169,15 @@ func TestBuildOfflineStore_CreatesWorldWritableDirs(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if fi.Mode().Perm() == 0777 {
+		switch fi.Mode().Perm() {
+		case 0700:
 			found = true
-			break
+		case 0777:
+			t.Errorf("%s is world-writable; store roots must stay private", e.Name())
 		}
 	}
 	if !found {
-		t.Error("no world-writable directory found under stagingRoot")
+		t.Error("no private (0700) store directory found under stagingRoot")
 	}
 }
 
