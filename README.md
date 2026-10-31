@@ -266,12 +266,31 @@ customize run and the re-squash:
 
 ```json
 {
-  "id": "tunaos-kde",
-  "image": "ghcr.io/tuna-os/yellowfin:kde",
-  "live_customize": ["live/customize-live.sh"],
+  "id": "bluefin",
+  "image": "ghcr.io/ublue-os/bluefin:stable",
+  "live_customize": ["customize-scripts/example-customize.sh"],
   "modes": ["live"]
 }
 ```
+
+See the complete [example recipe](examples/iso-with-customize.json) and
+[commented customization script](examples/customize-scripts/example-customize.sh).
+The script adds a console banner and masks SSH in the live environment. From
+the repository root, with the [ISO requirements](#-requirements) installed:
+
+```bash
+sudo env TBOX_CUSTOMIZE_CAPS=net_admin tacklebox build examples/iso-with-customize.json --iso ./custom-live.iso
+```
+
+The extra capability supports Flatpak deployment, including any preinstalls
+declared by the image and processed by the baseline. The script also includes
+optional Flatpak installation commands; uncomment them to add GNOME Calculator.
+The image must include `flatpak`, and installation needs network access.
+The built-in baseline already configures the live user and autologin before
+this script runs. Customizations affect the live environment, not the source
+image or installed systems. After booting, check
+`/etc/issue.d/tacklebox-example.issue` and `systemctl is-enabled sshd.service`
+(which should report `masked`).
 
 `title` is optional and sets the human-facing boot menu entry name
 (e.g. "Bluefin (GNOME)"); the env `id` is used when omitted.
