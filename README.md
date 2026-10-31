@@ -130,6 +130,7 @@ It also does not change catalogs that independent frontends maintain.
 
 *   [User guide](docs/USER-GUIDE.md) — commands, recipe reference, ISO/dedup layouts, day-2 operations, problem diagnosis
 *   [Architecture](ARCHITECTURE.md) — build pipeline, boot chain, package layout
+*   [Environment variables](docs/ENVIRONMENT-VARIABLES.md) — build settings, live image settings, and boot kernel arguments
 *   [GitHub ISO setup](docs/github-iso-setup.md) — ISO builds in CI, with the necessary host packages
 *   [Runbooks](runbooks/) — build/ISO generation and boot/update problem diagnosis
 
