@@ -132,12 +132,12 @@ Each listed script runs **inside a container of the environment image**. The
 container has root, `CAP_SYS_ADMIN`, and network access. Tacklebox mounts the
 script directory and uses it as the current directory. Changes affect only the
 live squash and not installed systems. Use scripts to add a brand, preload
-Flatpaks, or set up a kiosk. The distro-agnostic basics (live user,
-autologin, networking) are already handled by the embedded baseline
-that runs before your scripts. `TBOX_LIVE_USER` / `TBOX_DESKTOP` in the
-source image's container environment override its defaults; host exports are
-not forwarded. See the [environment variables reference](ENVIRONMENT-VARIABLES.md)
-for defaults, scope, and build/boot tuning.
+Flatpaks, or set up a kiosk. The embedded baseline runs before your scripts and
+sets up the distro-agnostic basics (live user, autologin, networking).
+
+To change the baseline defaults, set `TBOX_LIVE_USER` / `TBOX_DESKTOP` in the
+source image's container environment. The host builder does not forward host
+exports. See the [environment variables reference](ENVIRONMENT-VARIABLES.md).
 
 `TBOX_CUSTOMIZE_TIMEOUT=<seconds>` optionally bounds the script container (the
 default is disabled). After the scripts finish, Tacklebox commits that

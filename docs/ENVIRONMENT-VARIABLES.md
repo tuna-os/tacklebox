@@ -3,8 +3,8 @@
 This reference covers the host-tool `tacklebox` builder, its embedded live
 baseline, and the QEMU smoke-test script. Build settings below do not configure
 `purebuild` or the browser builder; those use their own command-line or
-JavaScript options. Kernel arguments are listed separately because exporting a
-shell variable does not change the boot command line.
+JavaScript options. Kernel arguments have their own section, because a shell
+variable that you export does not change the boot command line.
 
 ## Host build settings
 
@@ -31,8 +31,9 @@ sudo env TBOX_CUSTOMIZE_COMMIT_TIMEOUT=1800 TBOX_CUSTOMIZE_CAPS=NET_ADMIN \
 Customization runs only when the environment has `live_customize` scripts; the
 embedded baseline runs before those scripts. The script-container timeout and
 commit timeout are separate, and any outer job deadline still applies.
-Customization results are cached: changing a variable alone may reuse an
-existing derived image. `TBOX_FLATPAK_PREINSTALL` is included in the cache key. See [live customization](USER-GUIDE.md#live_customize).
+Tacklebox keeps a cache of customization results: if you change only a
+variable, the build can reuse an existing derived image. The cache key includes
+`TBOX_FLATPAK_PREINSTALL`. See [live customization](USER-GUIDE.md#live_customize).
 
 Standard host variables also affect storage and subprocesses:
 
@@ -52,11 +53,11 @@ Sources: [customization](../internal/install/customize.go),
 
 ## Settings inside the live image
 
-These are read by [the embedded baseline](../src/live/baseline.sh) at **build
+[The embedded baseline](../src/live/baseline.sh) reads these at **build
 time**, not at boot. The host builder does **not** forward `TBOX_LIVE_USER` or
 `TBOX_DESKTOP`. Set them in the source image's container environment (for example,
-a Containerfile `ENV` instruction). Exporting them in a recipe script is too
-late to affect the baseline, which has already run.
+a Containerfile `ENV` instruction). If you export them in a recipe script, the
+baseline has already run and does not see them.
 
 | Variable | Type | Default | Effect | Example in a Containerfile |
 |---|---|---|---|---|
@@ -82,12 +83,12 @@ module also defaults to `8192` when the argument is absent.
 | `tacklebox.env` | Environment ID string | Selected live ISO environment | Identifies the environment in the command line and serial log, e.g. `tacklebox.env=alpha`. |
 
 For a one-off overlay-size change, edit the existing argument in the boot menu
-entry before booting. Avoid adding a second conflicting argument. Recipes can
-supply additional `kernel_args`; see the [user guide](USER-GUIDE.md) and the
+entry before boot. Do not add a second argument with a different value.
+Recipes can supply additional `kargs`; see the [user guide](USER-GUIDE.md) and the
 [boot architecture](../ARCHITECTURE.md#the-dracut-modules-90tbox-live-and-95tbox-root).
 Generated arguments come from [kernelcmdline](../internal/kernelcmdline/kernelcmdline.go);
-the live mount settings are consumed by
-[tbox-live-root.sh](../src/dracut/90tbox-live/tbox-live-root.sh).
+[tbox-live-root.sh](../src/dracut/90tbox-live/tbox-live-root.sh) reads the
+live mount settings.
 
 ## Boot smoke tests
 

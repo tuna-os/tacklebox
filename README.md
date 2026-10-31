@@ -19,8 +19,6 @@ The guide covers prerequisites, verified `just` setup, credentials, provider
 costs, and how to stop with Ctrl+C. Your subscription quota or API charges apply.
 Never post account credentials or API keys in issues or pull requests.
 
-Build tuning and boot troubleshooting: [environment variables reference](docs/ENVIRONMENT-VARIABLES.md).
-
 ## ✨ Key Features
 
 * **🚀 Multi-Boot Control:** Automatically installs and manages `systemd-boot`
@@ -102,6 +100,7 @@ Tacklebox automatically handles these requirements of the Composefs backend:
 
 *   [User guide](docs/USER-GUIDE.md) — commands, recipe reference, ISO/dedup layouts, day-2 operations, problem diagnosis
 *   [Architecture](ARCHITECTURE.md) — build pipeline, boot chain, package layout
+*   [Environment variables](docs/ENVIRONMENT-VARIABLES.md) — build settings, live image settings, and boot kernel arguments
 *   [GitHub ISO setup](docs/github-iso-setup.md) — ISO builds in CI, with the necessary host packages
 *   [Runbooks](runbooks/) — build/ISO generation and boot/update problem diagnosis
 
