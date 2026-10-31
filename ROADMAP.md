@@ -38,7 +38,12 @@ The first versioned release is ready when:
 - a 30-day review records downstream upgrade results, external install/use
   feedback, and release defects to inform the next version.
 
-Tracking: #237
+Tracking: #408 (active ownership and execution); #237 (original gate, closed).
+
+Release owner and 30-day review owner: **@hanthor**. The confirmed initial
+version is **v0.1.0**, targeting **2026-11-08**. Candidate evidence, draft
+release notes, remaining publication gates, and the publication-relative review
+are recorded in the [first-release handoff](docs/releases/first-release-handoff.md).
 
 ## Planned
 
