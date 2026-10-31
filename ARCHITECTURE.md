@@ -101,7 +101,10 @@ browser builder); it creates live ISOs without Podman, mount operations,
      - Skipped entirely when `"skip_initramfs_rebuild": true` is set on the env
        (use this for images that already ship the required modules).
    - `Bootc`: `podman run … <image> bootc install to-filesystem … --stateroot <env> /target`,
-     followed by `ExtractBootFiles` (vmlinuz + prepared initrd into the ESP).
+     followed by `ExtractBootFiles` (vmlinuz + prepared initrd, plus the
+     kernel's `devicetree` when the image ships one, into the ESP; it also
+     returns the image's `/usr/lib/bootc/kargs.d` arguments, read by bootc's
+     rules for the image's architecture).
    - `Live`: `podman image mount` + `mksquashfs` into `LiveOS/<env>.rootfs.sfs`,
      followed by `ExtractBootFiles` into `images/pxeboot/<env>/`. The squashfs
      is cached under `<output-base>/squashfs-cache/` keyed by image ID +
@@ -124,7 +127,10 @@ browser builder); it creates live ISOs without Podman, mount operations,
      (base image, env image) pair, so single-image updates re-diff only
      the changed env — the per-env caching the combined layout gives up.
    - Both: write a BLS entry under `loader/entries/<id>.conf` (menu title from
-     the recipe's per-env `title`, falling back to the env ID).
+     the recipe's per-env `title`, falling back to the env ID). Its options
+     are tacklebox's own, then the env image's kargs.d arguments, then the
+     recipe's `kargs`; it carries a `devicetree` line only when the image
+     ships `/usr/lib/modules/<kver>/devicetree`.
 8. **`Target.Finalize(track)`** returns the artifact path.
    - BlockTarget: unmount + detach loop. Returns the .img / device path.
    - IsoTarget: extract sd-boot from EFISource, mirror pxeboot to iso-root,
@@ -148,7 +154,10 @@ and `internal/purefs` packages. Their data flow is:
 4. **Author filesystems** — `purefs` streams the reconstructed tree into EROFS,
    creates the FAT32 ESP, and writes the final El Torito ISO9660 image. Kernel,
    initramfs, UKI, and systemd-boot inputs come from the image tree or explicit
-   builder options.
+   builder options. The kernel's `devicetree`, when the image ships one, is
+   staged beside the kernel and named in the BLS entry / grub.cfg
+   (`purefs.LiveBLSEntry`, `purefs.LiveGrubCfg`), and the image's kargs.d
+   arguments (`purefs.ImageKargs`) are appended to the live options.
 5. **Stream the result** — `purebuild` writes a native output file. `tbwasm`
    exposes promise-based JavaScript calls (`tboxIntrospect`, `tboxBuildIso`,
    and `tboxBuildDdiIso`) and sends the ISO to the caller in chunks.
@@ -170,6 +179,7 @@ type Target interface {
     InstallMode() InstallMode    // Bootc | Live — picks the per-env backend
     KernelPath(envID) string     // BLS-relative path for `linux=`
     InitrdPath(envID) string     // BLS-relative path for `initrd=`
+    DevicetreePath(envID) string // BLS-relative path for `devicetree=`
 }
 ```
 

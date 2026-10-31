@@ -59,4 +59,4 @@ pull-request CI runs the broader smoke suite.
 ## Questions?
 
 - [TunaOS Documentation](https://tunaos.org)
-- [GitHub Issues](https://github.com/tuna-os/tunaOS/issues)
+- [GitHub Issues](https://github.com/tuna-os/tacklebox/issues)

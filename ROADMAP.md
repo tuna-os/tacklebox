@@ -1,6 +1,6 @@
 # Tacklebox Roadmap
 
-**Last updated**: 2026-10-25
+**Last updated**: 2026-10-31
 
 Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrator for bootc.
 
@@ -24,7 +24,10 @@ Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrato
 - ✅ Offline-store squashfs compression and digest-pinned tag references (#335, #336)
 - ✅ Browser parity engine and operation-scoped build observations (#381, #387, #391)
 
-## Near-term release gate (Q4 2026)
+## Near-term release gate
+
+Established on **2026-08-23** by [#238](https://github.com/tuna-os/tacklebox/pull/238)
+(merge commit [`5ea6f21`](https://github.com/tuna-os/tacklebox/commit/5ea6f2131f7c3e8a9aa731837b1e77328b7a210d)).
 
 Tacklebox is consumed by downstream TunaOS build tooling, but has not yet
 published a versioned release. Before expanding the feature surface, establish
@@ -44,28 +47,45 @@ The first versioned release is ready when:
 - a 30-day review records downstream upgrade results, external install/use
   feedback, and release defects to inform the next version.
 
-Tracking: #237
+Tracking: #237. Release ownership and schedule: [#408](https://github.com/tuna-os/tacklebox/issues/408).
 
-### Measured progress and Q4 baseline
+### Execution status — 2026-10-25
 
-Main branch builds pass all lint, unit, and smoke tests. CI publishes images
-to GHCR with `latest` and commit `sha-*` tags.
+No Git tags or GitHub Releases exist as of this check. No release candidate
+has been selected, and the 30-day adoption review has not started. Existing
+workflows and passing development builds do not establish a supported release.
 
-To establish the v0.1.0 baseline, adopt the automated release workflow
-used by `tuna-os/remora` (#237):
-- Use `release-please` with GoReleaser to publish signed binaries, checksums,
-  and immutable container tags.
-- Apply the `bump-minor-pre-major` version policy for pre-1.0 stability.
-- Define explicit updates for downstream pins to prevent drift in configuration.
+| Gate | Verified evidence / remaining work |
+|---|---|
+| Unit, block-device and ISO boot checks | `lint-test`, `verify-smoke` and `iso-smoke` passed on `5cc970f316615937c9caa5b7b9244381992cf0b1`: [CI run, 2026-10-24](https://github.com/tuna-os/tacklebox/actions/runs/40079870593). |
+| Cross-platform disk smoke | Passed on the same commit: [run, 2026-10-23](https://github.com/tuna-os/tacklebox/actions/runs/40029936316). Repeat/record all checks for the selected release commit if it differs. |
+| Binary assets and checksums | Not published. The tag-triggered [binary workflow](.github/workflows/release.yml) exists; its release path remains unverified. Publication hardening is proposed in #383. |
+| Matching container version/digest | [Container publication passed on the same commit](https://github.com/tuna-os/tacklebox/actions/runs/40029936386). This is development publication, not evidence of a matching versioned release. Record and verify release tags and digest after publication. |
+| Release notes and support contract | Pending: supported targets, limitations, recipe/media compatibility, upgrade and rollback instructions must accompany the selected release. |
+| Downstream immutable pins | Completion not verified; record consumer PRs and merged commits in #408 after artifacts are available. |
+| 30-day adoption review | Not started; publication date + 30 days, with downstream upgrade results, external install/use feedback and release defects recorded in #237. |
 
-## Planned (post-v0.1.0)
+**Ownership and target:** release owner is unassigned; a maintainer must name
+one in #408. Proposed initial version: `v0.1.0`; proposed publication target:
+**2026-11-08**, subject to owner confirmation and the gates above. Neither is
+an approved release commitment. Release automation is tracked in #359, with
+broader release-policy decisions in #354. No tag or publication is authorized
+by this status update.
+
+**Next checkpoints:** the release owner records the candidate SHA and its test
+runs, confirms publication readiness, and refreshes this status at publication
+and downstream pin completion. At publication, name the review owner and set
+the review date to publication + 30 days (2026-12-08 if the proposed target is
+met). Record upgrade/rollback outcomes, feedback or its absence, defects and
+next-version actions; link the review from #237 and here.
+
+## Planned
 
 - **GUI customization & signed bundles** — port browser ISO Builder customization panels to desktop GUI + signed native app bundles (#104)
-- **Persist lifecycle** — quota, GC, and migration (#26, #252)
-- **Per-stateroot greenboot** — health-check and auto-rollback per env (#25, #252)
-- **ARM64 multi-ISO** — aarch64 sd-boot + OVMF testing (#252)
+- **Per-stateroot greenboot** — health-check + auto-rollback per env
+- **Persist lifecycle** — quota, GC, migration
+- **ARM64 multi-ISO** — aarch64 sd-boot + OVMF testing
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
-

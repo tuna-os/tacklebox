@@ -377,6 +377,22 @@ func envTitle(env recipe.BootableEnvironment, mode string) string {
 	return fmt.Sprintf("%s (%s)", t, mode)
 }
 
+// envBootOptions completes an env's BLS options: base, then the kernel
+// arguments its own image declares in /usr/lib/bootc/kargs.d (what bootc
+// gives the installed system), then the recipe's explicit `kargs`.
+func envBootOptions(base string, boot install.BootFiles, r recipe.MediaRecipe) string {
+	return kernelcmdline.Append(kernelcmdline.Append(base, boot.Kargs), r.Kargs)
+}
+
+// envDevicetree is the BLS `devicetree` path for an env: path when its
+// image ships a device tree for the kernel, "" (no line) otherwise.
+func envDevicetree(boot install.BootFiles, path string) string {
+	if !boot.Devicetree {
+		return ""
+	}
+	return path
+}
+
 func printTimings(t map[string]time.Duration, total time.Duration) {
 	// Stable column layout. Sort by descending duration so the cost centres
 	// stand out without the reader having to scan the whole list.
@@ -585,10 +601,10 @@ func installEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt t
 	}); err != nil {
 		return fmt.Errorf("prepare initramfs for %s: %w", env.ID, err)
 	}
-	var kver string
+	var boot install.BootFiles
 	if err := track("extract:"+env.ID, func() error {
 		var err error
-		kver, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverride)
+		boot, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverride)
 		return err
 	}); err != nil {
 		return fmt.Errorf("extract boot files for %s: %w", env.ID, err)
@@ -608,9 +624,9 @@ func installEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt t
 
 	for _, mode := range env.Modes {
 		id := fmt.Sprintf("%s-%s", env.ID, mode)
-		options := kernelcmdline.Append(kernelcmdline.Build(env.ID, mode, backend, blockdev.UsbSafe, ostreeBootcsum), r.Kargs)
+		options := envBootOptions(kernelcmdline.Build(env.ID, mode, backend, blockdev.UsbSafe, ostreeBootcsum), boot, r)
 		isDefault := env.ID == r.DefaultBoot
-		if err := install.WriteBLSEntry(espMount, id, envTitle(env, string(mode)), tgt.KernelPath(env.ID), tgt.InitrdPath(env.ID), options, isDefault); err != nil {
+		if err := install.WriteBLSEntry(espMount, id, envTitle(env, string(mode)), tgt.KernelPath(env.ID), tgt.InitrdPath(env.ID), envDevicetree(boot, tgt.DevicetreePath(env.ID)), options, isDefault); err != nil {
 			return err
 		}
 	}
@@ -623,7 +639,7 @@ func installEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt t
 		fmt.Fprintf(os.Stderr, ">>> WARNING: failed to provision update tools into %s: %v\n", env.ID, err)
 	}
 
-	fmt.Printf(">>> Finished environment: %s (kernel=%s)\n", env.ID, kver)
+	fmt.Printf(">>> Finished environment: %s (kernel=%s)\n", env.ID, boot.Kver)
 	return nil
 }
 
@@ -698,21 +714,21 @@ func installEnvLive(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt ta
 	if err := runner.Run("sudo", "chmod", "0755", bootDir); err != nil {
 		return fmt.Errorf("chmod boot dir %s: %w", bootDir, err)
 	}
-	var kver string
+	var boot install.BootFiles
 	if err := track("extract:"+env.ID, func() error {
 		var err error
-		kver, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverride)
+		boot, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverride)
 		return err
 	}); err != nil {
 		return fmt.Errorf("extract boot files for %s: %w", env.ID, err)
 	}
 
-	options := kernelcmdline.Append(kernelcmdline.Live(env.ID, label), r.Kargs)
+	options := envBootOptions(kernelcmdline.Live(env.ID, label), boot, r)
 	isDefault := env.ID == r.DefaultBoot
-	if err := install.WriteBLSEntry(espMount, env.ID, envTitle(env, "live"), tgt.KernelPath(env.ID), tgt.InitrdPath(env.ID), options, isDefault); err != nil {
+	if err := install.WriteBLSEntry(espMount, env.ID, envTitle(env, "live"), tgt.KernelPath(env.ID), tgt.InitrdPath(env.ID), envDevicetree(boot, tgt.DevicetreePath(env.ID)), options, isDefault); err != nil {
 		return err
 	}
-	fmt.Printf(">>> Finished environment: %s (kernel=%s)\n", env.ID, kver)
+	fmt.Printf(">>> Finished environment: %s (kernel=%s)\n", env.ID, boot.Kver)
 	return nil
 }
 
@@ -798,22 +814,22 @@ func installEnvsLiveCombined(r recipe.MediaRecipe, tgt target.Target, storeMount
 		if err := runner.Run("sudo", "chmod", "0755", bootDir); err != nil {
 			return fmt.Errorf("chmod boot dir %s: %w", bootDir, err)
 		}
-		var kver string
+		var boot install.BootFiles
 		env := env
 		if err := track("extract:"+env.ID, func() error {
 			var err error
-			kver, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverrides[env.ID])
+			boot, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverrides[env.ID])
 			return err
 		}); err != nil {
 			return fmt.Errorf("extract boot files for %s: %w", env.ID, err)
 		}
 
-		options := kernelcmdline.Append(kernelcmdline.LiveCombined(env.ID, label), r.Kargs)
+		options := envBootOptions(kernelcmdline.LiveCombined(env.ID, label), boot, r)
 		isDefault := env.ID == r.DefaultBoot
-		if err := install.WriteBLSEntry(espMount, env.ID, envTitle(env, "live"), tgt.KernelPath(env.ID), tgt.InitrdPath(env.ID), options, isDefault); err != nil {
+		if err := install.WriteBLSEntry(espMount, env.ID, envTitle(env, "live"), tgt.KernelPath(env.ID), tgt.InitrdPath(env.ID), envDevicetree(boot, tgt.DevicetreePath(env.ID)), options, isDefault); err != nil {
 			return err
 		}
-		fmt.Printf(">>> Finished environment: %s (kernel=%s, combined)\n", env.ID, kver)
+		fmt.Printf(">>> Finished environment: %s (kernel=%s, combined)\n", env.ID, boot.Kver)
 	}
 	return nil
 }
@@ -910,22 +926,22 @@ func installEnvsLiveDelta(r recipe.MediaRecipe, tgt target.Target, storeMount, e
 		if err := runner.Run("sudo", "chmod", "0755", bootDir); err != nil {
 			return fmt.Errorf("chmod boot dir %s: %w", bootDir, err)
 		}
-		var kver string
+		var boot install.BootFiles
 		env := env
 		if err := track("extract:"+env.ID, func() error {
 			var err error
-			kver, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverrides[env.ID])
+			boot, err = install.ExtractBootFiles(env.Image, bootDir, initrdOverrides[env.ID])
 			return err
 		}); err != nil {
 			return fmt.Errorf("extract boot files for %s: %w", env.ID, err)
 		}
 
-		options := kernelcmdline.Append(kernelcmdline.LiveDelta(env.ID, label, env.ID == baseID), r.Kargs)
+		options := envBootOptions(kernelcmdline.LiveDelta(env.ID, label, env.ID == baseID), boot, r)
 		isDefault := env.ID == r.DefaultBoot
-		if err := install.WriteBLSEntry(espMount, env.ID, envTitle(env, "live"), tgt.KernelPath(env.ID), tgt.InitrdPath(env.ID), options, isDefault); err != nil {
+		if err := install.WriteBLSEntry(espMount, env.ID, envTitle(env, "live"), tgt.KernelPath(env.ID), tgt.InitrdPath(env.ID), envDevicetree(boot, tgt.DevicetreePath(env.ID)), options, isDefault); err != nil {
 			return err
 		}
-		fmt.Printf(">>> Finished environment: %s (kernel=%s, delta)\n", env.ID, kver)
+		fmt.Printf(">>> Finished environment: %s (kernel=%s, delta)\n", env.ID, boot.Kver)
 	}
 	return nil
 }
