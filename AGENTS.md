@@ -71,9 +71,44 @@ tacklebox bugs from the log:
 Before assuming a red `iso-smoke` is your change, check `podman --version` /
 `crun --version` in the log against those notes.
 
+## CI runs through the justfile, and cleans up after itself
+
+Workflow steps with real logic call `just ci-*` recipes (`just --list`); the
+YAML keeps only thin wrappers (checkout, setup, upload, publish). Two sets of
+recipes keep the runners and the Actions queue from filling up:
+
+- **`just ci-cleanup`** — the last step of every job that creates containers,
+  images, loop devices, QEMU or large scratch (`if: always()`). It removes
+  only what *that job* created, proven by ownership rather than guessed:
+  directories carry a `.ci-owner` marker written by `just ci-claim` /
+  `ci-prepare-out`; podman images and containers carry the
+  `io.tunaos.tacklebox.ci-owner=$CI_OWNER` label (`ci-fixture-images`) or sit
+  in the pulled-images ledger (`ci-pull-images`); loop devices and mounts are
+  owned by living under a claimed directory. It refuses (exit 1) a directory
+  claimed by another owner. It never runs `podman system prune`, and it keeps
+  `initramfs-cache/` and `squashfs-cache/` because `actions/cache` saves them
+  in its post step.
+- **`just ci-reap-stale`** — run daily by `ci-reaper.yml`: cancels runs queued
+  or in progress longer than `STALE_QUEUED_HOURS` (6), deletes completed runs
+  and expired artifacts older than `KEEP_RUN_DAYS` (14). It never touches the
+  newest run of a workflow+branch, a default-branch push younger than the
+  bound, or itself. `DRY_RUN=1` prints only; manual dispatch defaults to it.
+
+Both are tested in `internal/cirecipes` against fake `podman`/`losetup`/
+`umount`/`gh` binaries, so `go test ./...` covers them without privileges.
+`just ci-claim` refuses a non-empty unmarked directory: if a job's output base
+already holds content it did not create, cleanup could not prove it owned it.
+
+Deliberately not routed through the justfile: the R2 upload steps
+(`poc-artifacts`, `pure-iso`, `bazzite-*`) and `release*.yml` publishing/
+signing/attestation (behaviour cannot be exercised locally), the PowerShell
+steps of `cross-platform-smoke` (no `just` on the Windows leg), and the
+`apt-get install` steps (a few lines, different per job).
+
 ## Checks
 
 ```bash
+just check                       # go vet, go test, every example/fixture recipe parses
 just build && just test          # go build -o tacklebox ./cmd/tacklebox; go test ./...
 go vet ./...
 go test -tags=integration -run='Help' ./...

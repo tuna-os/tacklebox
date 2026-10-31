@@ -610,6 +610,17 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 	if v := opts.Get("liveMarker"); v.Type() == js.TypeString {
 		liveMarker = v.String()
 	}
+	// engineDigest is the host's sha256 over the exact tbox.wasm bytes it
+	// instantiated. When present, the build must embed a complete
+	// etc/tunaos/live-source.json receipt or refuse.
+	engineDigest, wantReceipt := "", false
+	if v := opts.Get("engineDigest"); v.Type() == js.TypeString {
+		// Present means requested: an empty or malformed digest is refused
+		// by the writer rather than silently skipping the receipt.
+		engineDigest, wantReceipt = v.String(), true
+	} else if v.Type() != js.TypeUndefined && v.Type() != js.TypeNull {
+		reqErr = errors.Join(reqErr, fmt.Errorf("engineDigest must be a string"))
+	}
 	return operationPromise(func() (result any, buildErr error) {
 		cleanup := func(arena *opfsArena) {
 			if arena != nil {
@@ -685,7 +696,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		}
 
 		// Live-overlay parity artifact (tunaOS#673) — see
-		// purefs.GraftLiveOverlayForPlatform. Shared with cmd/purebuild so
+		// purefs.GraftLiveOverlayObserved. Shared with cmd/purebuild so
 		// the native build produces the byte-identical artifact this one
 		// does; that shared call is the only thing making the two paths
 		// comparable. Custom images (CustomImage: true) do not graft a
@@ -698,23 +709,22 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 				expectedOverlay = strings.TrimSpace(activeReq.ResolvedInputs.LiveOverlayDigest)
 				expectedOverlayBase = strings.TrimSpace(activeReq.ResolvedInputs.LiveOverlayBaseDigest)
 			}
-			applied, overlayManifest, overlayObserved, err := purefs.GraftLiveOverlayObserved(root, store, gClient, gImage, gManifest, purefs.GraftOptions{
+			_, _, overlayObserved, err := purefs.GraftLiveOverlayObserved(root, store, gClient, gImage, gManifest, purefs.GraftOptions{
 				Platform:              platform,
 				ExpectedOverlayDigest: expectedOverlay,
+				BaseDigest:            gManifestDigest,
+				ExpectedBaseDigest:    expectedOverlayBase,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("apply live overlay: %w", err)
 			}
 			observed.Overlay = *overlayObserved
-			if applied && overlayManifest != nil {
-				if expectedOverlayBase != "" && expectedOverlayBase != gManifestDigest {
-					return nil, &purefs.OverlayMismatchError{Reason: purefs.OverlayReasonBaseDigestMismatch, Want: gManifestDigest, Got: expectedOverlayBase}
-				}
-				matched, err := purefs.VerifyObservedOverlayBase(gManifest, overlayManifest, gManifestDigest)
-				if err != nil {
-					return nil, fmt.Errorf("live overlay base verification: %w", err)
-				}
-				observed.Overlay.BaseAnnotationMatched = matched
+		}
+		if wantReceipt {
+			if err := purefs.WriteLiveSourceReceipt(root, store, purefs.NewLiveSourceInputs(
+				activeReq, gImage, gManifestDigest, platform, &observed.Overlay, engineDigest,
+			)); err != nil {
+				return nil, err
 			}
 		}
 		emitProgress("overlay", 1, 1)
@@ -926,13 +936,29 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			return nil, err
 		}
 
-		kargs := fmt.Sprintf(
+		// The image's own kernel arguments (bootc kargs.d) and the device
+		// tree it ships for the kernel go into the live entry, as bootc
+		// and ostree give them to the installed system.
+		imageKargs, err := purefs.ImageKargs(root, store, arch)
+		if err != nil {
+			return nil, err
+		}
+		kargs := purefs.AppendKargs(fmt.Sprintf(
 			"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
 				" tacklebox.live.overlay.size=8192 enforcing=0"+
 				" tacklebox.env=%s console=ttyS0,115200n8",
-			label, sfsName, envID)
+			label, sfsName, envID), imageKargs)
 		kernelPath := "/images/pxeboot/" + envID + "/vmlinuz"
 		initrdPath := "/images/pxeboot/" + envID + "/initrd.img"
+		devicetreePath := ""
+		var dtbSrc func() (io.ReadCloser, error)
+		var dtbSize int64
+		if dtb := purefs.KernelDevicetree(root, kver); dtb != "" {
+			if dtbSrc, dtbSize, err = blob(dtb); err != nil {
+				return nil, err
+			}
+			devicetreePath = "/images/pxeboot/" + envID + "/devicetree"
+		}
 
 		var espFiles []purefs.EspFile
 		// The ISO tree carries the same boot files outside efi.img as
@@ -945,8 +971,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			if berr != nil {
 				return nil, berr
 			}
-			entry := fmt.Sprintf("title TunaOS %s (live)\nlinux %s\ninitrd %s\noptions %s\n",
-				envID, kernelPath, initrdPath, kargs)
+			entry := purefs.LiveBLSEntry("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
 			espFiles = []purefs.EspFile{
 				{Path: "/EFI/BOOT/" + bootLoaderName, Source: sdSrc},
 				{Path: "/loader/loader.conf", Source: purefs.StringSource("timeout 3\n")},
@@ -964,7 +989,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			if berr != nil {
 				return nil, berr
 			}
-			cfg := purefs.LiveGrubCfg("TunaOS "+envID+" (live)", kernelPath, initrdPath, kargs)
+			cfg := purefs.LiveGrubCfg("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
 			// shim boots as the arch fallback loader and loads the arch
 			// GRUB binary from its own directory; grub.cfg goes to every
 			// prefix a signed GRUB has been observed to search (its own
@@ -992,6 +1017,9 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			purefs.EspFile{Path: kernelPath, Source: kernelSrc},
 			purefs.EspFile{Path: initrdPath, Source: initrdSrc},
 		)
+		if devicetreePath != "" {
+			espFiles = append(espFiles, purefs.EspFile{Path: devicetreePath, Source: dtbSrc})
+		}
 
 		emitProgress("esp", 0, 1)
 		esp, err := purefs.BuildEspBytes(espFiles)
@@ -1008,6 +1036,11 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		inputs = append(inputs,
 			purefs.IsoInput{Path: kernelPath, Size: kernelSize, Source: kernelSrc},
 			purefs.IsoInput{Path: initrdPath, Size: initrdSize, Source: initrdSrc},
+		)
+		if devicetreePath != "" {
+			inputs = append(inputs, purefs.IsoInput{Path: devicetreePath, Size: dtbSize, Source: dtbSrc})
+		}
+		inputs = append(inputs,
 			purefs.IsoInput{Path: "/LiveOS/" + sfsName, Size: sfsSize, Source: sfsSource},
 		)
 		if len(flatpaks) > 0 {
