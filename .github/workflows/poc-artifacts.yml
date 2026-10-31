@@ -153,7 +153,7 @@ jobs:
             rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
               "$iso" "${PREFIX}/${base}-${STAMP}.iso"
             rclone copyto --log-level INFO --s3-no-check-bucket \
-              "$iso" "${PREFIX}/${base}-latest.iso"
+              "${PREFIX}/${base}-${STAMP}.iso" "${PREFIX}/${base}-latest.iso"
             echo "- https://download.tunaos.org/tacklebox/${base}-latest.iso" >> "$GITHUB_STEP_SUMMARY"
           done
           rclone copyto --log-level INFO --s3-no-check-bucket \

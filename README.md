@@ -103,6 +103,16 @@ Tacklebox automatically handles these requirements of the Composefs backend:
 *   [GitHub ISO setup](docs/github-iso-setup.md) — ISO builds in CI, with the necessary host packages
 *   [Runbooks](runbooks/) — build/ISO generation and boot/update problem diagnosis
 
+The Bazzite AIO, GNOME, KDE, and PoC artifact workflows upload each ISO to its
+dated R2 key before copying that object within the same `R2:` remote to the
+existing `-latest.iso` key. Dated ISOs and checksum publication remain unchanged;
+the copy does not delete the dated object or change retention policy.
+[Rclone's S3 backend](https://rclone.org/s3/#s3-copy-cutoff) uses multipart
+server-side copy for large objects, including ISOs over 5 GiB.
+[R2 supports CopyObject and UploadPartCopy](https://developers.cloudflare.com/r2/api/s3/api/);
+its [object and multipart limits](https://developers.cloudflare.com/r2/platform/limits/)
+still apply. These workflows retain their existing chunk-size and concurrency settings.
+
 ## 🛠 Usage
 
 ### Installation
