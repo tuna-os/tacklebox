@@ -187,10 +187,11 @@ jobs:
             "${PREFIX}/dated.iso" "${PREFIX}/latest.iso"
           check_server_copy latest-copy
           check_download latest latest.iso
-          # 11 MiB exceeds the cutoff and needs three legal >=5 MiB parts
-          # (the final part is allowed to be smaller).
+          # rclone v1.60.1 s3.copyMultipart sizes COPY parts from CopyCutoff,
+          # not ChunkSize: 11 MiB with a 5 MiB cutoff yields 5/5/1 MiB parts.
+          # Source: github.com/rclone/rclone/blob/v1.60.1/backend/s3/s3.go#L3922
           native multipart-copy rclone copyto --log-level INFO --s3-no-check-bucket \
-            --s3-copy-cutoff 1M --s3-chunk-size 5M \
+            --s3-copy-cutoff 5M --s3-chunk-size 5M \
             "${PREFIX}/dated.iso" "${PREFIX}/multipart-latest.iso"
           check_server_copy multipart-copy
           check_download multipart multipart-latest.iso
