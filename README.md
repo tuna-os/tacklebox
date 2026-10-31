@@ -160,6 +160,8 @@ sudo install -m 0755 tacklebox /usr/local/bin/tacklebox
 A container image is also published as `ghcr.io/tuna-os/tacklebox:latest` for
 CI and other container-based workflows. Pin a version or `sha-*` tag when you
 need reproducible builds.
+See [container image usage](docs/CONTAINER-IMAGE.md) for Docker and Podman
+commands, required mounts, and CI setup.
 
 ### Build a Multi-Boot Image
 ```bash

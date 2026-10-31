@@ -24,6 +24,9 @@ tacklebox recipe-gen Generate a recipe from a simplified env list
 
 ---
 
+For commands that use the published image, see
+[Run Tacklebox in Docker or Podman](CONTAINER-IMAGE.md).
+
 ## 1. Quick start: a live ISO from one image
 
 ```sh
