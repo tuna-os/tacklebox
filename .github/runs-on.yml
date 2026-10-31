@@ -4,7 +4,8 @@
 # under QEMU/KVM. The GitHub-hosted runner's podman 5.8.4 wedges `podman
 # commit` (tuna-os/tunaOS#1893) and its crun/conmon cannot be re-pinned, so
 # the ISO verification runs on RunsOn's controlled ubuntu24-full-x64 image
-# instead, provisioned on demand as a spot instance (sparse by design).
+# instead. The group defaults to spot; iso-smoke overrides spot=false in
+# its job label so AWS reclamation cannot interrupt the long ISO build.
 runners:
   build-amd64:
     family: ["c6a", "c6i", "c5a", "c5"]

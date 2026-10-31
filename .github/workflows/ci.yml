@@ -248,7 +248,9 @@ jobs:
     # runner's podman 5.8.4 wedges the customize commit and its crun/conmon
     # cannot be re-pinned (tuna-os/tunaOS#1893). The `runs-on=` marker + `runner=`
     # group is RunsOn's label format (see docs/runners/labels).
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    # On-demand for this 30-40 minute job: spot reclamation is reported as
+    # a failure indistinguishable from an ISO regression (see #285).
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64/spot=false
     needs: lint-test
     timeout-minutes: 60
     steps:

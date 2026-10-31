@@ -44,7 +44,8 @@ Two structural notes:
   branch protection or agent auto-merge is ever pointed at this repo, that
   gap needs closing first.
 - **`iso-smoke` runs on a self-hosted RunsOn runner**
-  (`runs-on=…/runner=build-amd64`), not a GitHub runner, because the GitHub
+  (`runs-on=…/runner=build-amd64/spot=false`), using on-demand capacity to
+  avoid spot reclamation during the long build, because the GitHub
   image's podman wedges the customize commit (tunaOS#1893). A fork without
   that runner configured cannot run this job at all.
 
