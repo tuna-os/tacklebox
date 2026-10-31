@@ -20,6 +20,9 @@ on:
     # Weekly, Tuesday 05:00 UTC (staggered from the Monday weekly PoC build)
     - cron: '0 5 * * 2'
 
+permissions:
+  contents: read
+
 concurrency:
   group: bazzite-aio
   cancel-in-progress: true

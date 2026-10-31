@@ -14,6 +14,9 @@ on:
     # Weekly, Wednesday 07:00 UTC (staggered 2h after KDE build)
     - cron: '0 7 * * 3'
 
+permissions:
+  contents: read
+
 concurrency:
   group: bazzite-gnome
   cancel-in-progress: true
