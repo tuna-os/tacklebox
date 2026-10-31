@@ -253,14 +253,13 @@ sudo env TBOX_CUSTOMIZE_CAPS=net_admin tacklebox build examples/iso-with-customi
 ```
 
 The extra capability supports Flatpak deployment, including any preinstalls
-declared by the image and processed by the baseline. The script also includes
-optional Flatpak installation commands; uncomment them to add GNOME Calculator.
+declared by the image and processed by the baseline. The script also has
+commented commands that install a Flatpak; uncomment them to add GNOME Calculator.
 The image must include `flatpak`, and installation needs network access.
-The built-in baseline already configures the live user and autologin before
-this script runs. Customizations affect the live environment, not the source
-image or installed systems. After booting, check
-`/etc/issue.d/tacklebox-example.issue` and `systemctl is-enabled sshd.service`
-(which should report `masked`).
+The baseline sets up the live user and autologin before this script runs.
+Customizations affect the live environment, not the source image or installed
+systems. After boot, check `/etc/issue.d/tacklebox-example.issue` and
+`systemctl is-enabled sshd.service` (which should report `masked`).
 
 `title` is optional and sets the human-facing boot menu entry name
 (e.g. "Bluefin (GNOME)"); the env `id` is used when omitted.
