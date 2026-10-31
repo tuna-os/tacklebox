@@ -1,0 +1,17 @@
+{
+  "media_name": "TBX_CUSTOM",
+  "size": "30G",
+  "shared_store": {
+    "format": "ext4"
+  },
+  "bootable_environments": [
+    {
+      "id": "bluefin",
+      "image": "ghcr.io/ublue-os/bluefin:stable",
+      "title": "Bluefin (custom live session)",
+      "desktop": "gnome",
+      "live_customize": ["customize-scripts/example-customize.sh"],
+      "modes": ["live"]
+    }
+  ]
+}
