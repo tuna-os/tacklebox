@@ -116,9 +116,11 @@ go test -tags=integration -run='Help' ./...
 for r in examples/*.json fixtures/*.json; do python3 -m json.tool "$r" >/dev/null; done
 ```
 
-CI and `just check` enforce `gofmt` and `golangci-lint` (running repo-wide checks
-and an `errcheck` ratchet on PR diffs via `--new-from-merge-base`). Format code
-with `just fmt` prior to commit.
+CI and `just check` enforce `gofmt` (`just fmt-check`) and `golangci-lint`
+(`just lint`, all linters except `errcheck`, repo-wide). CI also runs an
+`errcheck` ratchet on new code only: `just lint-new <base>` uses
+`--new-from-merge-base=origin/<base>`. Format code with `just fmt` before you
+commit.
 
 Two tests are environment-gated rather than skipped, so a local `go test ./...`
 can be red for reasons that are not your change: `purefs`
