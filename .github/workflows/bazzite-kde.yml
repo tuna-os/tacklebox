@@ -105,7 +105,7 @@ jobs:
           rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
             /mnt/iso-out/bazzite-kde.iso "${PREFIX}/bazzite-kde-${STAMP}.iso"
           rclone copyto --log-level INFO --s3-no-check-bucket \
-            /mnt/iso-out/bazzite-kde.iso "${PREFIX}/bazzite-kde-latest.iso"
+            "${PREFIX}/bazzite-kde-${STAMP}.iso" "${PREFIX}/bazzite-kde-latest.iso"
           echo "- https://download.tunaos.org/tacklebox/bazzite-kde-latest.iso" >> "$GITHUB_STEP_SUMMARY"
           rclone copyto --log-level INFO --s3-no-check-bucket \
             /mnt/iso-out/SHA256SUMS "${PREFIX}/bazzite-kde-SHA256SUMS-${STAMP}"

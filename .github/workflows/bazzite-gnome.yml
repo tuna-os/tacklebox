@@ -105,7 +105,7 @@ jobs:
           rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
             /mnt/iso-out/bazzite-gnome.iso "${PREFIX}/bazzite-gnome-${STAMP}.iso"
           rclone copyto --log-level INFO --s3-no-check-bucket \
-            /mnt/iso-out/bazzite-gnome.iso "${PREFIX}/bazzite-gnome-latest.iso"
+            "${PREFIX}/bazzite-gnome-${STAMP}.iso" "${PREFIX}/bazzite-gnome-latest.iso"
           echo "- https://download.tunaos.org/tacklebox/bazzite-gnome-latest.iso" >> "$GITHUB_STEP_SUMMARY"
           rclone copyto --log-level INFO --s3-no-check-bucket \
             /mnt/iso-out/SHA256SUMS "${PREFIX}/bazzite-gnome-SHA256SUMS-${STAMP}"

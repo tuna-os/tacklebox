@@ -112,7 +112,7 @@ jobs:
           rclone copyto --log-level INFO --checksum --s3-no-check-bucket \
             /mnt/iso-out/bazzite-aio.iso "${PREFIX}/bazzite-aio-${STAMP}.iso"
           rclone copyto --log-level INFO --s3-no-check-bucket \
-            /mnt/iso-out/bazzite-aio.iso "${PREFIX}/bazzite-aio-latest.iso"
+            "${PREFIX}/bazzite-aio-${STAMP}.iso" "${PREFIX}/bazzite-aio-latest.iso"
           echo "- https://download.tunaos.org/tacklebox/bazzite-aio-latest.iso" >> "$GITHUB_STEP_SUMMARY"
           
           rclone copyto --log-level INFO --s3-no-check-bucket \
