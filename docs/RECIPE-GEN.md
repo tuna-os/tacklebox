@@ -2,7 +2,7 @@
 
 `tacklebox recipe-gen` reads one YAML or JSON file and writes a JSON recipe.
 It only reads and converts configuration; it does not pull images, build media,
-or require root. The input uses the same field names as a full recipe, with
+or need root. The input uses the same field names as a full recipe, with
 most fields optional. See the [user guide](USER-GUIDE.md#2-recipes) for how
 recipes affect media builds.
 
@@ -14,7 +14,7 @@ tacklebox recipe-gen environments.yaml --output recipe.json
 
 `-o` is the short form of `--output`. Output is always JSON, indented with two
 spaces and ending with a newline, regardless of the input or output filename.
-The output file is created or overwritten. Input must be a file path; `-`
+The command creates the output file or overwrites it. Input must be a file path; `-`
 does not read stdin. YAML and JSON both go through the YAML parser, so the
 filename extension does not select a parser.
 
@@ -64,27 +64,28 @@ When `size` is empty or omitted, the estimate is **5G per environment + 3G**:
 `8G` for one, `13G` for two, `18G` for three. The extra 3G represents a 1G ESP
 and 2G persistence partition. This is a fixed estimate, not an inspection of
 image sizes. Partition overrides and offline payloads do not increase it;
-choose an explicit size when needed. Generation leaves omitted partition sizes
-unset; the build computes them later.
+choose an explicit size when needed. If you omit a partition size, recipe-gen
+leaves it unset, and the build calculates it later.
 
 For multiple environments, even an explicit `shared_store.dedup: false` becomes
-`true`. To disable it, edit the generated JSON afterward. Dedup affects ISO
-targets only. Explicit nonempty size, format, title, default_boot, and modes
-are preserved; an empty string triggers the corresponding default.
+`true`. To disable it, edit the generated JSON afterward. Dedup has an effect
+only on ISO targets. The generator keeps explicit nonempty values for size,
+format, title, default_boot, and modes; an empty string gives the
+corresponding default.
 
-The generator rejects malformed input, incompatible field types, an empty
+recipe-gen stops with an error for malformed input, incompatible field types, an empty
 `media_name`, and a missing or empty environment list. It does **not** validate
 image availability, unique/nonempty IDs, image presence, mode names, size
 syntax, or whether `default_boot` names an existing environment. Successful
 generation is not proof that a recipe can build or boot.
 
-Pass-through means fields recognized by the full recipe schema survive as
-values, subject to the defaults above. Unknown keys (including misspellings)
-are silently dropped, not preserved. Output is serialized from the recipe
-structure: key order and YAML comments are lost, some unset fields appear as
-empty strings, `{}`, or `null`, and optional zero-valued fields may disappear.
-For example, an omitted `offline_payloads` is emitted as `null`. Payload
-objects whose `source` and `ref` are equal are emitted as a single string.
+Pass-through means that the output keeps the values of fields from the full
+recipe schema, subject to the defaults above. If a key is unknown or misspelled,
+the generator discards it. It writes the output from the recipe structure,
+so the output does not keep key order or YAML comments. Some unset fields
+appear as empty strings, `{}`, or `null`, and optional zero-valued fields can
+disappear. For example, an omitted `offline_payloads` becomes `null`. A payload
+object whose `source` and `ref` are equal becomes a single string.
 
 ## Examples
 
@@ -101,8 +102,8 @@ bootable_environments:
 ```
 
 This produces `size: "8G"`, `default_boot: "gnome"`, store format `ext4`,
-title `gnome`, and modes `["live"]`. Dedup remains false (and is omitted
-from JSON).
+title `gnome`, and modes `["live"]`. Dedup stays false, and the JSON does not
+include it.
 
 ### Multiple environments with dedup (YAML)
 
@@ -121,7 +122,7 @@ bootable_environments:
 ```
 
 The size becomes `13G`, the default boot is `gnome`, and both environments
-get `["live"]`. Omitting `dedup` produces the same enabled setting.
+get `["live"]`. If you omit `dedup`, the result is the same enabled setting.
 
 ### Offline payloads and explicit overrides (JSON)
 
@@ -147,8 +148,8 @@ get `["live"]`. Omitting `dedup` produces the same enabled setting.
 }
 ```
 
-These size, partition, kernel argument, and payload values survive generation.
-Payloads are not inferred from the environment list: list every image you want
-embedded. A string uses the same image name as source and destination; an
+The generator keeps these values for size, partitions, kernel arguments, and
+payloads. It does not get payloads from the environment list: list every image
+that you want to embed. A string uses the same image name as source and destination; an
 object maps a builder-side image to its canonical name in the embedded store.
 See [offline installs](USER-GUIDE.md#5-offline-installs-offline_payloads).
