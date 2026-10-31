@@ -20,6 +20,9 @@ Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrato
 
 ## Near-term release gate
 
+Established on **2026-08-23** by [#238](https://github.com/tuna-os/tacklebox/pull/238)
+(merge commit [`5ea6f21`](https://github.com/tuna-os/tacklebox/commit/5ea6f2131f7c3e8a9aa731837b1e77328b7a210d)).
+
 Tacklebox is consumed by downstream TunaOS build tooling, but has not yet
 published a versioned release. Before expanding the feature surface, establish
 the first supported baseline and make it possible for downstream users to pin
