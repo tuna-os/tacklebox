@@ -157,9 +157,36 @@ go build -o tacklebox ./cmd/tacklebox
 sudo install -m 0755 tacklebox /usr/local/bin/tacklebox
 ```
 
-A container image is also published as `ghcr.io/tuna-os/tacklebox:latest` for
-CI and other container-based workflows. Pin a version or `sha-*` tag when you
-need reproducible builds.
+### Usage via Container
+
+The project publishes a container image at `ghcr.io/tuna-os/tacklebox:latest`.
+The image contains Tacklebox and all runtime tools (`bootc`, `podman`, `sgdisk`,
+`mkfs.ext4`, `mkfs.vfat`, `xorriso`, `squashfs-tools`, and `xz`). This image
+helps with CI pipelines and cross-platform workflows on macOS and Windows.
+
+Run Tacklebox in a container with `podman` or `docker`:
+
+```bash
+podman run --rm --privileged \
+  -v $(pwd)/recipe.json:/recipe.json:ro \
+  -v $(pwd)/output:/output:z \
+  -v /dev:/dev \
+  ghcr.io/tuna-os/tacklebox:latest build /recipe.json --xz -b /output
+```
+
+The container entrypoint is `tacklebox`. Pass any command and flags after the image name.
+
+**Volume mounts:**
+- Recipe file: Mount your recipe file into the container (`-v $(pwd)/recipe.json:/recipe.json:ro`).
+- Output directory: Mount a host directory to receive build outputs (`-v $(pwd)/output:/output:z`), and pass `-b /output`.
+- Device nodes: Mount `/dev` (`-v /dev:/dev`). Tacklebox needs loop devices (`/dev/loop-control`, `/dev/loop*`) to partition and format disk media.
+- Container storage (optional): Mount `-v /var/lib/containers:/var/lib/containers` to share local images or cache layers with the host.
+
+**Permissions and environment:**
+- Elevated privileges: You must pass `--privileged` (or run under `sudo`). Tacklebox needs kernel permissions to configure loop devices, format filesystems, and mount partitions. It also runs nested containers for dracut and live customizations.
+- SELinux: When you use SELinux, append the `:z` flag to writable host mounts or pass `--security-opt label=disable`.
+- macOS and Windows: Run the container inside a virtual machine (such as Podman Machine or WSL2).
+- Image tags: Pin a release tag (`:v0.1.0`) or a commit SHA tag (`:sha-<commit>`) for reproducible builds.
 
 ### Build a Multi-Boot Image
 ```bash
