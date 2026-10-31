@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/tuna-os/tacklebox/internal/kargsd"
 	"github.com/tuna-os/tacklebox/internal/runner"
 )
 
@@ -563,7 +564,12 @@ func shellEsc(s string) string {
 }
 
 // extractScript runs inside a container and copies vmlinuz + initramfs.img
-// out of /usr/lib/modules/<kver>/ to /dest/.
+// out of /usr/lib/modules/<kver>/ to /dest/, with the kernel's device tree
+// (/usr/lib/modules/<kver>/devicetree, the file ostree loads for installed
+// systems) when the image ships one, and the image's
+// /usr/lib/bootc/kargs.d/*.toml into /dest/kargs.d/. It prints KVER= and
+// the image's architecture as ARCH= (`uname -m`), which kargs.d's
+// match-architectures is checked against.
 // Kernel preference order (tuna-os/tacklebox#86 item 3):
 //  1. non-debug kernel that ships both vmlinuz and initramfs.img
 //  2. non-debug kernel with only vmlinuz
@@ -606,14 +612,36 @@ if [ ! -f "/usr/lib/modules/$kver/initramfs.img" ]; then
 fi
 cp "/usr/lib/modules/$kver/vmlinuz" /dest/vmlinuz
 cp "/usr/lib/modules/$kver/initramfs.img" /dest/initrd.img
+if [ -f "/usr/lib/modules/$kver/devicetree" ]; then
+  cp "/usr/lib/modules/$kver/devicetree" /dest/devicetree
+fi
+if [ -d /usr/lib/bootc/kargs.d ]; then
+  mkdir /dest/kargs.d
+  for f in /usr/lib/bootc/kargs.d/*.toml /usr/lib/bootc/kargs.d/.?*.toml; do
+    if [ ! -f "$f" ]; then
+      # Unmatched glob: skip. Anything else that exists (directory,
+      # broken link) is refused, as bootc and the pure paths refuse it.
+      if [ -e "$f" ] || [ -L "$f" ]; then
+        echo "kargs.d/${f##*/}: not a regular file" >&2
+        exit 1
+      fi
+      continue
+    fi
+    cp "$f" /dest/kargs.d/
+  done
+fi
+arch=$(uname -m)
 printf 'KVER=%s\n' "$kver"
+printf 'ARCH=%s\n' "$arch"
 `
 
 // extractCacheMu + extractCache: per-image staging cache so a multi-env
 // recipe sharing an image only pays the podman run cost once.
 type stagedFiles struct {
-	dir  string
-	kver string
+	dir        string
+	kver       string
+	devicetree bool     // dir holds the kernel's devicetree
+	kargs      []string // the image's kargs.d arguments for its architecture
 }
 
 var (
@@ -625,8 +653,9 @@ var stagingRoot = "/tmp"
 
 func SetStagingRoot(p string) { stagingRoot = p }
 
-// fetchToStaging extracts vmlinuz + initramfs from image into a host
-// staging directory using rootless podman (no sudo).
+// fetchToStaging extracts vmlinuz + initramfs (and devicetree, when the
+// image ships one) from image into a host staging directory using rootless
+// podman (no sudo), and reads the image's kargs.d.
 //
 // Running without sudo means the user's own container store is used, so
 // localhost/ images built with plain `podman build` are found without
@@ -683,22 +712,35 @@ func fetchToStaging(image string) (stagedFiles, error) {
 		return stagedFiles{}, fmt.Errorf("extract boot files for %s: %w", image, err)
 	}
 
-	var kver string
+	var kver, arch string
 	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "KVER=") {
-			kver = strings.TrimPrefix(line, "KVER=")
-			break
+		if v, ok := strings.CutPrefix(line, "KVER="); ok && kver == "" {
+			kver = v
+		}
+		if v, ok := strings.CutPrefix(line, "ARCH="); ok && arch == "" {
+			arch = v
 		}
 	}
 	if kver == "" {
 		return stagedFiles{}, fmt.Errorf("extract %s: no KVER line in output: %s", image, string(out))
+	}
+	kargs, err := readKargsD(filepath.Join(tmpDir, "kargs.d"), arch)
+	if err != nil {
+		return stagedFiles{}, fmt.Errorf("%s: %w", image, err)
+	}
+
+	files := []string{"vmlinuz", "initrd.img"}
+	_, statErr := os.Stat(filepath.Join(tmpDir, "devicetree"))
+	devicetree := statErr == nil
+	if devicetree {
+		files = append(files, "devicetree")
 	}
 
 	// sudo-move extracted files into the (possibly root-owned) final staging dir.
 	if err := runner.Run("sudo", "mkdir", "-p", finalDir); err != nil {
 		return stagedFiles{}, err
 	}
-	for _, f := range []string{"vmlinuz", "initrd.img"} {
+	for _, f := range files {
 		src := filepath.Join(tmpDir, f)
 		dst := filepath.Join(finalDir, f)
 		if err := runner.Run("sudo", "mv", src, dst); err != nil {
@@ -706,7 +748,7 @@ func fetchToStaging(image string) (stagedFiles, error) {
 		}
 	}
 
-	s := stagedFiles{dir: finalDir, kver: kver}
+	s := stagedFiles{dir: finalDir, kver: kver, devicetree: devicetree, kargs: kargs}
 	extractCacheMu.Lock()
 	extractCache[image] = s
 	extractCacheMu.Unlock()
@@ -726,38 +768,72 @@ func CleanupStaging() {
 	extractCache = map[string]stagedFiles{}
 }
 
-// ExtractBootFiles copies vmlinuz + initramfs from the per-image staging
-// cache into destDir. initrdOverride, when non-empty, is a host path to a
-// prepared initramfs (see PrepareInitramfs) used instead of the image's
-// stock one; the vmlinuz still comes from the image.
-func ExtractBootFiles(image string, destDir string, initrdOverride string) (string, error) {
+// readKargsD reads the kargs.d files the extract script copied to dir
+// (absent when the image has no /usr/lib/bootc/kargs.d) by bootc's rules.
+func readKargsD(dir, arch string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read kargs.d: %w", err)
+	}
+	files := make(map[string][]byte, len(entries))
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("read kargs.d: %w", err)
+		}
+		files[e.Name()] = data
+	}
+	return kargsd.Parse(files, arch)
+}
+
+// BootFiles describes what ExtractBootFiles placed for one image.
+type BootFiles struct {
+	Kver string
+	// Devicetree is true when the image ships a device tree for the
+	// kernel; it was copied to destDir/devicetree.
+	Devicetree bool
+	// Kargs are the image's /usr/lib/bootc/kargs.d arguments for its
+	// architecture, in bootc's order.
+	Kargs []string
+}
+
+// ExtractBootFiles copies vmlinuz + initramfs (and the kernel's devicetree,
+// when the image ships one) from the per-image staging cache into destDir.
+// initrdOverride, when non-empty, is a host path to a prepared initramfs
+// (see PrepareInitramfs) used instead of the image's stock one; the
+// vmlinuz still comes from the image.
+func ExtractBootFiles(image string, destDir string, initrdOverride string) (BootFiles, error) {
 	if err := runner.Run("sudo", "mkdir", "-p", destDir); err != nil {
-		return "", err
+		return BootFiles{}, err
 	}
 	if err := runner.Run("sudo", "chmod", "0755", destDir); err != nil {
-		return "", fmt.Errorf("chmod boot dir %s: %w", destDir, err)
+		return BootFiles{}, fmt.Errorf("chmod boot dir %s: %w", destDir, err)
 	}
 	s, err := fetchToStaging(image)
 	if err != nil {
-		return "", err
-	}
-	if err := runner.Run("sudo", "cp", filepath.Join(s.dir, "vmlinuz"), filepath.Join(destDir, "vmlinuz")); err != nil {
-		return "", fmt.Errorf("copy vmlinuz from staging: %w", err)
-	}
-	if err := runner.Run("sudo", "chmod", "0644", filepath.Join(destDir, "vmlinuz")); err != nil {
-		return "", fmt.Errorf("chmod vmlinuz in dest: %w", err)
+		return BootFiles{}, err
 	}
 	initrdSrc := filepath.Join(s.dir, "initrd.img")
 	if initrdOverride != "" {
 		initrdSrc = initrdOverride
 	}
-	if err := runner.Run("sudo", "cp", initrdSrc, filepath.Join(destDir, "initrd.img")); err != nil {
-		return "", fmt.Errorf("copy initrd from staging: %w", err)
+	copies := [][2]string{{filepath.Join(s.dir, "vmlinuz"), "vmlinuz"}, {initrdSrc, "initrd.img"}}
+	if s.devicetree {
+		copies = append(copies, [2]string{filepath.Join(s.dir, "devicetree"), "devicetree"})
 	}
-	if err := runner.Run("sudo", "chmod", "0644", filepath.Join(destDir, "initrd.img")); err != nil {
-		return "", fmt.Errorf("chmod initrd in dest: %w", err)
+	for _, c := range copies {
+		dst := filepath.Join(destDir, c[1])
+		if err := runner.Run("sudo", "cp", c[0], dst); err != nil {
+			return BootFiles{}, fmt.Errorf("copy %s from staging: %w", c[1], err)
+		}
+		if err := runner.Run("sudo", "chmod", "0644", dst); err != nil {
+			return BootFiles{}, fmt.Errorf("chmod %s in dest: %w", c[1], err)
+		}
 	}
-	return s.kver, nil
+	return BootFiles{Kver: s.kver, Devicetree: s.devicetree, Kargs: s.kargs}, nil
 }
 
 // mountSerialise prevents concurrent podman image mount calls for the same
