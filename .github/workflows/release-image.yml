@@ -20,6 +20,11 @@ name: Release container image
       - 'go.sum'
       - '.github/workflows/release-image.yml'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -28,7 +33,7 @@ permissions:
   attestations: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: release-image-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -36,6 +41,8 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
@@ -56,15 +63,18 @@ jobs:
 
       - name: Resolve image tags
         id: tags
+        env:
+          RELEASE_TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
         run: |
           # Branch push (main): tag with :latest + short SHA so renovate can
           # pin to a specific commit. Tag push: also tag with the version.
           IMAGE="ghcr.io/${{ github.repository_owner }}/tacklebox"
           TAGS="${IMAGE}:latest"
           TAGS="${TAGS},${IMAGE}:sha-$(git rev-parse --short HEAD)"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            TAGS="${TAGS},${IMAGE}:${GITHUB_REF_NAME#v}"
-            TAGS="${TAGS},${IMAGE}:${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
+          if [[ -n "$TAG" ]]; then
+            TAGS="${TAGS},${IMAGE}:${TAG#v}"
+            TAGS="${TAGS},${IMAGE}:${TAG}"
           fi
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
