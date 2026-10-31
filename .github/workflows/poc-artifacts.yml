@@ -34,6 +34,9 @@ on:
     # upstream image updates without burning runners daily.
     - cron: '0 5 * * 1'
 
+permissions:
+  contents: read
+
 concurrency:
   group: poc-artifacts
   cancel-in-progress: true
@@ -42,8 +45,6 @@ jobs:
   build-poc:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    permissions:
-      contents: read
     env:
       # Mapped to env so the upload step's `if:` can detect a fork with no
       # secrets (secrets aren't available in job-level `if:` directly).
