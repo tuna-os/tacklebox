@@ -822,6 +822,58 @@ func TestObservedResultAppliedOverlayThenFailedApplyAndCustomRetry(t *testing.T)
 	observedAssertBaseUnchanged(t, base)
 }
 
+func TestObservedOverlayRefusesUnboundBaseBeforePayload(t *testing.T) {
+	for _, binding := range []string{"missing", "mismatched", "request-pin-mismatch"} {
+		t.Run(binding, func(t *testing.T) {
+			f, shim := observedSetup(t)
+			originalDigest := f.addOverlay(t)
+			f.mu.Lock()
+			var overlay oci.Manifest
+			if err := json.Unmarshal(f.documents["/v2/tuna-os/live-overlay/manifests/"+originalDigest], &overlay); err != nil {
+				f.mu.Unlock()
+				t.Fatal(err)
+			}
+			if binding == "missing" {
+				overlay.Annotations = nil
+			} else if binding == "mismatched" {
+				overlay.Annotations[purefs.LiveOverlayActualBaseDigestAnnotation] = "sha256:" + strings.Repeat("0", 64)
+			}
+			body := observedJSON(t, overlay)
+			digest := observedDigest(body)
+			f.documents["/v2/tuna-os/live-overlay/manifests/"+digest] = body
+			f.documents["/v2/tuna-os/live-overlay/manifests/fixture-test"] = observedJSON(t, map[string]any{
+				"schemaVersion": 2,
+				"mediaType":     "application/vnd.oci.image.index.v1+json",
+				"manifests": []map[string]any{{
+					"mediaType": "application/vnd.oci.image.manifest.v1+json",
+					"digest":    digest,
+					"size":      len(body),
+					"platform":  map[string]string{"architecture": "amd64", "os": "linux"},
+				}},
+			})
+			deltaDigest := overlay.Layers[len(overlay.Layers)-1].Digest
+			f.mu.Unlock()
+			observedIntrospectImage(t, observedOverlayImage)
+			base := observedBaseSnapshot(t)
+			opts := observedOverlayOpts(t, f, digest, false)
+			if binding == "request-pin-mismatch" {
+				opts.Get("request").Get("resolvedInputs").Set("liveOverlayBaseDigest", "sha256:"+strings.Repeat("0", 64))
+			}
+			sink, written := observedCounter(t)
+			if _, err := observedAwait(t, js.Global().Call("tboxBuildIsoWithResult", opts, sink)); err == nil {
+				t.Fatal("unbound overlay produced a successful browser build")
+			}
+			if *written != 0 || f.hits("/v2/tuna-os/live-overlay/blobs/"+deltaDigest) != 0 {
+				t.Fatalf("unbound overlay reached delta fetch or ISO output: bytes=%d", *written)
+			}
+			observedAssertBaseUnchanged(t, base)
+			if names := shim.Call("names").String(); strings.Contains(names, "post") {
+				t.Fatalf("rejected overlay retained its writable arena: %s", names)
+			}
+		})
+	}
+}
+
 func TestObservedByteCountBoundaries(t *testing.T) {
 	calls := 0
 	sink := js.FuncOf(func(js.Value, []js.Value) any { calls++; return nil })

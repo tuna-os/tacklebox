@@ -209,13 +209,18 @@ func RequireUEFIBootChain(root *oci.Node, arch string) (*BootChain, error) {
 }
 
 // LiveGrubCfg renders the grub.cfg for the grub2 chain — the same single
-// live entry the BLS template expresses for systemd-boot. `linux` (not
-// linuxefi) is correct on every bootupd-shipped GRUB: the RH patchset
-// these signed builds carry makes `linux` do the EFI handover.
-func LiveGrubCfg(title, kernelPath, initrdPath, kargs string) string {
+// live entry the BLS template expresses for systemd-boot (LiveBLSEntry),
+// including its `devicetree` when devicetreePath is non-empty. `linux`
+// (not linuxefi) is correct on every bootupd-shipped GRUB: the RH
+// patchset these signed builds carry makes `linux` do the EFI handover.
+func LiveGrubCfg(title, kernelPath, initrdPath, devicetreePath, kargs string) string {
+	devicetree := ""
+	if devicetreePath != "" {
+		devicetree = "    devicetree " + devicetreePath + "\n"
+	}
 	return fmt.Sprintf(
-		"set default=0\nset timeout=3\n\nmenuentry '%s' {\n    linux %s %s\n    initrd %s\n}\n",
-		title, kernelPath, kargs, initrdPath)
+		"set default=0\nset timeout=3\n\nmenuentry '%s' {\n    linux %s %s\n    initrd %s\n%s}\n",
+		title, kernelPath, kargs, initrdPath, devicetree)
 }
 
 // resolveFile follows hardlinks to the regular file that carries the

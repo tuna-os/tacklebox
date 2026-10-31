@@ -1,9 +1,6 @@
 package purefs
 
-import (
-	"github.com/tuna-os/tacklebox/internal/oci"
-	"strings"
-)
+import "github.com/tuna-os/tacklebox/internal/oci"
 
 // PlatformObservation describes an index descriptor, not measured CPU support.
 type PlatformObservation struct {
@@ -50,20 +47,4 @@ type ObservedInputs struct {
 type ObservedBuildResult struct {
 	BytesWritten   int64          `json:"bytesWritten"`
 	ObservedInputs ObservedInputs `json:"observedInputs"`
-}
-
-// VerifyObservedOverlayBase distinguishes an absent annotation from a match.
-// A caller-supplied expected digest is never evidence that linkage was observed.
-func VerifyObservedOverlayBase(base, overlay *oci.Manifest, digest string) (bool, error) {
-	if err := VerifyLiveOverlayBase(base, overlay, digest); err != nil {
-		return false, err
-	}
-	if overlay == nil || strings.TrimSpace(digest) == "" {
-		return false, nil
-	}
-	annotation := strings.TrimSpace(overlay.Annotations[LiveOverlayActualBaseDigestAnnotation])
-	if annotation == "" {
-		annotation = strings.TrimSpace(overlay.Annotations[LiveOverlayBaseDigestAnnotation])
-	}
-	return annotation != "" && annotation == strings.TrimSpace(digest), nil
 }
