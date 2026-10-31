@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -121,7 +122,7 @@ func TestStashSquashfs_WithCache(t *testing.T) {
 		t.Fatalf("stashSquashfs: %v", err)
 	}
 
-	if !m.anyCallContains("mkdir -p "+filepath.Dir(cachePath)) {
+	if !m.anyCallContains("mkdir -p " + filepath.Dir(cachePath)) {
 		t.Error("expected the cache dir to be created")
 	}
 	if !m.anyCallContains("mv " + tmpPath + " " + cachePath) {
@@ -394,7 +395,7 @@ func TestFetchToStaging_CachesByImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchToStaging (cached): %v", err)
 	}
-	if s2 != s {
+	if !reflect.DeepEqual(s2, s) {
 		t.Errorf("cached call returned different stagedFiles: %+v vs %+v", s2, s)
 	}
 	if len(m.callStrings()) != callsBefore {
@@ -550,12 +551,12 @@ func TestExtractBootFiles_UsesFetchedStagingFiles(t *testing.T) {
 	}
 
 	destDir := t.TempDir()
-	kver, err := ExtractBootFiles(image, destDir, "")
+	boot, err := ExtractBootFiles(image, destDir, "")
 	if err != nil {
 		t.Fatalf("ExtractBootFiles: %v", err)
 	}
-	if kver != "6.12.0-1.el10.x86_64" {
-		t.Errorf("kver = %q, want 6.12.0-1.el10.x86_64", kver)
+	if boot.Kver != "6.12.0-1.el10.x86_64" {
+		t.Errorf("kver = %q, want 6.12.0-1.el10.x86_64", boot.Kver)
 	}
 	if !m.anyCallContains("cp") {
 		t.Error("expected vmlinuz/initrd to be copied into destDir")

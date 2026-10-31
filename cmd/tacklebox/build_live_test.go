@@ -39,6 +39,9 @@ func (f *fakeIsoTarget) KernelPath(envID string) string {
 func (f *fakeIsoTarget) InitrdPath(envID string) string {
 	return "/images/pxeboot/" + envID + "/initrd.img"
 }
+func (f *fakeIsoTarget) DevicetreePath(envID string) string {
+	return "/images/pxeboot/" + envID + "/devicetree"
+}
 
 // withLiveTestEnv wires the two globals the live pipeline reads outside
 // the runner seam: stagingRoot (squashfs/extract caches land in a fresh
