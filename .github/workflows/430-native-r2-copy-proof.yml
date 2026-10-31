@@ -113,6 +113,49 @@ jobs:
               code=$?
             fi
             printf 'pathkind=%s exitcode=%s\n' "$kind" "$code"
+            if [[ "$code" != 0 ]]; then
+              # Emit only fixed diagnostic tokens, never the native error body.
+              # Diagnostic failure must not replace the original rclone status.
+              if ! python3 - "${WORK}/${kind}.log" "$kind" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+          statuses = sorted(set(re.findall(
+              r"(?i)\b(?:status\s*code|statuscode|http\s+status(?:\s+code)?)"
+              r"\s*[:=]?\s*([1-5][0-9]{2})\b"
+              r"|\bHTTP/[0-9.]+\s+([1-5][0-9]{2})\b",
+              text,
+          )))
+          http_status = sorted({code for match in statuses for code in match if code})
+          operations = (
+              "CopyObject", "UploadPartCopy", "CreateMultipartUpload",
+              "CompleteMultipartUpload",
+          )
+          error_classes = (
+              "AccessDenied", "InvalidArgument", "InvalidRequest", "NotImplemented",
+              "EntityTooSmall", "NoSuchUpload", "RequestTimeout", "InvalidRange",
+              "PreconditionFailed", "BadDigest",
+          )
+
+          def recognized(values):
+              return ",".join(
+                  value for value in values
+                  if re.search(r"\b" + re.escape(value) + r"\b", text)
+              ) or "unclassified"
+
+          print(
+              f"pathkind={sys.argv[2]} "
+              f"http_status={','.join(http_status) or 'unclassified'} "
+              f"operation={recognized(operations)} "
+              f"error_class={recognized(error_classes)}"
+          )
+          PY
+              then
+                printf 'pathkind=%s http_status=unclassified operation=unclassified error_class=unclassified\n' "$kind"
+              fi
+            fi
             return "$code"
           }
           check_server_copy() {
