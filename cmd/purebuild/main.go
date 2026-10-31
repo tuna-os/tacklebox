@@ -527,12 +527,6 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		}
 		overlayObserved = observed
 	}
-	if cfg.EngineDigest != "" {
-		if err := writeLiveSourceReceipt(root, store, cfg, resolvedDigest, overlayObserved); err != nil {
-			return err
-		}
-		log.Printf(">>> live-source receipt written (engine %s)", cfg.EngineDigest)
-	}
 
 	if err := purefs.EnsureLiveUser(root, store, "liveuser", 1000); err != nil {
 		return err
@@ -558,6 +552,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	// heap. Custom images without pinned digests, and builds with no pins
 	// at all, keep their existing media shape.
 	var offlineLayout []purefs.IsoInput
+	var offlineMediaJSON []byte
 	if purefs.ShouldEmbedOfflineLayout(cfg.Request) {
 		if manifest == nil || client == nil {
 			// --rootfs-tar path: a pre-customized tree with no resolved
@@ -612,9 +607,6 @@ func runPureBuild(cfg *pureBuildConfig) error {
 					}
 				}
 			}
-			if merr := purefs.WriteLiveMarkerFiles(root, store, mediaJSON); merr != nil {
-				return merr
-			}
 			offlineLayout, merr = purefs.OCILayoutInputs(
 				&fileDigestStore{files: retained},
 				manifest, resolvedDigest, manifest.Config.Digest,
@@ -622,6 +614,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 			if merr != nil {
 				return fmt.Errorf("offline layout: %w", merr)
 			}
+			offlineMediaJSON = mediaJSON
 			log.Printf(">>> offline OCI layout embedded (%d layers)", len(manifest.Layers))
 		}
 	}
@@ -638,6 +631,20 @@ func runPureBuild(cfg *pureBuildConfig) error {
 			return fmt.Errorf("overlay %s: %w", o, err)
 		}
 		log.Printf(">>> overlay %s applied", o)
+	}
+
+	// Finalize after every tar overlay so neither the live-source receipt
+	// nor the installer's MediaInput/recipe can retain stale overlay defaults.
+	if cfg.EngineDigest != "" {
+		if err := writeLiveSourceReceipt(root, store, cfg, resolvedDigest, overlayObserved); err != nil {
+			return err
+		}
+		log.Printf(">>> live-source receipt written (engine %s)", cfg.EngineDigest)
+	}
+	if offlineMediaJSON != nil {
+		if err := purefs.WriteLiveMarkerFiles(root, store, offlineMediaJSON); err != nil {
+			return err
+		}
 	}
 
 	if missing := purefs.MissingPreinstalls(root, store); len(missing) > 0 {

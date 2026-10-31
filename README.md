@@ -96,6 +96,36 @@ Tacklebox automatically handles these requirements of the Composefs backend:
 * Manage the bootloader metadata that `bootc` needs.
 * Generate BLS entries with `rootflags=subvol=...` mappings.
 
+### Embedded-source installer recipes
+
+For pure native and browser/WASM builds with pinned offline inputs, the shared
+`WriteLiveMarkerFiles` finalizer writes MediaInput and the live-mode signal after live overlays.
+If the overlay supplies `/etc/bootc-installer/recipe.json`, the finalizer also
+binds its source fields to that descriptor.
+`imgref` and `targetImgref` name the canonical day-2 target.
+The finalizer removes stale `containers-storage:` overrides.
+
+Non-composefs bootc recipes use the GNOME processor's existing empty `image` override.
+Composefs recipes retain the identity of the actual source image.
+When source and day-2 refs differ, `local_imgref` names the image identity.
+It never names an `oci:` layout path that would bypass MediaInput's expected-manifest-digest binding.
+
+The finalizer preserves bootloader, filesystem, backend and unrelated frontend settings,
+unknown JSON fields, exact JSON numbers, and file mode and owner.
+Malformed descriptors or existing recipes fail the build.
+The finalizer does not create a recipe for frontends that construct their own requests.
+Native tar overlays run before both source-receipt completion and source binding.
+
+The native consumer needs a valid MediaInput on marked live media.
+It must resolve MediaInput before image-cache or registry checks.
+It must then preflight the layout against its expected digest before it changes the disk.
+Older Fisherman versions that ignore missing or invalid MediaInput do **not** meet this fail-closed requirement.
+Pin a compatible consumer and rebuild the installer overlay with the producer.
+
+Recipe synchronization alone does not enforce this requirement.
+It also does not change catalogs that independent frontends maintain.
+
+
 ## 📚 Documentation
 
 *   [User guide](docs/USER-GUIDE.md) — commands, recipe reference, ISO/dedup layouts, day-2 operations, problem diagnosis
@@ -103,9 +133,9 @@ Tacklebox automatically handles these requirements of the Composefs backend:
 *   [GitHub ISO setup](docs/github-iso-setup.md) — ISO builds in CI, with the necessary host packages
 *   [Runbooks](runbooks/) — build/ISO generation and boot/update problem diagnosis
 
-The Bazzite AIO, GNOME, KDE, and PoC artifact workflows upload each ISO to its
-dated R2 key before copying that object within the same `R2:` remote to the
-existing `-latest.iso` key. Dated ISOs and checksum publication remain unchanged;
+The Bazzite AIO, GNOME, KDE, and PoC workflows first upload each ISO to its dated R2 key.
+They then copy the same object within the same `R2:` remote to the existing `-latest.iso` key.
+Dated ISOs and checksum publication remain unchanged;
 the copy does not delete the dated object or change retention policy.
 [Rclone's S3 backend](https://rclone.org/s3/#s3-copy-cutoff) uses multipart
 server-side copy for large objects, including ISOs over 5 GiB.
