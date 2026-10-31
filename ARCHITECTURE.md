@@ -33,7 +33,9 @@ targets, tbox-live).
 tacklebox/
 ├── cmd/tacklebox/             # CLI entry points (cobra subcommands)
 │   ├── main.go                # root command + persistent --output-base flag
-│   ├── build.go               # the `build` orchestrator
+│   ├── build.go               # the `build` CLI command and install dispatch
+│   ├── build_plan.go          # pure recipe, layout, and target planning (`BuildPlan`)
+│   ├── build_exec.go          # side-effect orchestration and target lifecycle
 │   ├── update.go              # the `update` command (host-side USB refresh)
 │   ├── update_all.go          # `update-all` boot-time cross-env updater
 │   ├── status.go              # the `status` command (inspect installed envs)
@@ -73,20 +75,23 @@ browser builder); it creates live ISOs without Podman, mount operations,
 
 ## The build flow
 
-`tacklebox build <recipe.json> [TARGET | --iso PATH]` runs in `cmd/tacklebox/build.go`:
+`tacklebox build <recipe.json> [TARGET | --iso PATH]` separates deterministic planning from privileged execution:
 
-1. **Parse** the recipe into `recipe.MediaRecipe`.
-2. **Validate** — bootable_envs is non-empty, size parses, target arg shape sane.
-3. **Pre-flight warnings** — free-space + per-env store-sizing estimates.
-4. **Pick a Target**:
-   - `--iso` → `IsoTarget`
-   - `/dev/*` arg → `BlockTarget` provisioning a real device
-   - no arg → `BlockTarget` with a loop image
-5. **`Target.Prepare(track)`** returns `Mountpoints{EspMount, StoreMount}`.
-   - BlockTarget: `truncate` + `losetup` + `sgdisk` + `mkfs` + `mount` ESP+STORE + `bootctl install`.
-   - IsoTarget: scratch `iso-root/` + `esp-staging/` dirs.
-6. **Pre-pull** all unique image refs in parallel.
-7. **Per-env install loop** (`installEnv`), dispatched on `Target.InstallMode()`:
+1. **Plan** (`planBuild` in `cmd/tacklebox/build_plan.go`):
+   - **Parse** the recipe into `recipe.MediaRecipe`.
+   - **Validate** — `bootable_environments` is non-empty, size parses, dedup layout is valid, target argument shape is sane.
+   - **Resolve** — `live_customize` scripts and Remora manifests against the recipe directory.
+   - **Pick a Target**:
+     - `--iso` → `IsoTarget`
+     - `/dev/*` arg → `BlockTarget` provisioning a real device
+     - no arg → `BlockTarget` with a loop image
+   - **Derive Layout** — compute GPT partition layout for block/loop targets, calculate store-sizing estimates, and construct the `BuildPlan`.
+2. **Execute** (`executePlan` in `cmd/tacklebox/build_exec.go`):
+   - **`Target.Prepare(track)`** returns `Mountpoints{EspMount, StoreMount}`.
+     - BlockTarget: `truncate` + `losetup` + `sgdisk` + `mkfs` + `mount` ESP+STORE + `bootctl install`.
+     - IsoTarget: scratch `iso-root/` + `esp-staging/` dirs.
+   - **Pre-pull** all unique image refs in parallel.
+   - **Per-env install loop** (`runEnvs`), dispatched on `Target.InstallMode()`:
    - Both modes start with **initramfs preparation** (`install.PrepareInitramfs`):
      - Compute cache key from image ID + required module set. Module set is
        determined by target type — ISO: `[tbox-live, tbox-root]`;
