@@ -227,13 +227,14 @@ func applyLayer(root *Node, r io.Reader, mediaType string, store BlobStore) erro
 	return applyLayerFiltered(root, r, mediaType, store, nil)
 }
 
-func applyLayerFiltered(root *Node, r io.Reader, mediaType string, store BlobStore, skip func(string) bool) error {
+func applyLayerFiltered(root *Node, r io.Reader, mediaType string, store BlobStore, skip func(string) bool) (retErr error) {
 	// Large read buffer between the transport and the decompressor: on
 	// GOOS=js every underlying Read is a JS promise round-trip, and zstd/
 	// gzip issue small reads — unbuffered, a single layer costs hundreds
 	// of thousands of event-loop hops and looks hung. Native path benefits
 	// mildly too.
 	r = bufio.NewReaderSize(r, 4<<20)
+	decoded := r
 	var tr *tar.Reader
 	switch {
 	case strings.Contains(mediaType, "zstd"):
@@ -242,13 +243,19 @@ func applyLayerFiltered(root *Node, r io.Reader, mediaType string, store BlobSto
 			return err
 		}
 		defer zr.Close()
+		decoded = zr
 		tr = tar.NewReader(zr)
 	case strings.Contains(mediaType, "gzip"):
 		gz, err := gzip.NewReader(r)
 		if err != nil {
 			return err
 		}
-		defer gz.Close()
+		defer func() {
+			if err := gz.Close(); retErr == nil {
+				retErr = err
+			}
+		}()
+		decoded = gz
 		tr = tar.NewReader(gz)
 	default:
 		tr = tar.NewReader(r)
@@ -257,7 +264,7 @@ func applyLayerFiltered(root *Node, r io.Reader, mediaType string, store BlobSto
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return nil
+			return finishLayer(decoded, r)
 		}
 		if err != nil {
 			return err
@@ -266,6 +273,21 @@ func applyLayerFiltered(root *Node, r io.Reader, mediaType string, store BlobSto
 			return fmt.Errorf("%s: %w", hdr.Name, err)
 		}
 	}
+}
+
+// finishLayer runs only after successful tar application. Tar EOF can precede
+// decoder EOF and transport EOF. Finish the decoder first so gzip/zstd trailer
+// failures are visible, then the buffered raw stream so Blob.Close verifies the
+// entire compressed digest and declared size. Both copies stream to Discard;
+// an application/decoder/transport error returns without draining further.
+func finishLayer(decoded, raw io.Reader) error {
+	if _, err := io.Copy(io.Discard, decoded); err != nil {
+		return fmt.Errorf("layer decoder completion: %w", err)
+	}
+	if _, err := io.Copy(io.Discard, raw); err != nil {
+		return fmt.Errorf("layer blob completion: %w", err)
+	}
+	return nil
 }
 
 func splitClean(name string) []string {

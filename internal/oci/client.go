@@ -529,12 +529,16 @@ func (c *Client) ResolveManifestForPlatformWithDigest(ref Ref, platform, expecte
 }
 
 // Blob streams a blob while verifying its digest: the returned reader
-// yields the blob's bytes and its Close reports a digest mismatch as an
-// error, so callers that consume to EOF get integrity for free.
+// yields the blob's bytes and its Close checks digest and positive descriptor
+// size after EOF. Size zero remains unspecified for legacy callers; strict
+// qualification must require positive layer sizes before calling Blob.
 // A stalled body is wrapped so it resumes instead of hanging — on wasm a
 // read that never completes cannot be interrupted by any timeout, so the
 // guard has to sit above the reader. See resume.go.
 func (c *Client) Blob(ref Ref, d Descriptor) (io.ReadCloser, error) {
+	if d.Size < 0 {
+		return nil, fmt.Errorf("invalid blob size: %d", d.Size)
+	}
 	body, err := newResumingReader(func(offset int64) (io.ReadCloser, error) {
 		resp, err := c.getRange(ref.Repo, "blobs/"+d.Digest, "", offset)
 		if err != nil {
@@ -548,7 +552,7 @@ func (c *Client) Blob(ref Ref, d Descriptor) (io.ReadCloser, error) {
 	// Digest verification still spans the whole blob: resuming reconnects at
 	// the consumed offset, so the bytes reaching the hash are the same
 	// sequence a single uninterrupted response would have produced.
-	return &verifyingReader{body: body, want: d.Digest, hash: sha256.New()}, nil
+	return &verifyingReader{body: body, want: d.Digest, wantSize: d.Size, hash: sha256.New()}, nil
 }
 
 func (c *Client) stallTimeout() time.Duration {
@@ -568,7 +572,11 @@ func (c *Client) resumeAttempts() int {
 type verifyingReader struct {
 	body io.ReadCloser
 	want string
-	hash interface {
+	// Zero preserves legacy unspecified-size calls. Blob rejects negatives.
+	wantSize int64
+	seen     int64
+	limitErr error
+	hash     interface {
 		io.Writer
 		Sum([]byte) []byte
 	}
@@ -576,9 +584,26 @@ type verifyingReader struct {
 }
 
 func (v *verifyingReader) Read(p []byte) (int, error) {
+	if v.limitErr != nil {
+		return 0, v.limitErr
+	}
+	if v.wantSize > 0 {
+		// Read at most one byte past the declared size, enough to reject
+		// excess data without draining an unbounded response. The transport
+		// pump may already have bounded read-ahead of its own.
+		remaining := v.wantSize - v.seen
+		if remaining < int64(len(p)) {
+			p = p[:remaining+1]
+		}
+	}
 	n, err := v.body.Read(p)
 	if n > 0 {
 		v.hash.Write(p[:n])
+		v.seen += int64(n)
+	}
+	if v.wantSize > 0 && v.seen > v.wantSize {
+		v.limitErr = fmt.Errorf("blob size mismatch: got at least %d want %d", v.seen, v.wantSize)
+		return n, v.limitErr
 	}
 	if err == io.EOF {
 		v.eof = true
@@ -587,14 +612,19 @@ func (v *verifyingReader) Read(p []byte) (int, error) {
 }
 
 func (v *verifyingReader) Close() error {
-	defer v.body.Close()
-	if !v.eof {
-		// Caller abandoned the stream; nothing to assert.
-		return nil
+	// Never drain on Close: abandoned/error/cancelled callers must remain
+	// able to release the body without consuming the rest of a layer.
+	var err = v.limitErr
+	if v.eof {
+		if v.wantSize > 0 && v.seen != v.wantSize {
+			err = fmt.Errorf("blob size mismatch: got %d want %d", v.seen, v.wantSize)
+		}
+		got := "sha256:" + hex.EncodeToString(v.hash.Sum(nil))
+		if got != v.want {
+			err = errors.Join(err, fmt.Errorf("digest mismatch: got %s want %s", got, v.want))
+		}
 	}
-	got := "sha256:" + hex.EncodeToString(v.hash.Sum(nil))
-	if got != v.want {
-		return fmt.Errorf("digest mismatch: got %s want %s", got, v.want)
-	}
-	return nil
+	// This propagates only the immediate body's Close result. The
+	// resumingReader intentionally abandons HTTP bodies asynchronously.
+	return errors.Join(err, v.body.Close())
 }

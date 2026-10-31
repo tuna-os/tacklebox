@@ -49,18 +49,43 @@ If two environments share an identical stateroot commit hash, verify will reject
 
 `resolvedInputs.liveOverlayDigest` pins the selected platform manifest, not
 the multi-architecture index. Both the native pure builder and browser pass
-this value to `GraftLiveOverlayWithOptions`.
+this value to `GraftLiveOverlayObserved`.
 
 A tag can name either an index or a platform manifest directly. The latter
 path previously returned its hash without comparing the expected digest.
 The direct-manifest regression reproduces a wrong pin being accepted. Both
 paths now reject it with `ManifestDigestMismatchError`, before overlay layers
-are applied. Matching pins and unpinned calls keep their existing behavior.
+are applied. This pin check is separate from the base check below.
 
 Check the requested platform-manifest pin against the exact served bytes.
 Do not replace it with the index digest or remove the pin to silence a
 mismatch. This check proves content identity against the supplied pin; it
 does not authenticate the source or establish boot qualification.
+
+### A live overlay has no valid base binding
+
+A present overlay must name the platform manifest of its actual source.
+Use `org.tunaos.live-overlay.actual-base-digest` or
+`org.tunaos.live-overlay.base-digest`.
+The first key takes precedence. A config label or an index annotation does not
+replace the annotation on the overlay platform manifest.
+
+Native and WASM builds pass the actual source digest as `GraftOptions.BaseDigest`.
+The shared guard checks that digest and any request pin before it fetches
+overlay layers or changes the root. A refusal returns no applied observation.
+An absent optional overlay and a nil-client customized input remain no-ops.
+
+Do not remove the pin, retag an old overlay, or accept a config label to bypass
+this error. Rebuild the overlay from the exact source through the reviewed
+publisher. Publish and promote only with separate authorization.
+
+Browser run `40906041664` selected source version `693f2e6`.
+The guest reported `e4e2a8f`, which matched the old overlay.
+The old path treated 34 layers from that overlay as new content.
+The smoke used a real HTTP registry. It replaced the selected root before the fix.
+After the fix, a guarded build does not fetch layers or change the root if the
+base annotation is absent or wrong.
+This check does not authenticate a producer or qualify a boot.
 
 1. **Storage Exhaustion**:
    - Ensure runner has sufficient temp storage (minimum 25GB free for multi-env ISO builds).

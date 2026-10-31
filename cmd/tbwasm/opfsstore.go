@@ -27,15 +27,16 @@ import (
 // opens would drown in async overhead). Reads slice the underlying File
 // object; OPFS slices are cheap and lazily materialized.
 type opfsArena struct {
-	mu     sync.Mutex
-	dir    js.Value // FileSystemDirectoryHandle
-	handle js.Value // FileSystemFileHandle
-	writer js.Value // FileSystemWritableFileStream (valid until Seal)
-	file   js.Value // File snapshot for reads (refreshed on Seal)
-	name   string
-	prefix string // ref namespace, e.g. "a"
-	off    int64
-	sealed bool
+	mu        sync.Mutex
+	dir       js.Value // FileSystemDirectoryHandle
+	handle    js.Value // FileSystemFileHandle
+	writer    js.Value // FileSystemWritableFileStream (valid until Seal)
+	file      js.Value // File snapshot for reads (refreshed on Seal)
+	name      string
+	prefix    string // ref namespace, e.g. "a"
+	off       int64
+	sealed    bool
+	destroyed bool
 
 	// Copy scratch, allocated once per arena and reused by every Put.
 	// See the comment in Put — these being per-call is what exhausted
@@ -230,9 +231,24 @@ func (a *opfsArena) Open(ref string) (io.ReadCloser, error) {
 	return &opfsSliceReader{blob: slice, size: ln}, nil
 }
 
-func (a *opfsArena) Destroy() {
+func (a *opfsArena) Destroy() error {
+	if a.destroyed {
+		return nil
+	}
+	// A failed Put can leave a writable stream open. Abort releases its
+	// exclusive file lock without committing partial output before deletion.
+	if !a.sealed {
+		if _, err := await(a.writer.Call("abort")); err != nil {
+			return fmt.Errorf("abort arena %s: %w", a.name, err)
+		}
+		a.sealed = true
+	}
 	opts := js.Global().Get("Object").New()
-	_, _ = await(a.dir.Call("removeEntry", a.name, opts))
+	_, err := await(a.dir.Call("removeEntry", a.name, opts))
+	if err == nil {
+		a.destroyed = true
+	}
+	return err
 }
 
 // opfsSliceReader reads a Blob slice in chunks via arrayBuffer().
@@ -279,7 +295,7 @@ func (r *opfsSliceReader) Close() error { return nil }
 //
 // Post-unpack writes used to land in an oci.MemStore, on the assumption
 // that they were only ever EnsureLiveUser's handful of /etc edits. They
-// are not. GraftLiveOverlay unpacks the published live-overlay delta
+// are not. GraftLiveOverlayObserved unpacks the published live-overlay delta
 // through this same store, and for a desktop edition that delta is the
 // installer flatpak payload — 2.49 GiB across 42k files under var/lib/
 // for flounder:xfce, none of it caught by Client.SkipBodies. In a wasm32

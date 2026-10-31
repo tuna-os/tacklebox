@@ -50,7 +50,7 @@ func buildDdiIso(_ js.Value, args []js.Value) any {
 		sdboot = make([]byte, v.Get("length").Int())
 		js.CopyBytesToGo(sdboot, v)
 	}
-	return promise(func() (any, error) {
+	return operationPromise(func() (any, error) {
 		if len(sdboot) == 0 {
 			return nil, fmt.Errorf("DDI build needs opts.sdboot (a systemd-boot PE): the artifact set ships only a UKI, whose baked cmdline cannot mount a live ISO root")
 		}
