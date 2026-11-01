@@ -316,6 +316,25 @@ ci-summary-smoke:
 
 # ── iso-smoke: per-env, dedup, 6-env dedup, delta, offline-store ISOs ────────
 
+# Report actual hosted-runner capacity and fail before building if tools or
+# firmware are missing. Disk reports cover both ISO output and root's store;
+# /mnt is not assumed to be a separate disk. TCG remains supported.
+ci-iso-host: ci-prepare-out
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for tool in podman qemu-system-x86_64 xorriso mksquashfs unsquashfs mkfs.vfat mcopy; do
+      command -v "$tool"
+    done
+    test -r /usr/share/OVMF/OVMF_CODE_4M.fd
+    test -r /usr/share/OVMF/OVMF_VARS_4M.fd
+    echo ">>> CPUs: $(nproc)"
+    free -h
+    store=$(sudo podman info --format '{{{{.Store.GraphRoot}}')
+    sudo df -h "{{TBX_CI_OUT}}" "$store"
+    sudo podman info
+    qemu-system-x86_64 --version
+    if [ -w /dev/kvm ]; then echo '>>> boot-all accelerator: kvm'; else echo '>>> boot-all accelerator: tcg'; fi
+
 # Build one fixture ISO: recipe is a fixtures/<recipe>.json stem
 ci-iso-build recipe iso: ci-prepare-out
     sudo ./tacklebox build fixtures/{{recipe}}.json --iso {{TBX_CI_OUT}}/{{iso}}.iso -b {{TBX_CI_OUT}}
