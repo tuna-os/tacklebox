@@ -247,11 +247,11 @@ jobs:
   # No actions/cache here: the fixture images are rebuilt every run, so their
   # image IDs (and thus every tacklebox cache key) change every run.
   iso-smoke:
-    # RunsOn build-amd64 (controlled ubuntu24-full-x64 image): the GitHub
-    # runner's podman 5.8.4 wedges the customize commit and its crun/conmon
-    # cannot be re-pinned (tuna-os/tunaOS#1893). The `runs-on=` marker + `runner=`
-    # group is RunsOn's label format (see docs/runners/labels).
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    # Keep this gate runnable without the self-hosted RunsOn pool: jobs can
+    # otherwise wait 24 hours without acquiring a runner. Pin Noble for the
+    # Kubic xUbuntu_24.04 setup below, which replaces the image's Podman stack
+    # and removes the 5.8.4 shadow implicated in tuna-os/tunaOS#1893.
+    runs-on: ubuntu-24.04
     needs: lint-test
     timeout-minutes: 60
     steps:
@@ -297,14 +297,12 @@ jobs:
       - name: build tacklebox
         run: just build
 
-      # Plain podman (no sudo): the images must land in the runner user's
-      # store, which is where the live pipeline reads from.
-      # k8s-file log driver for all podman runs resolves the runner journald
-      # gap (tuna-os/tunaOS#1893).
+      # Keep fixtures and tacklebox in root's store to avoid rootless
+      # re-exec and customize-commit failures (tuna-os/tunaOS#1893).
+      # k8s-file logging avoids the runner's journald gap.
       - name: build fixture live images
-        # sudo (root) podman: the RunsOn image's rootless re-exec is broken
-        # ("cannot re-exec process"); the tacklebox build below is root too.
-        # Images are labelled with the job's owner id so ci-cleanup finds them.
+        # The tacklebox build below runs as root too. Images are labelled
+        # with the job's owner id so ci-cleanup finds them.
         run: just ci-fixture-images "sudo podman" alpha beta gamma delta epsilon zeta
 
       - name: build per-env ISO
