@@ -43,10 +43,12 @@ Two structural notes:
   skipped or cancelled job reports failure instead of an absent check. If
   branch protection or agent auto-merge is ever pointed at this repo, that
   gap needs closing first.
-- **`iso-smoke` runs on a self-hosted RunsOn runner**
-  (`runs-on=…/runner=build-amd64`), not a GitHub runner, because the GitHub
-  image's podman wedges the customize commit (tunaOS#1893). A fork without
-  that runner configured cannot run this job at all.
+- **`iso-smoke` runs on GitHub's `ubuntu-24.04` runners.** The previous
+  self-hosted RunsOn pool left jobs waiting 24 hours without a runner. Keep
+  the Kubic Podman replacement, shadow removal, root-owned fixture/build
+  store, and `k8s-file` logging: the stock runner stack caused customize
+  commit failures (tunaOS#1893). The Ubuntu version must match the Kubic
+  `xUbuntu_24.04` repository used by `ci-podman-kubic`.
 
 The `concurrency` group is load-bearing, not tidiness: without it, 26 stale
 runs piled up on 2026-07-20 (mostly Renovate rebases) and saturated the shared
