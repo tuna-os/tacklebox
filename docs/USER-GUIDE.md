@@ -373,6 +373,38 @@ flatpaks. When the image declares a flatpak that the overlay does not supply,
 `purebuild` shows a warning. With `--strict`, the build stops instead. The
 browser builder shows the declared list after it reads the image.
 
+### Optional EROFS compression (pure-Go OCI builds)
+
+The native CLI defaults to `--rootfs-compression=none`. BuildRequest v1 uses
+`options.rootfsCompression`; omission, `""`, and `"none"` retain uncompressed
+EROFS. Set `"lz4"` (or `--rootfs-compression=lz4`) to opt into raw-LZ4
+compressed-full EROFS with 4 KiB logical clusters and physical clusters of at
+most 64 KiB. Browser legacy build options accept `rootfsCompression` too.
+Unknown codecs or explicit selections that conflict stop the build.
+The builder does not select another codec or fall back.
+
+LZ4 needs the **selected image kernel** to support big physical clusters
+(upstream version 5.13 or newer). The name of the distribution does not establish support.
+The builder reads `usr/lib/modules/<selected-kernel>/config` from the unpacked
+source tree, or `boot/config-<selected-kernel>` only if the first path is absent.
+The config must set `CONFIG_EROFS_FS=y` or `m`, `CONFIG_EROFS_FS_ZIP=y`,
+and `CONFIG_LZ4_DECOMPRESS=y`.
+
+The LZ4 build stops if the config is absent, unreadable, or larger than 1 MiB.
+The read must match the declared size.
+Malformed, duplicate or contradictory settings stop the build.
+A version header must match the selected kernel's numeric upstream version,
+if the header is present.
+
+The builder does not use another kernel's config or emit uncompressed output
+after the LZ4 check fails. Uncompressed builds do not read or need a kernel config.
+
+This capability check does not grant runtime qualification, alter receipt
+authority, or activate compression by default.
+DDI inputs already contain a filesystem. This option does not apply to DDI inputs.
+
+### DDI prebuilt root filesystems
+
 `purebuild --ddi <url-or-dir> [--ddi-stem <stem>]` accepts a second input type
 beside OCI images. It accepts a systemd-sysupdate v1 artifact set, such as
 mkosi `SplitArtifacts` from the native A/B channels of frostyard and snosi. The
