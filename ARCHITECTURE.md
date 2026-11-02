@@ -173,6 +173,28 @@ the filesystem and ISO authoring stages remain shared. Changes to the shared
 packages should be exercised through their unit tests and both entry-point
 builds so native and browser behavior do not drift.
 
+The EROFS writer retains uncompressed `FLAT_PLAIN` support while sharing
+identical immutable regular-file bodies, not their inodes. Unpack computes a
+SHA-256 during the existing body stream, reusing one hashing reader per layer
+rather than allocating hash state per file. `Node.BodyDigest` is bound to the
+observed reference and size, so later live-setup replacements cannot reuse a
+stale identity. Layout shares only equal digest/size pairs. Synthetic nodes
+without that identity remain unshared. File modes, ownership, hardlinks,
+directory and symlink payloads, and the separate offline OCI objects are not
+coalesced. Memory remains metadata-sized; authoring does not reopen every body
+for a hashing pass or buffer complete files.
+
+`TestErofsSharedBodies` covers distinct references, different inode metadata,
+equal-length unequal content, empty/block-aligned bodies and hardlinks.
+`TestErofsSharedBodyIdentityInvalidation` covers later reference/size changes.
+For actual Linux filesystem interpretation, run
+`TBOX_EROFS_KERNEL_PROOF=1 go test -v ./internal/purefs -run '^TestErofsSharedBodiesKernel$'`
+as root with mount capability: it mounts the authored ISO, mounts its EROFS
+member, hashes every fixture file in full, and checks ownership, modes and
+hardlink/inode identity. Run the shared-body behavior tests natively and with
+the Go JavaScript/WASM executor; their emitted fixture SHA-256 must match.
+This fixture proof is not a full candidate ISO size or installation proof.
+
 Offline OCI layouts produced by `purefs.OCILayoutInputs` include the exact
 retained manifest byte count in the synthesized index descriptor, alongside
 its digest and media type. The count must not come from re-encoding the

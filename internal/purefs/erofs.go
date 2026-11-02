@@ -55,6 +55,7 @@ type inode struct {
 	dirData  []byte // packed dirents (dirs only)
 	linkData []byte // symlink target (symlinks only)
 	children map[string]*inode
+	shared   bool // regular body extent emitted by an earlier, distinct inode
 	parent   *inode
 }
 
@@ -197,8 +198,23 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 	metaBlk := uint32(1)
 	metaBlocks := uint32((len(inodes)*slotSize + blkSize - 1) / blkSize)
 	next := metaBlk + metaBlocks
+	// Share only verified immutable regular-file bodies. Inodes, link counts,
+	// directory/symlink payloads and the separate offline OCI layout stay intact.
+	type bodyKey struct {
+		digest [32]byte
+		size   int64
+	}
+	bodies := make(map[bodyKey]uint32)
 	for _, in := range inodes {
 		if in.size > 0 {
+			if digest, ok := in.node.BodyDigest(); ok {
+				key := bodyKey{digest: digest, size: in.size}
+				if addr, found := bodies[key]; found {
+					in.blkAddr, in.shared = addr, true
+					continue
+				}
+				bodies[key] = next
+			}
 			in.blkAddr = next
 			next += uint32((in.size + blkSize - 1) / blkSize)
 		}
@@ -261,6 +277,18 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 	pad := make([]byte, blkSize)
 	for _, in := range inodes {
 		if in.size == 0 {
+			continue
+		}
+		if in.shared {
+			// Preserve consuming-store reference accounting and reclamation,
+			// including kept boot bodies, without rereading duplicate bytes.
+			r, err := store.Open(in.node.Ref)
+			if err != nil {
+				return fmt.Errorf("nid %d: %w", in.nid, err)
+			}
+			if err := r.Close(); err != nil {
+				return err
+			}
 			continue
 		}
 		var written int64
