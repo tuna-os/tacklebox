@@ -64,30 +64,32 @@ Use Conventional Commits for commits and squash-merge PR titles:
 
 - `feat:` adds a feature and bumps the minor version.
 - `fix:` fixes a bug and bumps the patch version.
-- `feat!:` or a `BREAKING CHANGE:` footer marks a breaking change. Before
+- `feat!:` or a `BREAKING CHANGE:` footer marks an incompatible change. Before
   1.0, this bumps the minor version; from 1.0 onward, it bumps the major version.
 
 Release-please runs on pushes to `main` and opens a release PR with the
 version manifest and changelog. The first release is v0.1.0. A maintainer
-adds `docs/releases/<tag>.md` to the release PR before merging it to create
+adds `docs/releases/<tag>.md` to the release PR, then merges it to create
 the tag and GitHub Release. The repository must allow GitHub Actions to
 create pull requests.
 
 The release-please workflow then calls the binary and container publishers
-with that tag. This explicit call is needed because tags created with
-`GITHUB_TOKEN` do not trigger other workflows. No personal access token is needed.
+with that tag. These calls let the publishers run because tags created with
+`GITHUB_TOKEN` do not trigger other workflows. No personal access token is necessary.
+
 GoReleaser builds static Linux amd64/arm64 tarballs and SHA-256 checksums
 with a read-only token. A separate job verifies the checksums and release
-notes before uploading all assets together. It preserves release-please's
+notes, then uploads all assets together. It preserves release-please's
 notes on an existing release. Each binary reports its version with
 `tacklebox --version`.
+
 The container workflow publishes both `v0.1.0` and `0.1.0` style tags to GHCR,
 as well as the existing `latest` and commit tags.
 
-Tag pushes from maintainers also run the publishers. To test binary packaging
-without publishing, run `goreleaser check` and
+Tag pushes from maintainers also run the publishers. To test binary archives
+without a release, run `goreleaser check` and
 `goreleaser release --snapshot --clean`, or dispatch the binary workflow on a
-branch. A manual run on a release tag publishes assets to that release.
+branch. A manual run on a tag uploads assets to that release.
 
 ## Questions?
 
