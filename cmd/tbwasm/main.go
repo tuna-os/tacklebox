@@ -673,6 +673,11 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			cleanup(store.post)
 		}()
 		observed := purefs.ObservedInputs{SchemaVersion: 1, Source: *gObserved, Overlay: purefs.OverlayObservation{Status: "custom-image"}}
+		if withResult {
+			if info, ok := purefs.ObserveEngineBuildInfo(); ok {
+				observed.Engine = &info
+			}
+		}
 
 		// The request/target platform drives overlay resolution,
 		// base-digest verification, and ESP filename selection below: an
@@ -839,6 +844,18 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			if err := layoutArena.Seal(); err != nil {
 				return nil, fmt.Errorf("seal offline blob arena: %w", err)
 			}
+			if withResult {
+				configReader, err := layoutArena.Open(cfgRef)
+				if err != nil {
+					return nil, fmt.Errorf("observed config: open retained bytes: %w", err)
+				}
+				content, readErr := purefs.ReadVerifiedConfigContent(configReader, cfgSize)
+				closeErr := configReader.Close()
+				if readErr != nil || closeErr != nil {
+					return nil, errors.Join(readErr, closeErr)
+				}
+				observed.Source.Config.Content = content
+			}
 			offlineLayout, merr = purefs.OCILayoutInputs(
 				&arenaDigestStore{arena: gBlobArena, extra: layoutArena, refs: blobRefs},
 				gManifest, gManifestDigest, gManifest.Config.Digest,
@@ -862,6 +879,9 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		// short.
 		if err := store.seal(); err != nil {
 			return nil, fmt.Errorf("seal post-unpack arena: %w", err)
+		}
+		if withResult {
+			observed.Installer = purefs.ObserveInstallerTree(root, store)
 		}
 		reportMem("pre-erofs")
 		sfsArena, err := newOpfsArena("tbox-erofs.img", "s")
