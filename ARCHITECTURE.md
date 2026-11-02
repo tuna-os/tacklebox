@@ -173,6 +173,16 @@ the filesystem and ISO authoring stages remain shared. Changes to the shared
 packages should be exercised through their unit tests and both entry-point
 builds so native and browser behavior do not drift.
 
+Offline OCI layouts produced by `purefs.OCILayoutInputs` include the exact
+retained manifest byte count in the synthesized index descriptor, alongside
+its digest and media type. The count must not come from re-encoding the
+decoded manifest. Browser install run
+[`41270163456`](https://github.com/tuna-os/iso-builder/actions/runs/41270163456)
+reached GUI submission but the installer refused `bound blob size mismatch`:
+the stored manifest had the correct digest and 10,834 bytes, while its
+index descriptor omitted `size`. Keep the installer's descriptor checks
+unchanged; the producer must supply the complete descriptor.
+
 ## The Target interface
 
 ```go
