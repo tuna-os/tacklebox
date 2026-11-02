@@ -58,6 +58,13 @@ The reader checks its digest on close.
 Only successful verification sets `bytesVerified` to true.
 A descriptor alone does not prove that the engine consumed those bytes.
 
+An observed result can also include `source.config.content` with `os`,
+`architecture` and `variant`. These values are read from the retained JSON only
+after the original config reader verifies its digest on close and its OPFS
+arena is sealed. They are not copied from the request or index descriptor.
+Older results and builds which do not consume config bytes omit this object.
+No CPU baseline or hardware-support claim follows from these fields.
+
 ## Overlay evidence
 
 The engine retains the digest when it resolves the overlay.
@@ -68,6 +75,12 @@ An overlay without new layers retains its existing error behavior.
 `baseAnnotationMatched` is true only when an annotation exists and matches the source digest.
 An absent annotation does not prove linkage.
 A requested digest does not count as an observed annotation.
+
+`overlay.baseDigest` retains the exact annotation selected by the existing base
+verification, after all overlay layers apply. The actual-base annotation keeps
+its existing precedence over the declared-base annotation. Missing, mismatched
+and failed overlays produce no applied identity. Request values cannot supply
+this observation.
 
 The status `custom-image` means the caller chose to omit the curated overlay.
 The status `absent` means this build did not apply an overlay.
@@ -109,6 +122,41 @@ The API does not copy requested identity into evidence.
 This includes CPU baseline, hardware target and tool revisions.
 Frontend identity needs a receipt from its producer.
 A backend hash does not identify the frontend commit.
+
+`installer` reports the final applied tree immediately before EROFS authoring,
+after the post arena is sealed. The engine hashes the raw
+`etc/tunaos/live-source.json` stamp and keeps its installer app, revision and
+bundle claims under `stampClaims`. It then reads the actual Flatpak
+`app/<app>/<arch>/<branch>/active` symlink, deployed metadata and application
+name. Only one consistent deployment yields a `deployment`; its commit is the
+actual deployment directory identifier. `sourceStampMatched` states whether
+that identity agrees with the stamp, not whether the stamp is authenticated.
+Without a readable regular source stamp this object is absent. With a stamp,
+missing, ambiguous or inconsistent layouts retain a diagnostic missing reason.
+
+The optional `helper` hashes the deployed `files/bin/fisherman` bytes. It does
+not infer a source revision from a binary without VCS metadata and cannot
+identify the frontend commit instead of the deployment. `shippedRecipe` hashes
+an actual `etc/bootc-installer/recipe.json` file if present. Shipping that file
+does not prove that a frontend loaded it, or define the canonical
+`recipe_sha256` domain. A bundle claim in the stamp is never represented as
+remeasured bundle bytes.
+
+`engine` comes from the executable's own `debug.ReadBuildInfo`, cached once.
+It is reported only when both the main module and executable package identify
+tacklebox's `cmd/tbwasm` or `cmd/purebuild`, never from an iso-builder host
+module, dependency revision or environment pin. `vcsRevision` and
+`vcsModified` retain valid actual VCS settings when present; modified remains
+the literal `"true"` or `"false"` setting. An absent or dirty VCS stamp does
+not identify exact source bytes. Module/Go-version metadata without a VCS stamp
+stays only that, not an invented revision.
+
+The browser path consumes a BuildRequest and normalized build options. It does
+not parse a `MediaRecipe` file or a separate canonical build-config document.
+RFC014 currently names request, recipe and config digests without defining the
+recipe/config byte domains. These additions do not equate those digests to an
+arbitrary request serialization, source OCI config or frontend JavaScript.
+Defining those domains requires an explicit contract clarification.
 
 Boot inputs need separate hashes of the bytes that the engine consumes.
 Paths and requested IDs do not provide those hashes.

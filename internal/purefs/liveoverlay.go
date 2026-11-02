@@ -181,7 +181,7 @@ func GraftLiveOverlayObserved(
 	if err := c.UnpackOnto(root, ref, m, store, skip, opts.Progress); err != nil {
 		return false, nil, nil, fmt.Errorf("apply live overlay %s:%s: %w", ref.Repo, ref.Tag, err)
 	}
-	return true, m, &OverlayObservation{Status: "applied", ManifestDigest: digest, LayersApplied: true, BaseAnnotationMatched: true}, nil
+	return true, m, &OverlayObservation{Status: "applied", ManifestDigest: digest, LayersApplied: true, BaseAnnotationMatched: true, BaseDigest: liveOverlayBaseAnnotation(m)}, nil
 }
 
 // VerifyLiveOverlayBase requires a manifest-level binding to the selected base.
@@ -194,13 +194,7 @@ func VerifyLiveOverlayBase(overlayManifest *oci.Manifest, actualBaseDigest strin
 	if want == "" {
 		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMissing}
 	}
-	var got string
-	if overlayManifest.Annotations != nil {
-		got = strings.TrimSpace(overlayManifest.Annotations[LiveOverlayActualBaseDigestAnnotation])
-		if got == "" {
-			got = strings.TrimSpace(overlayManifest.Annotations[LiveOverlayBaseDigestAnnotation])
-		}
-	}
+	got := liveOverlayBaseAnnotation(overlayManifest)
 	if got == "" {
 		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMissing, Want: want}
 	}
@@ -208,4 +202,15 @@ func VerifyLiveOverlayBase(overlayManifest *oci.Manifest, actualBaseDigest strin
 		return &OverlayMismatchError{Reason: OverlayReasonBaseDigestMismatch, Want: want, Got: got}
 	}
 	return nil
+}
+
+func liveOverlayBaseAnnotation(manifest *oci.Manifest) string {
+	if manifest == nil {
+		return ""
+	}
+	value := strings.TrimSpace(manifest.Annotations[LiveOverlayActualBaseDigestAnnotation])
+	if value == "" {
+		value = strings.TrimSpace(manifest.Annotations[LiveOverlayBaseDigestAnnotation])
+	}
+	return value
 }
