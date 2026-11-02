@@ -29,6 +29,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,6 +113,12 @@ func registerAPIs() {
 	js.Global().Set("tboxBuildIsoWithResult", js.FuncOf(buildIsoWithResult))
 	js.Global().Set("tboxBuildDdiIso", js.FuncOf(buildDdiIso))
 	js.Global().Set("tboxExportBuildRequest", js.FuncOf(exportBuildRequest))
+	js.Global().Set("tboxGetCapabilities", js.FuncOf(func(js.Value, []js.Value) any {
+		return map[string]any{
+			"schemaVersion":     1,
+			"rootfsCompression": []any{purefs.ErofsCompressionNone, purefs.ErofsCompressionLZ4},
+		}
+	}))
 	js.Global().Set("tboxReset", js.FuncOf(func(js.Value, []js.Value) any { return resetOperation(false) }))
 	js.Global().Set("tboxResetAsync", js.FuncOf(func(js.Value, []js.Value) any { return resetOperation(true) }))
 }
@@ -561,6 +568,15 @@ func exportBuildRequest(_ js.Value, args []js.Value) any {
 			req.ResolvedInputs = &purefs.ResolvedInputs{PlatformManifestDigest: gManifestDigest}
 		}
 	}
+	if len(args) > 0 && args[0].Type() == js.TypeObject && !args[0].IsNull() {
+		mode, modeErr := rootFSCompressionFromOpts(args[0], req)
+		if modeErr != nil {
+			return operationPromise(func() (any, error) { return nil, modeErr })
+		}
+		if legacy := args[0].Get("rootfsCompression"); legacy.Type() == js.TypeString && legacy.String() != "" {
+			req.Options.RootFSCompression = mode
+		}
+	}
 	return operationPromise(func() (any, error) {
 		b, err := req.ExportJSON()
 		if err != nil {
@@ -568,6 +584,32 @@ func exportBuildRequest(_ js.Value, args []js.Value) any {
 		}
 		return string(b), nil
 	})
+}
+
+// rootFSCompressionFromOpts merges the legacy selector with the active request.
+// An omitted selector never overrides an explicit request, including "none".
+func rootFSCompressionFromOpts(opts js.Value, req *purefs.BuildRequest) (string, error) {
+	legacy := ""
+	if v := opts.Get("rootfsCompression"); v.Type() == js.TypeString {
+		legacy = v.String()
+	} else if v.Type() != js.TypeUndefined && v.Type() != js.TypeNull {
+		return "", fmt.Errorf("rootfsCompression must be a string")
+	}
+	mode, err := purefs.NormalizeRootFSCompression(legacy)
+	if err != nil {
+		return "", err
+	}
+	if req != nil && req.Options.RootFSCompression != "" {
+		requestMode, err := purefs.NormalizeRootFSCompression(req.Options.RootFSCompression)
+		if err != nil {
+			return "", err
+		}
+		if legacy != "" && mode != requestMode {
+			return "", fmt.Errorf("rootfsCompression %q conflicts with build request rootfsCompression %q", legacy, req.Options.RootFSCompression)
+		}
+		mode = requestMode
+	}
+	return mode, nil
 }
 
 func buildIso(_ js.Value, args []js.Value) any           { return buildIsoResult(args, false) }
@@ -663,6 +705,10 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			if liveMarker == "" {
 				liveMarker = activeReq.Options.LiveMarker
 			}
+		}
+		compression, err := rootFSCompressionFromOpts(opts, activeReq)
+		if err != nil {
+			return nil, err
 		}
 		if label == "" {
 			label = "TUNAOS"
@@ -883,14 +929,23 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		if withResult {
 			observed.Installer = purefs.ObserveInstallerTree(root, store)
 		}
+		if err := purefs.ValidateErofsCompression(root, store, kver, compression); err != nil {
+			return nil, err
+		}
 		reportMem("pre-erofs")
 		sfsArena, err := newOpfsArena("tbox-erofs.img", "s")
 		if err != nil {
 			return nil, err
 		}
 		defer cleanup(sfsArena)
-		if err := purefs.WriteErofs(root, store, arenaWriter{sfsArena}, 0); err != nil {
-			return nil, err
+		var authorErr error
+		if compression == purefs.ErofsCompressionLZ4 {
+			authorErr = purefs.WriteErofsLZ4(context.Background(), root, store, arenaWriter{sfsArena}, 0)
+		} else {
+			authorErr = purefs.WriteErofs(root, store, arenaWriter{sfsArena}, 0)
+		}
+		if authorErr != nil {
+			return nil, authorErr
 		}
 		reportMem("erofs")
 		sfsSize := sfsArena.off

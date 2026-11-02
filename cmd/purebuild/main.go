@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -98,32 +99,33 @@ func (l *stringList) String() string     { return strings.Join(*l, ",") }
 func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 type pureBuildConfig struct {
-	RequestPath     string
-	Image           string
-	Registry        string
-	Platform        string
-	EffectiveArch   string
-	Out             string
-	Label           string
-	Initrd          string
-	Workdir         string
-	RootTar         string
-	UseXorriso      bool
-	Trim            string
-	Ddi             string
-	DdiStem         string
-	Strict          bool
-	Overlays        []string
-	LiveMarker      string
-	EngineDigest    string // sha256 of this executable; set → receipt required
-	Packages        []string
-	Flatpaks        []string
-	ExtraRun        []string
-	CustomImage     bool
-	CuratedTarget   bool
-	QualificationID string
-	Request         *BuildRequest
-	Sink            io.Writer
+	RequestPath       string
+	Image             string
+	Registry          string
+	Platform          string
+	EffectiveArch     string
+	Out               string
+	Label             string
+	Initrd            string
+	Workdir           string
+	RootTar           string
+	UseXorriso        bool
+	Trim              string
+	RootFSCompression string
+	Ddi               string
+	DdiStem           string
+	Strict            bool
+	Overlays          []string
+	LiveMarker        string
+	EngineDigest      string // sha256 of this executable; set → receipt required
+	Packages          []string
+	Flatpaks          []string
+	ExtraRun          []string
+	CustomImage       bool
+	CuratedTarget     bool
+	QualificationID   string
+	Request           *BuildRequest
+	Sink              io.Writer
 }
 
 func loadBuildRequest(path string) (*BuildRequest, error) {
@@ -134,11 +136,38 @@ func loadBuildRequest(path string) (*BuildRequest, error) {
 	return ParseBuildRequest(data)
 }
 
+// configureRootFSCompression merges an explicitly selected request mode with
+// the legacy flag. Empty selectors are defaults, not overrides.
+func configureRootFSCompression(cfg *pureBuildConfig, requested string) error {
+	mode, err := purefs.NormalizeRootFSCompression(cfg.RootFSCompression)
+	if err != nil {
+		return err
+	}
+	if requested != "" {
+		requestMode, err := purefs.NormalizeRootFSCompression(requested)
+		if err != nil {
+			return err
+		}
+		if cfg.RootFSCompression != "" && mode != requestMode {
+			return fmt.Errorf("--rootfs-compression %q conflicts with build request rootfsCompression %q", cfg.RootFSCompression, requested)
+		}
+		mode = requestMode
+	}
+	if cfg.Ddi != "" && mode != purefs.ErofsCompressionNone {
+		return fmt.Errorf("--rootfs-compression %s is not supported with --ddi: the published root is not reauthored", mode)
+	}
+	cfg.RootFSCompression = mode
+	return nil
+}
+
 func applyBuildRequestToConfig(req *BuildRequest, cfg *pureBuildConfig) error {
 	if req == nil {
 		return fmt.Errorf("build request is nil")
 	}
 	if err := req.Validate(); err != nil {
+		return err
+	}
+	if err := configureRootFSCompression(cfg, req.Options.RootFSCompression); err != nil {
 		return err
 	}
 	cfg.Request = req
@@ -259,48 +288,52 @@ func runPureBuildWithRequest(requestPath string, cfg *pureBuildConfig) error {
 
 func main() {
 	var (
-		requestPath = flag.String("request", "", "path to BuildRequest v1 JSON file exported by the browser builder")
-		image       = flag.String("image", "", "image as <repo>:<tag>, e.g. tuna-os/sailfin:kde")
-		registry    = flag.String("registry", "https://ghcr.io", "registry base URL (or CORS shim)")
-		platform    = flag.String("platform", "", "target platform (e.g. linux/amd64, linux/amd64/v2, linux/arm64)")
-		out         = flag.String("out", "tunaos-pure.iso", "output ISO path")
-		label       = flag.String("label", "TUNAOS", "ISO volume label (CDLABEL)")
-		initrd      = flag.String("initrd", "", "path to a tbox-enabled initramfs (overrides the image's stock one)")
-		workdir     = flag.String("workdir", ".purebuild", "scratch directory")
-		rootTar     = flag.String("rootfs-tar", "", "build from this rootfs tar (podman export of a customized container) instead of pulling; the tar is DELETED after ingest to bound disk use")
-		useXorriso  = flag.Bool("xorriso", false, "assemble the final ISO with xorriso (production args; native only) instead of the go-diskfs writer — avoids its staging copy")
-		trim        = flag.String("trim", "var/cache,var/log,var/tmp,tmp,run", "comma-separated rootfs paths emptied before authoring (boot-irrelevant caches)")
-		ddi         = flag.String("ddi", "", "build from a systemd-sysupdate v1 artifact directory (URL or local path containing SHA256SUMS + UKI + root.raw[.xz]) instead of an OCI image — tacklebox#172")
-		ddiStem     = flag.String("ddi-stem", "", "artifact stem to select in the DDI manifest (e.g. snow-ab); required when the manifest lists several")
-		strict      = flag.Bool("strict", false, "fail instead of warn when the image's flatpak preinstall.d asks for a flatpak the rootfs does not carry")
-		overlays    stringList
-		liveMarker  = flag.String("live-marker", "", "readiness string the baked tbox-live-ready.service prints to the serial console (default "+purefs.DefaultLiveMarker+")")
-		liveSource  = flag.Bool("live-source-receipt", false, "complete the overlay's etc/tunaos/live-source.json with the base, overlay and engine digests this build used (engine = sha256 of this executable); refuses if any is unavailable")
+		requestPath       = flag.String("request", "", "path to BuildRequest v1 JSON file exported by the browser builder")
+		image             = flag.String("image", "", "image as <repo>:<tag>, e.g. tuna-os/sailfin:kde")
+		registry          = flag.String("registry", "https://ghcr.io", "registry base URL (or CORS shim)")
+		platform          = flag.String("platform", "", "target platform (e.g. linux/amd64, linux/amd64/v2, linux/arm64)")
+		out               = flag.String("out", "tunaos-pure.iso", "output ISO path")
+		label             = flag.String("label", "TUNAOS", "ISO volume label (CDLABEL)")
+		initrd            = flag.String("initrd", "", "path to a tbox-enabled initramfs (overrides the image's stock one)")
+		workdir           = flag.String("workdir", ".purebuild", "scratch directory")
+		rootTar           = flag.String("rootfs-tar", "", "build from this rootfs tar (podman export of a customized container) instead of pulling; the tar is DELETED after ingest to bound disk use")
+		useXorriso        = flag.Bool("xorriso", false, "assemble the final ISO with xorriso (production args; native only) instead of the go-diskfs writer — avoids its staging copy")
+		trim              = flag.String("trim", "var/cache,var/log,var/tmp,tmp,run", "comma-separated rootfs paths emptied before authoring (boot-irrelevant caches)")
+		rootFSCompression = flag.String("rootfs-compression", purefs.ErofsCompressionNone, "live root EROFS compression: none or lz4 (requires selected kernel support; unavailable with --ddi)")
+		ddi               = flag.String("ddi", "", "build from a systemd-sysupdate v1 artifact directory (URL or local path containing SHA256SUMS + UKI + root.raw[.xz]) instead of an OCI image — tacklebox#172")
+		ddiStem           = flag.String("ddi-stem", "", "artifact stem to select in the DDI manifest (e.g. snow-ab); required when the manifest lists several")
+		strict            = flag.Bool("strict", false, "fail instead of warn when the image's flatpak preinstall.d asks for a flatpak the rootfs does not carry")
+		overlays          stringList
+		liveMarker        = flag.String("live-marker", "", "readiness string the baked tbox-live-ready.service prints to the serial console (default "+purefs.DefaultLiveMarker+")")
+		liveSource        = flag.Bool("live-source-receipt", false, "complete the overlay's etc/tunaos/live-source.json with the base, overlay and engine digests this build used (engine = sha256 of this executable); refuses if any is unavailable")
 	)
 	flag.Var(&overlays, "overlay", "uncompressed tar applied onto the rootfs after the live setup, with layer semantics (repeatable; applied in order). For test harnesses that must add, say, an SSH key to otherwise-shipped media without rebuilding the image")
 	flag.Parse()
-	if *ddi != "" {
-		if *liveSource {
-			log.Fatal("--live-source-receipt: --ddi media has no verified overlay to bind; refusing")
+	// Only an explicitly supplied flag may conflict with a request selector.
+	compressionOverride := ""
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "rootfs-compression" {
+			compressionOverride = *rootFSCompression
 		}
-		buildFromDdiForPlatform(*ddi, *ddiStem, *label, *workdir, *out, *platform)
-		return
-	}
+	})
 	cfg := pureBuildConfig{
-		RequestPath: *requestPath,
-		Image:       *image,
-		Registry:    *registry,
-		Platform:    *platform,
-		Out:         *out,
-		Label:       *label,
-		Initrd:      *initrd,
-		Workdir:     *workdir,
-		RootTar:     *rootTar,
-		UseXorriso:  *useXorriso,
-		Trim:        *trim,
-		Strict:      *strict,
-		Overlays:    overlays,
-		LiveMarker:  *liveMarker,
+		RequestPath:       *requestPath,
+		Image:             *image,
+		Registry:          *registry,
+		Platform:          *platform,
+		Out:               *out,
+		Label:             *label,
+		Initrd:            *initrd,
+		Workdir:           *workdir,
+		RootTar:           *rootTar,
+		UseXorriso:        *useXorriso,
+		Trim:              *trim,
+		RootFSCompression: compressionOverride,
+		Ddi:               *ddi,
+		DdiStem:           *ddiStem,
+		Strict:            *strict,
+		Overlays:          overlays,
+		LiveMarker:        *liveMarker,
 	}
 	if *liveSource {
 		digest, err := executableDigest()
@@ -318,6 +351,16 @@ func main() {
 		cfg.CuratedTarget = strings.HasPrefix(normImg, "tuna-os/")
 		cfg.CustomImage = !cfg.CuratedTarget
 	}
+	if err := configureRootFSCompression(&cfg, ""); err != nil {
+		log.Fatal(err)
+	}
+	if cfg.Ddi != "" {
+		if *liveSource {
+			log.Fatal("--live-source-receipt: --ddi media has no verified overlay to bind; refusing")
+		}
+		buildFromDdiForPlatform(cfg.Ddi, cfg.DdiStem, cfg.Label, cfg.Workdir, cfg.Out, cfg.Platform)
+		return
+	}
 	if err := runPureBuild(&cfg); err != nil {
 		log.Fatal(err)
 	}
@@ -328,6 +371,9 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		if err := applyBuildRequestToConfig(cfg.Request, cfg); err != nil {
 			return err
 		}
+	}
+	if err := configureRootFSCompression(cfg, ""); err != nil {
+		return err
 	}
 	if cfg.Registry == "" {
 		cfg.Registry = purefs.DefaultRegistry
@@ -675,6 +721,9 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		return fmt.Errorf("no kernel found under /usr/lib/modules")
 	}
 	log.Printf(">>> kernel %s", kver)
+	if err := purefs.ValidateErofsCompression(root, store, kver, cfg.RootFSCompression); err != nil {
+		return err
+	}
 
 	blob := func(p string) (func() (io.ReadCloser, error), error) {
 		n := root.Lookup(p)
@@ -775,9 +824,15 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := purefs.WriteErofs(root, erofsStore, sf, 0); err != nil {
+	var authorErr error
+	if cfg.RootFSCompression == purefs.ErofsCompressionLZ4 {
+		authorErr = purefs.WriteErofsLZ4(context.Background(), root, erofsStore, sf, 0)
+	} else {
+		authorErr = purefs.WriteErofs(root, erofsStore, sf, 0)
+	}
+	if authorErr != nil {
 		sf.Close()
-		return err
+		return authorErr
 	}
 	if err := sf.Close(); err != nil {
 		return err

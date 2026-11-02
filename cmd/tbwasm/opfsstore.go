@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -43,6 +44,10 @@ type opfsArena struct {
 	// wasm32 on a 63k-file image.
 	buf []byte   // Go-side read buffer
 	u8  js.Value // JS-side staging array, same length as buf
+
+	// Metadata patches reuse one bounded JS buffer and never move off.
+	patchU8  js.Value
+	patchErr error
 }
 
 // await blocks the calling goroutine on a JS promise.
@@ -169,6 +174,9 @@ func (a *opfsArena) Seal() error {
 }
 
 func (a *opfsArena) sealLocked() error {
+	if a.patchErr != nil {
+		return a.patchErr
+	}
 	if a.sealed {
 		return nil
 	}
@@ -351,10 +359,19 @@ func (h *hybridStore) destroy() {
 	}
 }
 
-// arenaWriter appends raw bytes to the arena file (EROFS authoring).
+// arenaWriter appends authored bytes and patches already-written metadata.
+// WriteAt restores the stream cursor before another append or Seal can run.
 type arenaWriter struct{ a *opfsArena }
 
 func (w arenaWriter) Write(p []byte) (int, error) {
+	w.a.mu.Lock()
+	defer w.a.mu.Unlock()
+	if w.a.patchErr != nil {
+		return 0, w.a.patchErr
+	}
+	if w.a.sealed || w.a.destroyed {
+		return 0, fmt.Errorf("arena %s is not writable", w.a.name)
+	}
 	u8 := js.Global().Get("Uint8Array").New(len(p))
 	js.CopyBytesToJS(u8, p)
 	if _, err := await(w.a.writer.Call("write", u8)); err != nil {
@@ -362,4 +379,55 @@ func (w arenaWriter) Write(p []byte) (int, error) {
 	}
 	w.a.off += int64(len(p))
 	return len(p), nil
+}
+
+func (w arenaWriter) WriteAt(p []byte, off int64) (n int, err error) {
+	a := w.a
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.patchErr != nil {
+		return 0, a.patchErr
+	}
+	if a.sealed || a.destroyed {
+		return 0, fmt.Errorf("arena %s is not writable", a.name)
+	}
+	// Metadata may only replace bytes reserved by the append pass. A patch
+	// must never grow the file or change the final authored byte count.
+	if off < 0 || off > a.off || int64(len(p)) > a.off-off {
+		return 0, fmt.Errorf("arena patch [%d,+%d) outside written size %d", off, len(p), a.off)
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	defer func() {
+		_, restoreErr := await(a.writer.Call("seek", float64(a.off)))
+		if restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restore arena append cursor: %w", restoreErr))
+		}
+		if err != nil {
+			// A rejected patch cannot be sealed into apparently valid output.
+			// Destroy still aborts the open stream and releases its lock.
+			a.patchErr = err
+		}
+	}()
+	if _, err = await(a.writer.Call("seek", float64(off))); err != nil {
+		return 0, err
+	}
+	const patchChunk = 64 << 10
+	if a.patchU8.Type() == js.TypeUndefined {
+		a.patchU8 = js.Global().Get("Uint8Array").New(patchChunk)
+	}
+	for n < len(p) {
+		k := min(patchChunk, len(p)-n)
+		js.CopyBytesToJS(a.patchU8, p[n:n+k])
+		chunk := a.patchU8
+		if k != patchChunk {
+			chunk = chunk.Call("subarray", 0, k)
+		}
+		if _, err = await(a.writer.Call("write", chunk)); err != nil {
+			return n, err
+		}
+		n += k
+	}
+	return n, nil
 }
