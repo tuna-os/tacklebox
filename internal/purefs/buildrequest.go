@@ -45,12 +45,13 @@ type ResolvedInputs struct {
 
 // BuildOptions holds user-facing ISO customization and output settings.
 type BuildOptions struct {
-	Label          string   `json:"label,omitempty"`
-	Packages       []string `json:"packages,omitempty"`
-	Flatpaks       []string `json:"flatpaks,omitempty"`
-	ExtraRun       []string `json:"extraRun,omitempty"`
-	LiveMarker     string   `json:"liveMarker,omitempty"`
-	OutputFilename string   `json:"outputFilename,omitempty"`
+	Label             string   `json:"label,omitempty"`
+	Packages          []string `json:"packages,omitempty"`
+	Flatpaks          []string `json:"flatpaks,omitempty"`
+	ExtraRun          []string `json:"extraRun,omitempty"`
+	LiveMarker        string   `json:"liveMarker,omitempty"`
+	OutputFilename    string   `json:"outputFilename,omitempty"`
+	RootFSCompression string   `json:"rootfsCompression,omitempty"`
 }
 
 // BuildRequest is the versioned (v1) frozen build operation contract shared
@@ -201,6 +202,9 @@ func (r *BuildRequest) Validate() error {
 	}
 	if strings.TrimSpace(r.Registry) == "" {
 		r.Registry = DefaultRegistry
+	}
+	if _, err := NormalizeRootFSCompression(r.Options.RootFSCompression); err != nil {
+		return fmt.Errorf("build request options: %w", err)
 	}
 
 	if r.CustomImage {
