@@ -333,6 +333,12 @@ func (h *hybridStore) Open(ref string) (io.ReadCloser, error) {
 	return h.arena.Open(ref)
 }
 
+// OpenForCompare keeps collision checks separate from stores that consume
+// references on ordinary reads. OPFS arena reads do not change body lifetime.
+func (h *hybridStore) OpenForCompare(ref string) (io.ReadCloser, error) {
+	return h.Open(ref)
+}
+
 // seal makes every ref in both arenas readable and stops further writes —
 // call before WriteErofs, which reads bodies from both.
 func (h *hybridStore) seal() error {

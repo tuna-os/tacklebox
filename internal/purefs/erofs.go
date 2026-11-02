@@ -11,6 +11,7 @@
 package purefs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -57,6 +58,159 @@ type inode struct {
 	children map[string]*inode
 	shared   bool // regular body extent emitted by an earlier, distinct inode
 	parent   *inode
+}
+
+const erofsBodyCompareChunk = 32 << 10
+
+// erofsBodyComparisonStore opts a store into side-effect-free body reads used
+// only to prove that equal digest/size candidates are byte-identical. Stores
+// with read-consumption accounting deliberately expose a separate path.
+type erofsBodyComparisonStore interface {
+	OpenForCompare(ref string) (io.ReadCloser, error)
+}
+
+// erofsBodyReleaser lets a consuming store retire a shared reference without
+// opening a body that will not be emitted.
+type erofsBodyReleaser interface {
+	ReleaseBody(ref string) error
+}
+
+type erofsBodyKey struct {
+	digest [32]byte
+	size   int64
+}
+
+// next is a one-based index into the extent slice; zero terminates a bucket.
+// A flat slice avoids one allocation for every unique digest.
+type erofsBodyExtent struct {
+	ref     string
+	blkAddr uint32
+	next    int
+}
+
+// layoutErofsBodies assigns plain extents in deterministic inode order. The
+// digest is only an index: distinct references in a digest/size bucket must
+// compare byte-for-byte before they share storage. A digest collision gets a
+// separate extent. Stores that cannot promise comparison reads are unshared.
+//
+// Memory is one digest map and one extent table, each bounded by inode count,
+// plus one lazily allocated 64 KiB workspace; bodies are never buffered whole.
+func layoutErofsBodies(inodes []*inode, store oci.BlobStore, next uint32, identity func(*oci.Node) ([32]byte, bool)) (uint32, error) {
+	comparer, canCompare := store.(erofsBodyComparisonStore)
+	var heads map[erofsBodyKey]int
+	var extents []erofsBodyExtent
+	var compareBuf []byte
+
+	for _, in := range inodes {
+		if in.size <= 0 {
+			continue
+		}
+
+		var key erofsBodyKey
+		identified := false
+		if canCompare && in.node.Type == oci.TypeFile {
+			if digest, ok := identity(in.node); ok {
+				key = erofsBodyKey{digest: digest, size: in.size}
+				identified = true
+				for candidate := heads[key]; candidate != 0; candidate = extents[candidate-1].next {
+					extent := extents[candidate-1]
+					same := extent.ref == in.node.Ref
+					if !same {
+						if compareBuf == nil {
+							compareBuf = make([]byte, 2*erofsBodyCompareChunk)
+						}
+						var err error
+						same, err = equalErofsBodies(comparer, extent.ref, in.node.Ref, in.size, compareBuf)
+						if err != nil {
+							return 0, fmt.Errorf("compare EROFS body for nid %d: %w", in.nid, err)
+						}
+					}
+					if same {
+						in.blkAddr, in.shared = extent.blkAddr, true
+						break
+					}
+				}
+				if in.shared {
+					continue
+				}
+			}
+		}
+
+		in.blkAddr = next
+		if identified {
+			if heads == nil {
+				heads = make(map[erofsBodyKey]int, len(inodes))
+				extents = make([]erofsBodyExtent, 0, len(inodes))
+			}
+			extents = append(extents, erofsBodyExtent{
+				ref:     in.node.Ref,
+				blkAddr: next,
+				next:    heads[key],
+			})
+			heads[key] = len(extents)
+		}
+		next += uint32((in.size + blkSize - 1) / blkSize)
+	}
+	return next, nil
+}
+
+func equalErofsBodies(store erofsBodyComparisonStore, leftRef, rightRef string, size int64, scratch []byte) (same bool, retErr error) {
+	left, err := store.OpenForCompare(leftRef)
+	if err != nil {
+		return false, fmt.Errorf("open %q: %w", leftRef, err)
+	}
+	defer func() {
+		if err := left.Close(); retErr == nil && err != nil {
+			retErr = err
+		}
+	}()
+	right, err := store.OpenForCompare(rightRef)
+	if err != nil {
+		return false, fmt.Errorf("open %q: %w", rightRef, err)
+	}
+	defer func() {
+		if err := right.Close(); retErr == nil && err != nil {
+			retErr = err
+		}
+	}()
+
+	leftBuf := scratch[:erofsBodyCompareChunk]
+	rightBuf := scratch[erofsBodyCompareChunk : 2*erofsBodyCompareChunk]
+	for remaining := size; remaining > 0; {
+		chunk := int64(erofsBodyCompareChunk)
+		if remaining < chunk {
+			chunk = remaining
+		}
+		if _, err := io.ReadFull(left, leftBuf[:chunk]); err != nil {
+			return false, fmt.Errorf("%q size drifted before %d bytes: %w", leftRef, size, err)
+		}
+		if _, err := io.ReadFull(right, rightBuf[:chunk]); err != nil {
+			return false, fmt.Errorf("%q size drifted before %d bytes: %w", rightRef, size, err)
+		}
+		if !bytes.Equal(leftBuf[:chunk], rightBuf[:chunk]) {
+			return false, nil
+		}
+		remaining -= chunk
+	}
+	if err := exactErofsBodySize(leftRef, left, size); err != nil {
+		return false, err
+	}
+	if err := exactErofsBodySize(rightRef, right, size); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func exactErofsBodySize(ref string, r io.Reader, size int64) error {
+	var extra [1]byte
+	n, err := io.ReadFull(r, extra[:])
+	if n != 0 {
+		return fmt.Errorf("%q size drifted beyond %d bytes", ref, size)
+	}
+	if err != io.EOF {
+		return fmt.Errorf("%q final size check: %w", ref, err)
+	}
+	return nil
 }
 
 // WriteErofs streams an EROFS image of the rootfs tree to w. File bodies
@@ -197,27 +351,9 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 	// ── Layout: block 0 (superblock) | inode slots | data blocks.
 	metaBlk := uint32(1)
 	metaBlocks := uint32((len(inodes)*slotSize + blkSize - 1) / blkSize)
-	next := metaBlk + metaBlocks
-	// Share only verified immutable regular-file bodies. Inodes, link counts,
-	// directory/symlink payloads and the separate offline OCI layout stay intact.
-	type bodyKey struct {
-		digest [32]byte
-		size   int64
-	}
-	bodies := make(map[bodyKey]uint32)
-	for _, in := range inodes {
-		if in.size > 0 {
-			if digest, ok := in.node.BodyDigest(); ok {
-				key := bodyKey{digest: digest, size: in.size}
-				if addr, found := bodies[key]; found {
-					in.blkAddr, in.shared = addr, true
-					continue
-				}
-				bodies[key] = next
-			}
-			in.blkAddr = next
-			next += uint32((in.size + blkSize - 1) / blkSize)
-		}
+	next, err := layoutErofsBodies(inodes, store, metaBlk+metaBlocks, (*oci.Node).BodyDigest)
+	if err != nil {
+		return err
 	}
 	totalBlocks := next
 
@@ -275,19 +411,16 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 
 	// Data blocks in nid order (matches blkAddr assignment above).
 	pad := make([]byte, blkSize)
+	releaser, canRelease := store.(erofsBodyReleaser)
 	for _, in := range inodes {
 		if in.size == 0 {
 			continue
 		}
 		if in.shared {
-			// Preserve consuming-store reference accounting and reclamation,
-			// including kept boot bodies, without rereading duplicate bytes.
-			r, err := store.Open(in.node.Ref)
-			if err != nil {
-				return fmt.Errorf("nid %d: %w", in.nid, err)
-			}
-			if err := r.Close(); err != nil {
-				return err
+			if canRelease {
+				if err := releaser.ReleaseBody(in.node.Ref); err != nil {
+					return fmt.Errorf("release shared body for nid %d: %w", in.nid, err)
+				}
 			}
 			continue
 		}

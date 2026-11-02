@@ -3,6 +3,7 @@ package oci
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"fmt"
@@ -481,7 +482,12 @@ func (s *MemStore) Open(ref string) (io.ReadCloser, error) {
 	if _, err := fmt.Sscanf(ref, "m%d", &i); err != nil || i < 0 || i >= len(s.blobs) {
 		return nil, fmt.Errorf("bad ref %q", ref)
 	}
-	return io.NopCloser(strings.NewReader(string(s.blobs[i]))), nil
+	return io.NopCloser(bytes.NewReader(s.blobs[i])), nil
+}
+
+// OpenForCompare is a stable read that does not consume body lifetime.
+func (s *MemStore) OpenForCompare(ref string) (io.ReadCloser, error) {
+	return s.Open(ref)
 }
 
 // DirStore spills bodies to numbered files under dir — the native builds'
@@ -514,6 +520,11 @@ func (s *DirStore) Put(r io.Reader) (string, int64, error) {
 
 func (s *DirStore) Open(ref string) (io.ReadCloser, error) {
 	return os.Open(ref)
+}
+
+// OpenForCompare is a stable read that does not consume body lifetime.
+func (s *DirStore) OpenForCompare(ref string) (io.ReadCloser, error) {
+	return s.Open(ref)
 }
 
 // ApplyTarOnto applies an uncompressed tar stream onto an existing tree with

@@ -20,8 +20,10 @@ import (
 
 type sharedBodyStore struct {
 	oci.MemStore
-	opens     int
-	readBytes int64
+	opens            int
+	compareOpens     int
+	readBytes        int64
+	compareReadBytes int64
 }
 
 func (s *sharedBodyStore) Open(ref string) (io.ReadCloser, error) {
@@ -30,17 +32,26 @@ func (s *sharedBodyStore) Open(ref string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sharedBodyReader{ReadCloser: r, store: s}, nil
+	return &sharedBodyReader{ReadCloser: r, readBytes: &s.readBytes}, nil
+}
+
+func (s *sharedBodyStore) OpenForCompare(ref string) (io.ReadCloser, error) {
+	s.compareOpens++
+	r, err := s.MemStore.OpenForCompare(ref)
+	if err != nil {
+		return nil, err
+	}
+	return &sharedBodyReader{ReadCloser: r, readBytes: &s.compareReadBytes}, nil
 }
 
 type sharedBodyReader struct {
 	io.ReadCloser
-	store *sharedBodyStore
+	readBytes *int64
 }
 
 func (r *sharedBodyReader) Read(p []byte) (int, error) {
 	n, err := r.ReadCloser.Read(p)
-	r.store.readBytes += int64(n)
+	*r.readBytes += int64(n)
 	return n, err
 }
 
@@ -102,8 +113,12 @@ func TestErofsSharedBodies(t *testing.T) {
 	}
 	image := sharedBodyImage(t, root, store)
 	wantRead := int64(len(bodies["a-original"]) + len(bodies["c-different"]) + len(bodies["e-aligned"]))
-	if store.opens != 5 || store.readBytes != wantRead {
-		t.Fatalf("opened %d references/read %d bytes, want 5 references/%d unique body bytes", store.opens, store.readBytes, wantRead)
+	wantCompareRead := 2 * int64(len(bodies["a-original"])+len(bodies["e-aligned"]))
+	if store.opens != 3 || store.readBytes != wantRead {
+		t.Fatalf("emission opened %d references/read %d bytes, want 3 references/%d unique body bytes", store.opens, store.readBytes, wantRead)
+	}
+	if store.compareOpens != 4 || store.compareReadBytes != wantCompareRead {
+		t.Fatalf("comparison opened %d references/read %d bytes, want 4 references/%d candidate bytes", store.compareOpens, store.compareReadBytes, wantCompareRead)
 	}
 	le := binary.LittleEndian
 	if len(image) != int(le.Uint32(image[1024+36:]))*4096 {
@@ -129,6 +144,10 @@ func TestErofsSharedBodies(t *testing.T) {
 	if le.Uint32(inode(4)[16:]) != le.Uint32(inode(5)[16:]) {
 		t.Fatal("block-aligned duplicates do not share an extent")
 	}
+	repeatRoot, repeatStore, _ := sharedBodyFixture(t)
+	if repeat := sharedBodyImage(t, repeatRoot, repeatStore); !bytes.Equal(image, repeat) {
+		t.Fatal("identical input produced nondeterministic EROFS bytes")
+	}
 	// Clear the observed identities by replacing each node with its public data:
 	// synthetic callers remain supported, but cannot authorize extent sharing.
 	for name, n := range root.Children {
@@ -141,6 +160,78 @@ func TestErofsSharedBodies(t *testing.T) {
 		t.Fatalf("saved %d bytes, want 24576", saved)
 	}
 	t.Logf("native/WASM shared-body fixture: size=%d sha256=%x", len(image), sha256.Sum256(image))
+}
+
+func TestErofsSharedBodyDigestCollision(t *testing.T) {
+	store := &sharedBodyStore{}
+	first := bytes.Repeat([]byte("a"), 5000)
+	collision := bytes.Repeat([]byte("b"), len(first))
+	refs := make([]string, 3)
+	for i, body := range [][]byte{first, collision, first} {
+		ref, size, err := store.Put(bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if size != int64(len(first)) {
+			t.Fatalf("body %d size = %d", i, size)
+		}
+		refs[i] = ref
+	}
+	inodes := make([]*inode, len(refs))
+	for i, ref := range refs {
+		node := &oci.Node{Type: oci.TypeFile, Ref: ref, Size: int64(len(first))}
+		inodes[i] = &inode{node: node, nid: uint64(i + 1), size: node.Size}
+	}
+	forcedCollision := func(*oci.Node) ([32]byte, bool) {
+		return [32]byte{0xca, 0x11}, true
+	}
+	next, err := layoutErofsBodies(inodes, store, 7, forcedCollision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inodes[0].blkAddr == inodes[1].blkAddr || inodes[1].shared {
+		t.Fatal("equal digest/size but distinct bytes shared an extent")
+	}
+	if inodes[0].blkAddr != inodes[2].blkAddr || !inodes[2].shared {
+		t.Fatal("byte-identical bodies in a collision bucket did not share")
+	}
+	if next != 11 {
+		t.Fatalf("next block = %d, want 11 for two distinct two-block bodies", next)
+	}
+}
+
+func TestErofsSharedBodyComparisonRejectsSizeDrift(t *testing.T) {
+	store := &sharedBodyStore{}
+	refs := make([]string, 2)
+	for i := range refs {
+		ref, _, err := store.Put(strings.NewReader("four"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs[i] = ref
+	}
+	inodes := make([]*inode, len(refs))
+	for i, ref := range refs {
+		node := &oci.Node{Type: oci.TypeFile, Ref: ref, Size: 3}
+		inodes[i] = &inode{node: node, nid: uint64(i + 1), size: node.Size}
+	}
+	identity := func(*oci.Node) ([32]byte, bool) { return [32]byte{1}, true }
+	if _, err := layoutErofsBodies(inodes, store, 7, identity); err == nil {
+		t.Fatal("comparison accepted bodies longer than their bound identity")
+	}
+}
+
+type noComparisonStore struct {
+	oci.BlobStore
+}
+
+func TestErofsSharedBodiesRequireSafeComparison(t *testing.T) {
+	root, store, _ := sharedBodyFixture(t)
+	image := sharedBodyImage(t, root, noComparisonStore{BlobStore: store})
+	inode := func(nid int) []byte { return image[4096+nid*32:][:32] }
+	if binary.LittleEndian.Uint32(inode(1)[16:]) == binary.LittleEndian.Uint32(inode(2)[16:]) {
+		t.Fatal("store without non-consuming comparison reads authorized sharing")
+	}
 }
 
 func TestErofsSharedBodyIdentityInvalidation(t *testing.T) {

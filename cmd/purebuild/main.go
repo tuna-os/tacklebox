@@ -953,6 +953,27 @@ func (s *fileDigestStore) Open(ref string) (io.ReadCloser, error) {
 }
 
 func (c *consumingStore) Put(r io.Reader) (string, int64, error) { return c.inner.Put(r) }
+
+// OpenForCompare bypasses read-consumption accounting. EROFS collision checks
+// must not retire a blob before its eventual emission or shared-body release.
+func (c *consumingStore) OpenForCompare(ref string) (io.ReadCloser, error) {
+	return c.inner.OpenForCompare(ref)
+}
+
+// ReleaseBody accounts for a verified shared extent without a pointless read.
+func (c *consumingStore) ReleaseBody(ref string) error {
+	if c.keep[ref] {
+		return nil
+	}
+	c.refs[ref]--
+	if c.refs[ref] <= 0 {
+		if err := os.Remove(ref); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *consumingStore) Open(ref string) (io.ReadCloser, error) {
 	rc, err := c.inner.Open(ref)
 	if err != nil {
@@ -971,12 +992,10 @@ type deleteOnClose struct {
 }
 
 func (d *deleteOnClose) Close() error {
-	err := d.ReadCloser.Close()
-	d.store.refs[d.path]--
-	if d.store.refs[d.path] <= 0 {
-		_ = os.Remove(d.path)
+	if err := d.ReadCloser.Close(); err != nil {
+		return err
 	}
-	return err
+	return d.store.ReleaseBody(d.path)
 }
 
 // assembleWithXorriso lays out iso-root with hardlinks (zero copies) and
