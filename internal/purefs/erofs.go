@@ -7,7 +7,7 @@
 // EROFS rather than squashfs for the live root: every TunaOS variant's
 // kernel ships erofs (composefs — how bootc systems boot — runs on it),
 // go has no usable squashfs writer, and tbox-live mounts with -t auto.
-// Uncompressed FLAT_PLAIN layout for now; LZ4 clusters are a follow-up.
+// Uncompressed FLAT_PLAIN is the default; explicit LZ4 uses compressed-full indexes.
 package purefs
 
 import (
@@ -58,14 +58,10 @@ type inode struct {
 	parent   *inode
 }
 
-// WriteErofs streams an EROFS image of the rootfs tree to w. File bodies
-// come from store one at a time, so peak memory stays at metadata scale.
-// The output is deterministic for a given tree (sorted iteration, fixed
-// build time), which is what makes browser and CI builds byte-identical.
-func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int64) error {
+func prepareErofs(root *oci.Node, lz4Indexes bool) (inodes []*inode, rootIn *inode, metadataSlots uint64, err error) {
 	// ── Pass 1: mirror the tree into inodes, resolving hardlinks to a
 	// shared inode and packing directory payloads once nids are known.
-	inodes := []*inode{}
+	inodes = []*inode{}
 	byPath := map[string]*inode{}
 
 	var mirror func(prefix string, n *oci.Node, parent *inode) *inode
@@ -90,7 +86,7 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 		}
 		return in
 	}
-	rootIn := mirror("", root, nil)
+	rootIn = mirror("", root, nil)
 
 	// Hardlinks: same inode object under another name.
 	var linkHard func(prefix string, n *oci.Node, parent *inode) error
@@ -139,12 +135,18 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 		return nil
 	}
 	if err := linkHard("", root, rootIn); err != nil {
-		return err
+		return nil, nil, 0, err
 	}
 
-	// Assign nids (slot indexes) in traversal order.
-	for i, in := range inodes {
-		in.nid = uint64(i)
+	// Assign nids before packing directories. LZ4 reserves bounded full-index
+	// metadata up front so payloads can stream once and headers can be patched.
+	for _, in := range inodes {
+		in.nid = metadataSlots
+		if lz4Indexes && in.node.Type == oci.TypeFile {
+			metadataSlots += erofsLZ4InodeSlots(in.node.Size)
+		} else {
+			metadataSlots++
+		}
 	}
 
 	// nlink: dirs 2+subdirs; others = dirent references.
@@ -181,7 +183,7 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 		case oci.TypeDir:
 			data, size, err := packDirents(in)
 			if err != nil {
-				return err
+				return nil, nil, 0, err
 			}
 			in.dirData = data
 			in.size = size
@@ -191,6 +193,18 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 			in.linkData = []byte(in.node.Target)
 			in.size = int64(len(in.linkData))
 		}
+	}
+	return inodes, rootIn, metadataSlots, nil
+}
+
+// WriteErofs streams an EROFS image of the rootfs tree to w. File bodies
+// come from store one at a time, so peak memory stays at metadata scale.
+// The output is deterministic for a given tree (sorted iteration, fixed
+// build time), which is what makes browser and CI builds byte-identical.
+func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int64) error {
+	inodes, rootIn, _, err := prepareErofs(root, false)
+	if err != nil {
+		return err
 	}
 
 	// ── Layout: block 0 (superblock) | inode slots | data blocks.
@@ -207,51 +221,8 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 
 	// ── Emit. Superblock + inode table are small; stream data blocks.
 	head := make([]byte, int(metaBlk+metaBlocks)*blkSize)
-	sb := head[erofsSBOffset:]
-	le := binary.LittleEndian
-	le.PutUint32(sb[0:], erofsMagic)
-	sb[12] = blkBits
-	le.PutUint16(sb[14:], uint16(rootIn.nid))
-	le.PutUint64(sb[16:], uint64(len(inodes)))
-	le.PutUint64(sb[24:], uint64(buildTime))
-	le.PutUint32(sb[36:], totalBlocks)
-	le.PutUint32(sb[40:], metaBlk)
-	copy(sb[64:], "tunaos-live")
-	sb[88] = blkBits // dirblkbits
-
-	for _, in := range inodes {
-		off := int(metaBlk)*blkSize + int(in.nid)*slotSize
-		mode := uint16(in.node.Mode & 0o7777)
-		switch in.node.Type {
-		case oci.TypeDir:
-			mode |= ifmtDir
-		case oci.TypeFile:
-			mode |= ifmtReg
-		case oci.TypeSymlink:
-			mode = ifmtSymlink | 0o777
-		case oci.TypeChar:
-			mode |= ifmtChar
-		case oci.TypeBlock:
-			mode |= ifmtBlock
-		case oci.TypeFifo:
-			mode |= ifmtFifo
-		}
-		b := head[off:]
-		le.PutUint16(b[0:], 0) // compact | FLAT_PLAIN
-		le.PutUint16(b[4:], mode)
-		le.PutUint16(b[6:], uint16(in.nlink))
-		if in.size > 0xffffffff {
-			return fmt.Errorf("file too large for compact inode: %d", in.size)
-		}
-		le.PutUint32(b[8:], uint32(in.size))
-		if in.node.Type == oci.TypeChar || in.node.Type == oci.TypeBlock {
-			le.PutUint32(b[16:], uint32(in.node.Devmajor<<8|in.node.Devminor&0xff|(in.node.Devminor&^0xff)<<12))
-		} else {
-			le.PutUint32(b[16:], in.blkAddr)
-		}
-		le.PutUint32(b[20:], uint32(in.nid+1)) // i_ino (stat only)
-		le.PutUint16(b[24:], uint16(in.node.UID))
-		le.PutUint16(b[26:], uint16(in.node.GID))
+	if err := fillErofsHead(head, inodes, rootIn, metaBlk, totalBlocks, buildTime); err != nil {
+		return err
 	}
 	if _, err := w.Write(head); err != nil {
 		return err
@@ -370,4 +341,54 @@ func parentNid(in *inode) uint64 {
 		return in.parent.nid
 	}
 	return in.nid
+}
+
+func fillErofsHead(head []byte, inodes []*inode, rootIn *inode, metaBlk, totalBlocks uint32, buildTime int64) error {
+	sb := head[erofsSBOffset:]
+	le := binary.LittleEndian
+	le.PutUint32(sb[0:], erofsMagic)
+	sb[12] = blkBits
+	le.PutUint16(sb[14:], uint16(rootIn.nid))
+	le.PutUint64(sb[16:], uint64(len(inodes)))
+	le.PutUint64(sb[24:], uint64(buildTime))
+	le.PutUint32(sb[36:], totalBlocks)
+	le.PutUint32(sb[40:], metaBlk)
+	copy(sb[64:], "tunaos-live")
+	sb[88] = blkBits // dirblkbits
+
+	for _, in := range inodes {
+		off := int(metaBlk)*blkSize + int(in.nid)*slotSize
+		mode := uint16(in.node.Mode & 0o7777)
+		switch in.node.Type {
+		case oci.TypeDir:
+			mode |= ifmtDir
+		case oci.TypeFile:
+			mode |= ifmtReg
+		case oci.TypeSymlink:
+			mode = ifmtSymlink | 0o777
+		case oci.TypeChar:
+			mode |= ifmtChar
+		case oci.TypeBlock:
+			mode |= ifmtBlock
+		case oci.TypeFifo:
+			mode |= ifmtFifo
+		}
+		b := head[off:]
+		le.PutUint16(b[0:], 0) // compact | FLAT_PLAIN
+		le.PutUint16(b[4:], mode)
+		le.PutUint16(b[6:], uint16(in.nlink))
+		if in.size > 0xffffffff {
+			return fmt.Errorf("file too large for compact inode: %d", in.size)
+		}
+		le.PutUint32(b[8:], uint32(in.size))
+		if in.node.Type == oci.TypeChar || in.node.Type == oci.TypeBlock {
+			le.PutUint32(b[16:], uint32(in.node.Devmajor<<8|in.node.Devminor&0xff|(in.node.Devminor&^0xff)<<12))
+		} else {
+			le.PutUint32(b[16:], in.blkAddr)
+		}
+		le.PutUint32(b[20:], uint32(in.nid+1)) // i_ino (stat only)
+		le.PutUint16(b[24:], uint16(in.node.UID))
+		le.PutUint16(b[26:], uint16(in.node.GID))
+	}
+	return nil
 }
