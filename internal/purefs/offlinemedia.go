@@ -334,10 +334,9 @@ func embeddedInstallerRecipe(root *oci.Node, store oci.BlobStore, in offlineMedi
 	return n, append(out, '\n'), nil
 }
 
-// offlineDescriptor is one entry of the synthesized index.json. Size and
-// platform are omitted when unknown: Fisherman checks a blob's size only
-// when its descriptor carries one, and selects the manifest by digest, so
-// neither is load-bearing — the digest is.
+// offlineDescriptor is one entry of the synthesized index.json. Its size
+// describes the exact retained manifest bytes, not a re-encoded manifest.
+// The installer verifies both the descriptor size and digest before use.
 type offlineDescriptor struct {
 	MediaType string           `json:"mediaType"`
 	Digest    string           `json:"digest"`
@@ -367,11 +366,9 @@ func digestOpener(store oci.BlobStore, digest string) func() (io.ReadCloser, err
 	}
 }
 
-// readCappedBlob buffers one small blob to learn its exact ISO size. Only
-// the manifest takes this path: its size is unknowable otherwise (the
-// decoded manifest cannot reproduce its digest-identical bytes, and the
-// index entry deliberately carries no size). Layers and config stream
-// purely by descriptor size and are never buffered here.
+// readCappedBlob buffers one small blob to learn its exact ISO and descriptor
+// size: the decoded manifest cannot reproduce its digest-identical bytes.
+// Layers and config stream by descriptor size and are never buffered here.
 func readCappedBlob(store oci.BlobStore, digest string) ([]byte, error) {
 	rc, err := store.Open(digest)
 	if err != nil {
@@ -434,6 +431,11 @@ func OCILayoutInputs(store oci.BlobStore, manifest *oci.Manifest, indexDigest, c
 		}
 	}
 
+	manifestBytes, err := readCappedBlob(store, indexDigest)
+	if err != nil {
+		return nil, fmt.Errorf("offline layout: %w", err)
+	}
+
 	manifestMediaType := manifest.MediaType
 	if manifestMediaType == "" {
 		manifestMediaType = defaultOCIManifestMediaType
@@ -442,17 +444,13 @@ func OCILayoutInputs(store oci.BlobStore, manifest *oci.Manifest, indexDigest, c
 		SchemaVersion: 2,
 		MediaType:     defaultOCIIndexMediaType,
 		Manifests: []offlineDescriptor{
-			{MediaType: manifestMediaType, Digest: indexDigest},
+			{MediaType: manifestMediaType, Digest: indexDigest, Size: int64(len(manifestBytes))},
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("offline layout: encode index.json: %w", err)
 	}
 
-	manifestBytes, err := readCappedBlob(store, indexDigest)
-	if err != nil {
-		return nil, fmt.Errorf("offline layout: %w", err)
-	}
 	manifestPath, err := offlineBlobPath(indexDigest)
 	if err != nil {
 		return nil, fmt.Errorf("offline layout: %w", err)

@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -281,6 +284,7 @@ func TestOCILayoutInputs_ShapeAndLazyStreaming(t *testing.T) {
 		Manifests     []struct {
 			MediaType string `json:"mediaType"`
 			Digest    string `json:"digest"`
+			Size      int64  `json:"size"`
 		} `json:"manifests"`
 	}
 	if err := json.Unmarshal(indexBytes, &decoded); err != nil {
@@ -291,6 +295,11 @@ func TestOCILayoutInputs_ShapeAndLazyStreaming(t *testing.T) {
 	}
 	if len(decoded.Manifests) != 1 || decoded.Manifests[0].Digest != indexDigest {
 		t.Fatalf("index.json manifests = %+v, want single entry for %s", decoded.Manifests, indexDigest)
+	}
+	if descriptor := decoded.Manifests[0]; descriptor.Size != int64(len(store.blobs[indexDigest])) ||
+		descriptor.MediaType != manifest.MediaType {
+		t.Fatalf("index.json descriptor = %+v, want retained manifest size %d and media type %s",
+			descriptor, len(store.blobs[indexDigest]), manifest.MediaType)
 	}
 
 	// Manifest, config, and layer blobs stream from retention with
@@ -320,6 +329,77 @@ func TestOCILayoutInputs_ShapeAndLazyStreaming(t *testing.T) {
 		if digest != indexDigest && store.opens[digest] != before+1 {
 			t.Fatalf("%s opened %d times (was %d), want exactly one lazy open", p, store.opens[digest], before)
 		}
+	}
+}
+
+func TestOCILayoutInputs_ISORetainsManifestDescriptor(t *testing.T) {
+	if _, err := exec.LookPath("xorriso"); err != nil {
+		t.Skip("xorriso not installed")
+	}
+	for _, mediaType := range []string{defaultOCIManifestMediaType, "application/vnd.docker.distribution.manifest.v2+json"} {
+		t.Run(mediaType, func(t *testing.T) {
+			store := newCountingBlobStore()
+			manifest, _ := offlineTestManifest(t, store)
+			manifest.MediaType = mediaType
+			raw, err := json.MarshalIndent(struct {
+				SchemaVersion int `json:"schemaVersion"`
+				*oci.Manifest
+			}{SchemaVersion: 2, Manifest: manifest}, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw = append(raw, '\n')
+			digest := testOfflineDigestOf(raw)
+			store.blobs[digest] = raw
+
+			inputs, err := OCILayoutInputs(store, manifest, digest, manifest.Config.Digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inputs = append(inputs, memInput("/EFI/efi.img", strings.Repeat("\x00", 2048)))
+			directory := t.TempDir()
+			isoPath := filepath.Join(directory, "offline.iso")
+			output, err := os.Create(isoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeErr := WriteIso9660(output, "OFFLINE", inputs, "/EFI/efi.img")
+			closeErr := output.Close()
+			if writeErr != nil || closeErr != nil {
+				t.Fatalf("write ISO: %v; close: %v", writeErr, closeErr)
+			}
+			layout := filepath.Join(directory, "OCI")
+			if log, err := exec.Command("xorriso", "-indev", isoPath, "-osirrox", "on", "-extract", "/OCI", layout).CombinedOutput(); err != nil {
+				t.Fatalf("extract OCI layout: %v\n%s", err, log)
+			}
+			// Extracted ISO directories are read-only; allow TempDir cleanup.
+			for _, path := range []string{layout, filepath.Join(layout, "blobs"), filepath.Join(layout, "blobs", "sha256")} {
+				if err := os.Chmod(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			indexBytes, err := os.ReadFile(filepath.Join(layout, "index.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var index offlineIndex
+			if err := json.Unmarshal(indexBytes, &index); err != nil {
+				t.Fatal(err)
+			}
+			if len(index.Manifests) != 1 {
+				t.Fatalf("index descriptors: %+v", index.Manifests)
+			}
+			descriptor := index.Manifests[0]
+			blob, err := os.ReadFile(filepath.Join(layout, "blobs", "sha256", strings.TrimPrefix(digest, "sha256:")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if descriptor.Size != int64(len(blob)) || descriptor.Size != int64(len(raw)) ||
+				descriptor.Digest != testOfflineDigestOf(blob) || descriptor.MediaType != mediaType ||
+				!bytes.Equal(blob, raw) {
+				t.Fatalf("descriptor %+v does not bind the exact %d retained bytes", descriptor, len(raw))
+			}
+		})
 	}
 }
 
