@@ -1,12 +1,234 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/tuna-os/tacklebox/internal/blockdev"
 	"github.com/tuna-os/tacklebox/internal/install"
 	"github.com/tuna-os/tacklebox/internal/recipe"
+	"github.com/tuna-os/tacklebox/internal/target"
 )
+
+// TargetType identifies the category of installation media being planned.
+type TargetType string
+
+const (
+	TargetTypeLoop  TargetType = "loop"
+	TargetTypeBlock TargetType = "block"
+	TargetTypeIso   TargetType = "iso"
+)
+
+// BuildOptions carries the CLI options and target arguments needed to plan a build.
+type BuildOptions struct {
+	RecipePath      string
+	DeviceTarget    string
+	IsoOutput       string
+	OutputBase      string
+	ParallelInstall int
+	XZ              bool
+	Unsafe          bool
+	Verbose         bool
+	AssumeYes       bool
+}
+
+// EnvInstallPlan represents the planned installation parameters for a single environment.
+type EnvInstallPlan struct {
+	Env            recipe.BootableEnvironment
+	InstallMode    target.InstallMode
+	Backend        install.Backend
+	RemoraManifest *install.RemoraManifest
+}
+
+// ArtifactPlan represents an expected output artifact and post-processing steps.
+type ArtifactPlan struct {
+	Path     string
+	Compress bool
+	Type     TargetType
+}
+
+// BuildPlan decouples orchestration planning from privileged execution side effects.
+type BuildPlan struct {
+	Recipe          recipe.MediaRecipe
+	Target          target.Target
+	Mountpoints     *target.Mountpoints
+	Environments    []EnvInstallPlan
+	Artifacts       []ArtifactPlan
+	RemoraManifests []*install.RemoraManifest
+	OfflinePayloads []install.OfflinePayload
+	UseVFS          bool
+	Parallel        int
+	TargetType      TargetType
+	Options         BuildOptions
+
+	// Pre-flight sizing/warning details
+	IsLoopImage              bool
+	RecipeSizeBytes          uint64
+	EstimatedStoreUsageBytes uint64
+	StoreBytes               uint64
+	HasStoreUsageEstimate    bool
+}
+
+// planBuild loads and validates the recipe and constructs a deterministic BuildPlan.
+func planBuild(opts BuildOptions) (*BuildPlan, error) {
+	data, err := os.ReadFile(opts.RecipePath)
+	if err != nil {
+		return nil, fmt.Errorf("read recipe %s: %w", opts.RecipePath, err)
+	}
+
+	var r recipe.MediaRecipe
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, fmt.Errorf("parse recipe %s: %w", opts.RecipePath, err)
+	}
+
+	recipeDir := filepath.Dir(opts.RecipePath)
+	return planBuildFromRecipe(r, recipeDir, opts)
+}
+
+// planBuildFromRecipe plans build execution from a parsed recipe and build options.
+func planBuildFromRecipe(r recipe.MediaRecipe, recipeDir string, opts BuildOptions) (*BuildPlan, error) {
+	if len(r.BootableEnvironments) == 0 {
+		return nil, fmt.Errorf("recipe %s has no bootable_environments", opts.RecipePath)
+	}
+	if r.Size == "" {
+		return nil, fmt.Errorf("recipe %s missing size", opts.RecipePath)
+	}
+	if err := validateDedupLayout(r); err != nil {
+		return nil, fmt.Errorf("recipe %s: %w", opts.RecipePath, err)
+	}
+
+	// Resolve live_customize script paths against the recipe's directory and
+	// fail fast on missing files, before any expensive build work starts.
+	for i := range r.BootableEnvironments {
+		for j, s := range r.BootableEnvironments[i].LiveCustomize {
+			if !filepath.IsAbs(s) {
+				s = filepath.Join(recipeDir, s)
+			}
+			if _, err := os.Stat(s); err != nil {
+				return nil, fmt.Errorf("live_customize script for env %s: %w",
+					r.BootableEnvironments[i].ID, err)
+			}
+			r.BootableEnvironments[i].LiveCustomize[j] = s
+		}
+	}
+
+	// Resolve remora manifests (if any) against the recipe directory.
+	remoraManifests := make([]*install.RemoraManifest, len(r.BootableEnvironments))
+	for i := range r.BootableEnvironments {
+		rm, err := resolveRemora(r.BootableEnvironments[i], recipeDir)
+		if err != nil {
+			return nil, fmt.Errorf("remora for env %s: %w", r.BootableEnvironments[i].ID, err)
+		}
+		remoraManifests[i] = rm
+	}
+
+	isIso := opts.IsoOutput != ""
+	isBlockDevice := opts.DeviceTarget != ""
+
+	var tgtType TargetType
+	var tgt target.Target
+	var artifactPath string
+
+	if isIso {
+		tgtType = TargetTypeIso
+		artifactPath = opts.IsoOutput
+		efiSource := r.BootableEnvironments[0].Image
+		defaultBoot := r.DefaultBoot
+		if defaultBoot != "" && !strings.HasSuffix(defaultBoot, ".conf") {
+			defaultBoot += ".conf"
+		}
+		tgt = target.NewIsoTarget(opts.OutputBase, opts.IsoOutput, r.MediaName, efiSource, defaultBoot)
+	} else {
+		partitions, err := computePartitions(r)
+		if err != nil {
+			return nil, err
+		}
+		if isBlockDevice {
+			tgtType = TargetTypeBlock
+			artifactPath = opts.DeviceTarget
+			tgt = target.NewBlockTarget(opts.OutputBase, opts.DeviceTarget, r.Size, partitions)
+		} else {
+			tgtType = TargetTypeLoop
+			artifactPath = filepath.Join(opts.OutputBase, r.MediaName+".img")
+			tgt = target.NewBlockTarget(opts.OutputBase, "", r.Size, partitions)
+		}
+	}
+
+	// Pre-flight sizing calculations for loop images.
+	var isLoopImage bool
+	var recipeSizeBytes, estNeededBytes, storeBytes uint64
+	var hasStoreEstimate bool
+	if !isBlockDevice && !isIso {
+		isLoopImage = true
+		needed, ok := parseSize(r.Size)
+		if !ok {
+			return nil, fmt.Errorf("unrecognised size %q in recipe (expected e.g. 32G, 16384M)", r.Size)
+		}
+		recipeSizeBytes = needed
+		if neededEst, storeEst, ok := estimateStoreUsage(r); ok {
+			estNeededBytes = neededEst
+			storeBytes = storeEst
+			hasStoreEstimate = true
+		}
+	}
+
+	// Environments plan
+	envs := make([]EnvInstallPlan, len(r.BootableEnvironments))
+	for i, env := range r.BootableEnvironments {
+		envs[i] = EnvInstallPlan{
+			Env:            env,
+			InstallMode:    tgt.InstallMode(),
+			Backend:        install.Backend(env.Backend),
+			RemoraManifest: remoraManifests[i],
+		}
+	}
+
+	// Offline payloads & VFS
+	offlinePayloads := make([]install.OfflinePayload, 0, len(r.OfflinePayloads))
+	for _, payload := range r.OfflinePayloads {
+		offlinePayloads = append(offlinePayloads, install.OfflinePayload{Source: payload.Source, Ref: payload.Ref})
+	}
+	useVFS := len(r.OfflinePayloads) > 0 && tgt.InstallMode() == target.InstallModeLive && allComposefs(r)
+
+	// Artifacts plan
+	artifacts := []ArtifactPlan{
+		{
+			Path:     artifactPath,
+			Compress: opts.XZ && (tgtType != TargetTypeBlock),
+			Type:     tgtType,
+		},
+	}
+
+	// Parallel install planning
+	parallelN := opts.ParallelInstall
+	if parallelN < 1 {
+		parallelN = 1
+	}
+	if parallelN > len(r.BootableEnvironments) {
+		parallelN = len(r.BootableEnvironments)
+	}
+
+	return &BuildPlan{
+		Recipe:                   r,
+		Target:                   tgt,
+		Environments:             envs,
+		Artifacts:                artifacts,
+		RemoraManifests:          remoraManifests,
+		OfflinePayloads:          offlinePayloads,
+		UseVFS:                   useVFS,
+		Parallel:                 parallelN,
+		TargetType:               tgtType,
+		Options:                  opts,
+		IsLoopImage:              isLoopImage,
+		RecipeSizeBytes:          recipeSizeBytes,
+		EstimatedStoreUsageBytes: estNeededBytes,
+		StoreBytes:               storeBytes,
+		HasStoreUsageEstimate:    hasStoreEstimate,
+	}, nil
+}
 
 // validateDedupLayout validates shared-store policy before the orchestrator
 // starts any privileged or expensive build work.

@@ -46,7 +46,9 @@ Two structural notes:
 - **`iso-smoke` runs on a self-hosted RunsOn runner**
   (`runs-on=…/runner=build-amd64`), not a GitHub runner, because the GitHub
   image's podman wedges the customize commit (tunaOS#1893). A fork without
-  that runner configured cannot run this job at all.
+  that runner configured cannot run this job at all. The job skips fork PRs;
+  same-repository PRs, main pushes, scheduled runs, and manual runs retain
+  the full ISO smoke suite.
 
 The `concurrency` group is load-bearing, not tidiness: without it, 26 stale
 runs piled up on 2026-07-20 (mostly Renovate rebases) and saturated the shared
