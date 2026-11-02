@@ -58,12 +58,12 @@ The reader checks its digest on close.
 Only successful verification sets `bytesVerified` to true.
 A descriptor alone does not prove that the engine consumed those bytes.
 
-An observed result can also include `source.config.content` with `os`,
-`architecture` and `variant`. These values are read from the retained JSON only
-after the original config reader verifies its digest on close and its OPFS
-arena is sealed. They are not copied from the request or index descriptor.
-Older results and builds which do not consume config bytes omit this object.
-No CPU baseline or hardware-support claim follows from these fields.
+The API can include `source.config.content` with `os`, `architecture` and
+`variant`. First the reader closes and checks its digest. Then the engine seals
+the arena. It reads JSON from the retained config, not the request or index.
+
+Without consumed config, this object is absent.
+These values state no CPU baseline or hardware support.
 
 ## Overlay evidence
 
@@ -76,11 +76,11 @@ An overlay without new layers retains its existing error behavior.
 An absent annotation does not prove linkage.
 A requested digest does not count as an observed annotation.
 
-`overlay.baseDigest` retains the exact annotation selected by the existing base
-verification, after all overlay layers apply. The actual-base annotation keeps
-its existing precedence over the declared-base annotation. Missing, mismatched
-and failed overlays produce no applied identity. Request values cannot supply
-this observation.
+`overlay.baseDigest` retains the annotation that the existing check selects.
+The engine reports it after all layers apply. The actual-base annotation keeps
+precedence over the declared-base annotation. Missing, mismatched and failed
+overlays produce no applied identity. The engine does not use a request to fill
+this field.
 
 The status `custom-image` means the caller chose to omit the curated overlay.
 The status `absent` means this build did not apply an overlay.
@@ -123,40 +123,49 @@ This includes CPU baseline, hardware target and tool revisions.
 Frontend identity needs a receipt from its producer.
 A backend hash does not identify the frontend commit.
 
-`installer` reports the final applied tree immediately before EROFS authoring,
-after the post arena is sealed. The engine hashes the raw
-`etc/tunaos/live-source.json` stamp and keeps its installer app, revision and
-bundle claims under `stampClaims`. It then reads the actual Flatpak
-`app/<app>/<arch>/<branch>/active` symlink, deployed metadata and application
-name. Only one consistent deployment yields a `deployment`; its commit is the
-actual deployment directory identifier. `sourceStampMatched` states whether
-that identity agrees with the stamp, not whether the stamp is authenticated.
-Without a readable regular source stamp this object is absent. With a stamp,
-missing, ambiguous or inconsistent layouts retain a diagnostic missing reason.
+The engine seals the post arena before it reads installer files.
+It reports the tree before it writes EROFS.
+It hashes `etc/tunaos/live-source.json`.
+It keeps app, revision and bundle claims under `stampClaims`.
 
-The optional `helper` hashes the deployed `files/bin/fisherman` bytes. It does
-not infer a source revision from a binary without VCS metadata and cannot
-identify the frontend commit instead of the deployment. `shippedRecipe` hashes
-an actual `etc/bootc-installer/recipe.json` file if present. Shipping that file
-does not prove that a frontend loaded it, or define the canonical
-`recipe_sha256` domain. A bundle claim in the stamp is never represented as
-remeasured bundle bytes.
+The engine reads the Flatpak `app/<app>/<arch>/<branch>/active` symlink.
+It checks the metadata and the name of the app.
+It accepts one deployment. Its commit names the directory.
+`sourceStampMatched` states whether its identity matches the stamp.
+This flag does not authenticate the stamp.
 
-`engine` comes from the executable's own `debug.ReadBuildInfo`, cached once.
-It is reported only when both the main module and executable package identify
-tacklebox's `cmd/tbwasm` or `cmd/purebuild`, never from an iso-builder host
-module, dependency revision or environment pin. `vcsRevision` and
-`vcsModified` retain valid actual VCS settings when present; modified remains
-the literal `"true"` or `"false"` setting. An absent or dirty VCS stamp does
-not identify exact source bytes. Module/Go-version metadata without a VCS stamp
-stays only that, not an invented revision.
+Without the stamp, `installer` is absent.
+The file must be regular and readable.
+With a stamp, missing or inconsistent layouts retain a reason.
+The engine rejects ambiguity.
 
-The browser path consumes a BuildRequest and normalized build options. It does
-not parse a `MediaRecipe` file or a separate canonical build-config document.
-RFC014 currently names request, recipe and config digests without defining the
-recipe/config byte domains. These additions do not equate those digests to an
-arbitrary request serialization, source OCI config or frontend JavaScript.
-Defining those domains requires an explicit contract clarification.
+The optional `helper` hashes the deployed `files/bin/fisherman` bytes.
+It does not infer VCS metadata from a binary.
+It cannot replace the frontend commit with a backend hash.
+The engine does not hash a bundle from a claim.
+
+`shippedRecipe` is a hash of `etc/bootc-installer/recipe.json` if the file exists.
+It does not prove that the frontend read the file.
+It does not define `recipe_sha256`.
+
+The engine calls `debug.ReadBuildInfo` once and caches the result.
+It checks the main module and the package.
+The module must be tacklebox.
+The package must be `cmd/tbwasm` or `cmd/purebuild` in that module.
+The API does not copy from a host module, dependency or environment pin.
+
+`vcsRevision` retains a valid VCS revision.
+`vcsModified` retains the literal `"true"` or `"false"` setting.
+Absent VCS metadata does not imply a revision.
+Dirty metadata does not identify the bytes of the source.
+The Go version alone does not identify a revision.
+
+The browser consumes a BuildRequest and options.
+It does not parse a `MediaRecipe` file or a separate build-config document.
+RFC014 names digests for the request, recipe and config.
+It does not define the bytes for the recipe or config.
+This change does not substitute source config, request JSON or JavaScript.
+The contract needs an explicit definition for each domain.
 
 Boot inputs need separate hashes of the bytes that the engine consumes.
 Paths and requested IDs do not provide those hashes.
