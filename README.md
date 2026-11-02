@@ -148,14 +148,21 @@ still apply. These workflows retain their existing chunk-size and concurrency se
 
 ### Installation
 
-Tagged releases provide static Linux binaries for AMD64 and ARM64 on the
-[GitHub Releases page](https://github.com/tuna-os/tacklebox/releases). Download
-the binary and matching `.sha256` file for your architecture, verify it, and
-install it on your `PATH`:
+Tagged releases provide static Linux binaries for AMD64 and ARM64 in tar archives
+on the [GitHub Releases page](https://github.com/tuna-os/tacklebox/releases).
+Download the archive for your architecture and the aggregate SHA-256 manifest.
+Verify the archive before you extract and install `tacklebox` on your `PATH`:
 
 ```bash
-sha256sum --check tacklebox-linux-amd64.sha256
-sudo install -m 0755 tacklebox-linux-amd64 /usr/local/bin/tacklebox
+VERSION=0.1.0
+ARCH=amd64 # Use arm64 for an ARM64 host.
+ARCHIVE="tacklebox_${VERSION}_linux_${ARCH}.tar.gz"
+CHECKSUMS="tacklebox_${VERSION}_checksums.txt"
+gh release download "v${VERSION}" --repo tuna-os/tacklebox \
+  --pattern "$ARCHIVE" --pattern "$CHECKSUMS"
+sha256sum --check --ignore-missing "$CHECKSUMS"
+tar -xzf "$ARCHIVE" tacklebox
+sudo install -m 0755 tacklebox /usr/local/bin/tacklebox
 ```
 
 To build from source, install the Go version declared by [`go.mod`](go.mod),

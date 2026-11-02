@@ -70,8 +70,8 @@ Use Conventional Commits for commits and squash-merge PR titles:
 Release-please runs on pushes to `main` and opens a release PR with the
 version manifest and changelog. The first release is v0.1.0. A maintainer
 adds `docs/releases/<tag>.md` to the release PR, then merges it to create
-the tag and GitHub Release. The repository must allow GitHub Actions to
-create pull requests.
+the tag and a draft GitHub Release. The repository must allow GitHub Actions
+to create pull requests.
 
 The release-please workflow then calls the binary and container publishers
 with that tag. These calls let the publishers run because tags created with
@@ -79,8 +79,8 @@ with that tag. These calls let the publishers run because tags created with
 
 GoReleaser builds static Linux amd64/arm64 tarballs and SHA-256 checksums
 with a read-only token. A separate job verifies the checksums and release
-notes, then uploads all assets together. It preserves release-please's
-notes on an existing release. Each binary reports its version with
+notes, then uploads all assets together before it makes the draft public.
+It preserves release-please's notes. Each binary reports its version with
 `tacklebox --version`.
 
 The container workflow publishes both `v0.1.0` and `0.1.0` style tags to GHCR,
