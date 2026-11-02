@@ -823,7 +823,13 @@ func TestObservedResultAppliedOverlayThenFailedApplyAndCustomRetry(t *testing.T)
 }
 
 func TestObservedOverlayRefusesUnboundBaseBeforePayload(t *testing.T) {
-	for _, binding := range []string{"missing", "mismatched", "request-pin-mismatch"} {
+	stale := "sha256:" + strings.Repeat("0", 64)
+	for binding, wantMessage := range map[string]string{
+		"missing":              "live overlay base digest binding missing",
+		"mismatched":           "live overlay base digest mismatch: overlay built against " + stale,
+		"conflicting-keys":     "conflicting base bindings " + purefs.LiveOverlayActualBaseDigestAnnotation,
+		"request-pin-mismatch": "live overlay base digest mismatch: overlay built against " + stale,
+	} {
 		t.Run(binding, func(t *testing.T) {
 			f, shim := observedSetup(t)
 			originalDigest := f.addOverlay(t)
@@ -836,7 +842,9 @@ func TestObservedOverlayRefusesUnboundBaseBeforePayload(t *testing.T) {
 			if binding == "missing" {
 				overlay.Annotations = nil
 			} else if binding == "mismatched" {
-				overlay.Annotations[purefs.LiveOverlayActualBaseDigestAnnotation] = "sha256:" + strings.Repeat("0", 64)
+				overlay.Annotations[purefs.LiveOverlayActualBaseDigestAnnotation] = stale
+			} else if binding == "conflicting-keys" {
+				overlay.Annotations[purefs.LiveOverlayBaseDigestAnnotation] = stale
 			}
 			body := observedJSON(t, overlay)
 			digest := observedDigest(body)
@@ -857,12 +865,10 @@ func TestObservedOverlayRefusesUnboundBaseBeforePayload(t *testing.T) {
 			base := observedBaseSnapshot(t)
 			opts := observedOverlayOpts(t, f, digest, false)
 			if binding == "request-pin-mismatch" {
-				opts.Get("request").Get("resolvedInputs").Set("liveOverlayBaseDigest", "sha256:"+strings.Repeat("0", 64))
+				opts.Get("request").Get("resolvedInputs").Set("liveOverlayBaseDigest", stale)
 			}
 			sink, written := observedCounter(t)
-			if _, err := observedAwait(t, js.Global().Call("tboxBuildIsoWithResult", opts, sink)); err == nil {
-				t.Fatal("unbound overlay produced a successful browser build")
-			}
+			observedMustReject(t, js.Global().Call("tboxBuildIsoWithResult", opts, sink), wantMessage)
 			if *written != 0 || f.hits("/v2/tuna-os/live-overlay/blobs/"+deltaDigest) != 0 {
 				t.Fatalf("unbound overlay reached delta fetch or ISO output: bytes=%d", *written)
 			}
