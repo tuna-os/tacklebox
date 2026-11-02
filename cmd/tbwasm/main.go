@@ -28,6 +28,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -869,8 +870,12 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			return nil, err
 		}
 		defer cleanup(sfsArena)
-		if err := purefs.WriteErofs(root, store, arenaWriter{sfsArena}, 0); err != nil {
+		erofsOutput := bufio.NewWriterSize(arenaWriter{sfsArena}, browserWriteBufferSize)
+		if err := purefs.WriteErofs(root, store, erofsOutput, 0); err != nil {
 			return nil, err
+		}
+		if err := erofsOutput.Flush(); err != nil {
+			return nil, fmt.Errorf("flush EROFS output: %w", err)
 		}
 		reportMem("erofs")
 		sfsSize := sfsArena.off
@@ -1030,6 +1035,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 
 		emitProgress("iso", 0, 1)
 		jw := &jsChunkWriter{cb: onChunk}
+		isoOutput := bufio.NewWriterSize(jw, browserWriteBufferSize)
 		inputs := append([]purefs.IsoInput{
 			{Path: "/EFI/efi.img", Size: int64(len(esp)), Source: bytesSource(esp)},
 		}, bootInputs...)
@@ -1064,8 +1070,11 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		// Verified offline installation sources ride alongside the live
 		// rootfs (empty when the request pins no source identity).
 		inputs = append(inputs, offlineLayout...)
-		if err := purefs.WriteIso9660(jw, label, inputs, "/EFI/efi.img"); err != nil {
+		if err := purefs.WriteIso9660(isoOutput, label, inputs, "/EFI/efi.img"); err != nil {
 			return nil, err
+		}
+		if err := isoOutput.Flush(); err != nil {
+			return nil, fmt.Errorf("flush ISO output: %w", err)
 		}
 		emitProgress("iso", 1, 1)
 		reportMem("iso")
