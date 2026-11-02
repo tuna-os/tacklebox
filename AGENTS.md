@@ -43,10 +43,14 @@ Two structural notes:
   skipped or cancelled job reports failure instead of an absent check. If
   branch protection or agent auto-merge is ever pointed at this repo, that
   gap needs closing first.
-- **`iso-smoke` runs on a self-hosted RunsOn runner**
-  (`runs-on=…/runner=build-amd64`), not a GitHub runner, because the GitHub
-  image's podman wedges the customize commit (tunaOS#1893). A fork without
-  that runner configured cannot run this job at all.
+- **`iso-smoke` uses the standard GitHub-hosted `ubuntu-24.04` VM.**
+  Run 41274469507 waited for the obsolete RunsOn `build-amd64` label;
+  the organization has no such runners. Keep the Ubuntu version aligned
+  with the existing Kubic package source. The Podman replacement and runtime
+  check still apply (tunaOS#1893). `ci-iso-host` reports actual memory, CPU,
+  disk space, tools and firmware before the build. Four concurrent boot
+  guests use 8 GiB in total; the separate live boot uses 3 GiB. Keep all
+  smoke cases and their time limits intact when the runner changes.
 
 The `concurrency` group is load-bearing, not tidiness: without it, 26 stale
 runs piled up on 2026-07-20 (mostly Renovate rebases) and saturated the shared
