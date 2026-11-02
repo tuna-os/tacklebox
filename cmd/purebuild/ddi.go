@@ -17,7 +17,7 @@ import (
 	"github.com/tuna-os/tacklebox/internal/purefs"
 )
 
-// buildFromDdi is the DDI input mode (tacklebox#172): instead of pulling
+// buildFromDdiForPlatform is the DDI input mode (tacklebox#172): instead of pulling
 // and unpacking an OCI image, consume a systemd-sysupdate v1 artifact set
 // (UKI + EROFS root partition) published by mkosi SplitArtifacts — e.g.
 // frostyard/snosi's native A/B channels. The root partition is already
@@ -27,10 +27,6 @@ import (
 // src is either an https URL of the artifact directory (containing
 // SHA256SUMS) or a local directory laid out the same way — the local
 // form is what CI uses to e2e this path offline.
-func buildFromDdi(src, stem, label, workdir, out string) {
-	buildFromDdiForPlatform(src, stem, label, workdir, out, "amd64")
-}
-
 func buildFromDdiForPlatform(src, stem, label, workdir, out, platform string) {
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		log.Fatal(err)
@@ -214,7 +210,7 @@ func (f *ddiFetcher) toFile(name, wantSha, dst string) error {
 	defer rc.Close()
 
 	h := sha256.New()
-	var body io.Reader = io.TeeReader(rc, h)
+	body := io.TeeReader(rc, h)
 	if strings.HasSuffix(name, ".xz") {
 		xr, err := xz.NewReader(body)
 		if err != nil {

@@ -1,6 +1,6 @@
 # Tacklebox Roadmap
 
-**Last updated**: 2026-10-25
+**Last updated**: 2026-10-31
 
 Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrator for bootc.
 
@@ -17,6 +17,12 @@ Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrato
 - ✅ USB pre-flight — unmount busy partitions before format
 - ✅ Cross-platform GUI multi-boot USB manager (`tuna-os/iso-builder` native app): Inspection, add/remove/update lifecycle, cross-platform helper VMs (macOS QEMU, Windows WSL2), and VM boot verification (#104)
 - ✅ CI pipeline: lint, unit, block smoke, ISO smoke, 6-env scale test
+- ✅ Selectable live squashfs compressor (`shared_store.compressor`: `zstd`, `xz`, `gzip`, `lz4`, `lzo`) and immediate exit on rootfs mount failure (#337)
+- ✅ Live Flatpak preinstall injection — embed image `flatpak/preinstall.d` catalogs into live media (#331)
+- ✅ Purebuild overlay support (`--overlay` flag) and tool image inclusion (#325)
+- ✅ Bootloader extraction — use bootloaders from bootc images (#329)
+- ✅ Offline-store squashfs compression and digest-pinned tag references (#335, #336)
+- ✅ Browser parity engine and operation-scoped build observations (#381, #387, #391)
 
 ## Near-term release gate
 

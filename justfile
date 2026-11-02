@@ -12,6 +12,32 @@ build:
 test:
     go test ./...
 
+# Format Go source files
+fmt:
+    gofmt -w cmd internal
+
+# Check formatting of Go source files
+fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    files=$(gofmt -l cmd internal)
+    if [ -n "$files" ]; then
+        printf 'Unformatted Go files:\n%s\n' "$files"
+        exit 1
+    fi
+
+# golangci-lint, pinned; `go run` builds and caches it on first use
+golangci_lint := "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0"
+
+# Run linters (everything except errcheck, repo-wide)
+lint:
+    {{golangci_lint}} run --disable=errcheck ./...
+
+# errcheck ratchet: only code new since the merge base with origin/<base>
+lint-new base="main":
+    git fetch --quiet origin {{base}}
+    {{golangci_lint}} run --default=none --enable=errcheck --new-from-merge-base=origin/{{base}} ./...
+
 # Provision a real disk (CAUTION: wipes the disk!)
 provision-usb device="/dev/sda" recipe=recipe_path: build
     sudo ./tacklebox build {{recipe}} {{device}} -b {{output_base}}-usb
@@ -86,7 +112,7 @@ ci-reap-stale:
     scripts/ci-reap-stale.sh
 
 # Local gate: what the lint-test job runs
-check: vet test check-recipes
+check: fmt-check lint vet test check-recipes
 
 # go vet
 vet:
@@ -165,11 +191,38 @@ ci-podman-kubic:
     #!/usr/bin/env bash
     set -euo pipefail
     sudo install -d /etc/apt/keyrings
-    curl -fsSL https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/Release.key \
-      | gpg --dearmor | sudo tee /etc/apt/keyrings/kubic.gpg >/dev/null
+    # The community mirror can return transient 5xx responses.
+    # Retry before dearmoring so a failed download cannot install a keyring.
+    key_file=$(mktemp)
+    trap 'rm -f "$key_file"' EXIT
+    key_url=https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/Release.key
+    ok=0
+    for i in 1 2 3; do
+      echo ">>> fetch Kubic release key (attempt $i/3)"
+      if curl -fsSL --retry 0 "$key_url" -o "$key_file" && [ -s "$key_file" ]; then
+        ok=1; break
+      fi
+      if [ "$i" -lt 3 ]; then sleep $((i * 10)); fi
+    done
+    if [ "$ok" -eq 0 ]; then
+      echo "::error::failed to fetch Kubic release key after 3 attempts"
+      exit 1
+    fi
+    gpg --dearmor < "$key_file" | sudo tee /etc/apt/keyrings/kubic.gpg >/dev/null
     echo 'deb [signed-by=/etc/apt/keyrings/kubic.gpg] https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/unstable/xUbuntu_24.04/ /' \
       | sudo tee /etc/apt/sources.list.d/kubic.list
-    sudo apt-get update -qq
+    ok=0
+    for i in 1 2 3; do
+      echo ">>> update apt indexes (attempt $i/3)"
+      if sudo apt-get -o APT::Update::Error-Mode=any update -qq; then
+        ok=1; break
+      fi
+      if [ "$i" -lt 3 ]; then sleep $((i * 10)); fi
+    done
+    if [ "$ok" -eq 0 ]; then
+      echo "::error::failed to update apt indexes after 3 attempts"
+      exit 1
+    fi
     # Force the Kubic stack: apt kept the image's 4.9.3+conmon2.1.10
     # (conmon journald failure). Remove the old podman/conmon so the
     # Kubic podman 6.x + matching conmon/crun come in fresh.
@@ -262,6 +315,25 @@ ci-summary-smoke:
     fi
 
 # ── iso-smoke: per-env, dedup, 6-env dedup, delta, offline-store ISOs ────────
+
+# Report actual hosted-runner capacity and fail before building if tools or
+# firmware are missing. Disk reports cover both ISO output and root's store;
+# /mnt is not assumed to be a separate disk. TCG remains supported.
+ci-iso-host: ci-prepare-out
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for tool in podman qemu-system-x86_64 xorriso mksquashfs unsquashfs mkfs.vfat mcopy; do
+      command -v "$tool"
+    done
+    test -r /usr/share/OVMF/OVMF_CODE_4M.fd
+    test -r /usr/share/OVMF/OVMF_VARS_4M.fd
+    echo ">>> CPUs: $(nproc)"
+    free -h
+    store=$(sudo podman info --format '{{{{.Store.GraphRoot}}')
+    sudo df -h "{{TBX_CI_OUT}}" "$store"
+    sudo podman info
+    qemu-system-x86_64 --version
+    if [ -w /dev/kvm ]; then echo '>>> boot-all accelerator: kvm'; else echo '>>> boot-all accelerator: tcg'; fi
 
 # Build one fixture ISO: recipe is a fixtures/<recipe>.json stem
 ci-iso-build recipe iso: ci-prepare-out

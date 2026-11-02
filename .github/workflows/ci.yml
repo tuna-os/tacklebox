@@ -13,16 +13,12 @@ on:
 permissions:
   contents: read
 
-# Without this, every push to a branch/PR (including Renovate's frequent
-# rebases) queues a brand-new run instead of superseding the last one for
-# that ref. Observed 2026-07-20: 26 queued runs piled up on this repo alone
-# — many of them stale duplicates from earlier rebases of the same PR —
-# saturating the shared macOS/Windows runner pool for hours and starving
-# genuinely new work. github.head_ref is empty on push/schedule, so this
-# still groups correctly (falls back to github.ref) for non-PR triggers.
+# Supersede stale PR runs to keep the shared runner pool available.
+# Every push, schedule, or manual run needs its own verdict: a shared group
+# can evict pending runs even when cancel-in-progress is false.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ── Stage 1+2: lint + unit + recipe schema parse ────────────────────────────
@@ -31,12 +27,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
+
+      - name: gofmt
+        run: just fmt-check
+
+      - name: golangci-lint (repo-wide, without errcheck)
+        run: just lint
+
+      - name: golangci-lint errcheck (new code only)
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: just lint-new "$BASE_REF"
 
       - name: go vet
         run: just vet
@@ -99,7 +108,7 @@ jobs:
           go-version-file: go.mod
 
       - name: free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        uses: jlumbroso/free-disk-space@3f13feab2962a87273d379ebc36ea159527e6cc9 # v1.3.2
         with:
           tool-cache: false
           android: true
@@ -247,14 +256,9 @@ jobs:
   # No actions/cache here: the fixture images are rebuilt every run, so their
   # image IDs (and thus every tacklebox cache key) change every run.
   iso-smoke:
-    # Fork PRs cannot use the RunsOn runner. Keep ISO smoke coverage for
-    # same-repository PRs, main pushes, scheduled runs, and manual runs.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    # RunsOn build-amd64 (controlled ubuntu24-full-x64 image): the GitHub
-    # runner's podman 5.8.4 wedges the customize commit and its crun/conmon
-    # cannot be re-pinned (tuna-os/tunaOS#1893). The `runs-on=` marker + `runner=`
-    # group is RunsOn's label format (see docs/runners/labels).
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    # Standard hosted VM; the organization has no RunsOn runners. Pin Noble
+    # because ci-podman-kubic uses its xUbuntu_24.04 package source.
+    runs-on: ubuntu-24.04
     needs: lint-test
     timeout-minutes: 60
     steps:
@@ -267,7 +271,7 @@ jobs:
           go-version-file: go.mod
 
       - name: free disk space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        uses: jlumbroso/free-disk-space@3f13feab2962a87273d379ebc36ea159527e6cc9 # v1.3.2
         with:
           tool-cache: false
           android: true
@@ -285,28 +289,27 @@ jobs:
             systemd-boot systemd-boot-efi podman \
             qemu-system-x86 ovmf
 
-      # Same crun/podman spec-version mismatch as verify-smoke; see there.
-      - name: match podman's OCI runtime to its spec version
-        run: just ci-podman-runtime
-
-      # podman 5.8.4 (what both the GitHub runner and the ubuntu24 RunsOn image
-      # ship) is broken for this workload: the customize commit wedges and
+      # podman 5.8.4 is broken for this workload: the customize commit wedges and
       # `podman build` fails with "cannot re-exec process". Install the Kubic
       # unstable podman (6.x) and drop the image's 5.8.4 shadow from
       # /usr/local/bin so the pinned podman wins on PATH.
       - name: install podman 6.x from Kubic unstable
         run: just ci-podman-kubic
 
+      # Check the final installed stack, not the runner's replaced Podman.
+      - name: match podman's OCI runtime to its spec version
+        run: just ci-podman-runtime
+
+      - name: report smoke host prerequisites
+        run: just ci-iso-host
+
       - name: build tacklebox
         run: just build
 
-      # Plain podman (no sudo): the images must land in the runner user's
-      # store, which is where the live pipeline reads from.
+      # Fixtures and the live pipeline both use root's Podman store.
       # k8s-file log driver for all podman runs resolves the runner journald
       # gap (tuna-os/tunaOS#1893).
       - name: build fixture live images
-        # sudo (root) podman: the RunsOn image's rootless re-exec is broken
-        # ("cannot re-exec process"); the tacklebox build below is root too.
         # Images are labelled with the job's owner id so ci-cleanup finds them.
         run: just ci-fixture-images "sudo podman" alpha beta gamma delta epsilon zeta
 
@@ -389,7 +392,7 @@ jobs:
       - name: verify offline-store ISO
         run: just ci-iso-verify offline
 
-      # Boot all three ISOs in parallel to keep CI time under the 60-min
+      # Boot all four ISOs in parallel to keep CI time under the 60-min
       # budget. Each QEMU VM gets 2G RAM (enough for a non-interactive
       # boot to login prompt). Output tee'd to step log + per-ISO file.
       - name: boot smoke, all ISOs (parallel)

@@ -362,6 +362,18 @@ func observedAssertIdentity(t *testing.T, f *observedFixture, result purefs.Obse
 	if source.Config.Descriptor.Digest != f.config.Digest || source.Config.Descriptor.Size != f.config.Size || source.Config.Descriptor.MediaType != f.config.MediaType || source.Config.BytesVerified != configVerified {
 		t.Fatalf("config observation = %+v, want descriptor %+v and bytesVerified=%v", source.Config, f.config, configVerified)
 	}
+	if configVerified {
+		if source.Config.Content == nil || source.Config.Content.OS != "linux" ||
+			source.Config.Content.Architecture != "amd64" || source.Config.Content.Variant != "" {
+			t.Fatalf("verified config bytes not observed: %+v", source.Config.Content)
+		}
+	} else if source.Config.Content != nil {
+		t.Fatalf("descriptor-only config invented content: %+v", source.Config.Content)
+	}
+	if engine := result.ObservedInputs.Engine; engine != nil &&
+		(engine.Module != "github.com/tuna-os/tacklebox" || engine.Package != "github.com/tuna-os/tacklebox/cmd/tbwasm") {
+		t.Fatalf("engine borrowed another module's build stamp: %+v", engine)
+	}
 }
 
 func observedAssertSource(t *testing.T, f *observedFixture, result purefs.ObservedBuildResult, configVerified bool, repositories ...string) {
@@ -373,6 +385,9 @@ func observedAssertSource(t *testing.T, f *observedFixture, result purefs.Observ
 	observedAssertIdentity(t, f, result, configVerified, repository)
 	if got := result.ObservedInputs.Overlay; got.Status != "custom-image" || got.ManifestDigest != "" || got.LayersApplied || got.BaseAnnotationMatched {
 		t.Fatalf("custom image falsely claims an overlay: %+v", got)
+	}
+	if result.ObservedInputs.Installer != nil {
+		t.Fatalf("custom image borrowed an earlier installer: %+v", result.ObservedInputs.Installer)
 	}
 }
 
@@ -659,6 +674,7 @@ func TestObservedResultRetainsOriginalIndexAndIsOperationLocal(t *testing.T) {
 	first.Get("observedInputs").Get("source").Set("registryEndpoint", "caller mutation")
 	first.Get("observedInputs").Get("source").Set("requestedReference", "caller mutation")
 	first.Get("observedInputs").Get("source").Get("platformDescriptor").Set("architecture", "caller mutation")
+	first.Get("observedInputs").Get("source").Get("config").Get("content").Set("os", "caller mutation")
 	secondSink, secondCount := observedCounter(t)
 	second := observedDecodeResult(t, observedMustResolve(t, js.Global().Call("tboxBuildIsoWithResult", observedOpts(t, f, false), secondSink)))
 	observedAssertSource(t, f, second, false)
@@ -677,13 +693,28 @@ func (f *observedFixture) addOverlay(t *testing.T) string {
 	t.Helper()
 	var delta bytes.Buffer
 	tw := tar.NewWriter(&delta)
-	for _, name := range []string{"usr/share/tbox-overlay-contract.txt", "usr/share/tbox-overlay-second.txt"} {
-		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(observedOverlayPayload)), Typeflag: tar.TypeReg}); err != nil {
+	commit := strings.Repeat("4", 64)
+	deployment := "var/lib/flatpak/app/org.bootcinstaller.Installer/x86_64/stable/" + commit
+	for _, file := range []struct{ path, data string }{
+		{"usr/share/tbox-overlay-contract.txt", observedOverlayPayload},
+		{"usr/share/tbox-overlay-second.txt", observedOverlayPayload},
+		{purefs.LiveSourceReceiptPath, `{"installer_app_id":"org.bootcinstaller.Installer","installer_revision":"` + commit + `","installer_bundle_sha256":"remote"}`},
+		{deployment + "/metadata", "[Application]\nname=org.bootcinstaller.Installer\n"},
+		{deployment + "/files/bin/fisherman", "fixture-helper-without-vcs\n"},
+		{"etc/bootc-installer/recipe.json", "{\"fixture\":true}\n"},
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: file.path, Mode: 0o644, Size: int64(len(file.data)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := io.WriteString(tw, observedOverlayPayload); err != nil {
+		if _, err := io.WriteString(tw, file.data); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "var/lib/flatpak/app/org.bootcinstaller.Installer/x86_64/stable/active",
+		Mode: 0o777, Typeflag: tar.TypeSymlink, Linkname: commit,
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
@@ -787,8 +818,15 @@ func TestObservedResultAppliedOverlayThenFailedApplyAndCustomRetry(t *testing.T)
 	appliedSink, appliedScan := observedPayloadSink(t)
 	applied := observedDecodeResult(t, observedMustResolve(t, js.Global().Call("tboxBuildIsoWithResult", observedOverlayOpts(t, f, overlayDigest, false), appliedSink)))
 	observedAssertIdentity(t, f, applied, false, "tuna-os/fixture")
-	if got := applied.ObservedInputs.Overlay; got.Status != "applied" || got.ManifestDigest != overlayDigest || !got.LayersApplied || !got.BaseAnnotationMatched {
+	if got := applied.ObservedInputs.Overlay; got.Status != "applied" || got.ManifestDigest != overlayDigest || !got.LayersApplied || !got.BaseAnnotationMatched || got.BaseDigest != f.manifestDigest {
 		t.Fatalf("applied overlay observation = %+v, want exact manifest %s and matching base annotation", got, overlayDigest)
+	}
+	installer := applied.ObservedInputs.Installer
+	if installer == nil || installer.Deployment == nil || !installer.Deployment.SourceStampMatched ||
+		installer.Deployment.DeployedCommit != "sha256:"+strings.Repeat("4", 64) ||
+		installer.Helper == nil || installer.Helper.SHA256 != observedDigest([]byte("fixture-helper-without-vcs\n")) ||
+		installer.ShippedRecipe == nil || installer.StampClaims.BundleSHA256Claim != "remote" {
+		t.Fatalf("applied installer tree observation incomplete: %+v", installer)
 	}
 	if applied.BytesWritten != appliedScan.written || !appliedScan.found {
 		t.Fatalf("applied result count=%d streamed=%d overlay payload found=%v", applied.BytesWritten, appliedScan.written, appliedScan.found)
