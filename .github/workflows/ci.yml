@@ -258,7 +258,7 @@ jobs:
   iso-smoke:
     # Standard hosted VM; the organization has no RunsOn runners. Pin Noble
     # because ci-podman-kubic uses its xUbuntu_24.04 package source.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: lint-test
     timeout-minutes: 60
     steps:
