@@ -213,8 +213,8 @@ func DetectBackend(image string) (Backend, error) {
 	return parseBackend(string(out)), nil
 }
 
-func parseBackend(inspectJson string) Backend {
-	if strings.Contains(inspectJson, "ostree") {
+func parseBackend(inspectJSON string) Backend {
+	if strings.Contains(inspectJSON, "ostree") {
 		return BackendOstree
 	}
 	return BackendComposefs

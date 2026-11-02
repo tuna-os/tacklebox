@@ -15,7 +15,7 @@ func TestWriteBLSEntry(t *testing.T) {
 	initrdPath := "EFI/test-env/initrd.img"
 	options := "root=LABEL=TBOX_STORE rw"
 
-	err := WriteBLSEntry(tmp, id, title, kernelPath, initrdPath, options, false)
+	err := WriteBLSEntry(tmp, id, title, kernelPath, initrdPath, "", options, false)
 	if err != nil {
 		t.Fatalf("WriteBLSEntry failed: %v", err)
 	}
@@ -42,13 +42,37 @@ func TestWriteBLSEntry(t *testing.T) {
 	if !strings.Contains(s, "options root=LABEL=TBOX_STORE rw") {
 		t.Errorf("entry missing options: %s", s)
 	}
+	// No device tree: the entry is exactly what it was before entries
+	// could carry one.
+	want := "title Test Env (live)\nsort-key 0-tbox-test-env\nlinux EFI/test-env/vmlinuz\ninitrd EFI/test-env/initrd.img\noptions root=LABEL=TBOX_STORE rw\n"
+	if s != want {
+		t.Errorf("entry without a device tree changed:\n got: %q\nwant: %q", s, want)
+	}
+}
+
+func TestWriteBLSEntry_Devicetree(t *testing.T) {
+	tmp := t.TempDir()
+	err := WriteBLSEntry(tmp, "x13s", "x13s (live)", "/images/pxeboot/x13s/vmlinuz", "/images/pxeboot/x13s/initrd.img",
+		"/images/pxeboot/x13s/devicetree", "root=tbox:CDLABEL=X", false)
+	if err != nil {
+		t.Fatalf("WriteBLSEntry failed: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(tmp, "loader", "entries", "x13s.conf"))
+	if err != nil {
+		t.Fatalf("failed to read entry file: %v", err)
+	}
+	want := "title x13s (live)\nsort-key 0-tbox-x13s\nlinux /images/pxeboot/x13s/vmlinuz\ninitrd /images/pxeboot/x13s/initrd.img\n" +
+		"devicetree /images/pxeboot/x13s/devicetree\noptions root=tbox:CDLABEL=X\n"
+	if string(content) != want {
+		t.Errorf("entry:\n got: %q\nwant: %q", content, want)
+	}
 }
 
 func TestWriteBLSEntry_SortKeyPrefix(t *testing.T) {
 	tmp := t.TempDir()
 
 	id := "aurora"
-	err := WriteBLSEntry(tmp, id, "Aurora", "EFI/aurora/vmlinuz", "EFI/aurora/initrd.img", "rw", false)
+	err := WriteBLSEntry(tmp, id, "Aurora", "EFI/aurora/vmlinuz", "EFI/aurora/initrd.img", "", "rw", false)
 	if err != nil {
 		t.Fatalf("WriteBLSEntry failed: %v", err)
 	}
@@ -67,7 +91,7 @@ func TestWriteBLSEntry_SortKeyPrefix(t *testing.T) {
 func TestWriteBLSEntry_DefaultEntry(t *testing.T) {
 	tmp := t.TempDir()
 
-	err := WriteBLSEntry(tmp, "bluefin", "Bluefin", "EFI/bluefin/vmlinuz", "EFI/bluefin/initrd.img", "rw", true)
+	err := WriteBLSEntry(tmp, "bluefin", "Bluefin", "EFI/bluefin/vmlinuz", "EFI/bluefin/initrd.img", "", "rw", true)
 	if err != nil {
 		t.Fatalf("WriteBLSEntry failed: %v", err)
 	}
@@ -86,11 +110,11 @@ func TestWriteBLSEntry_DefaultEntry(t *testing.T) {
 func TestWriteBLSEntry_MultipleEntries(t *testing.T) {
 	tmp := t.TempDir()
 
-	err := WriteBLSEntry(tmp, "bluefin-live", "bluefin (live)", "EFI/bluefin/vmlinuz", "EFI/bluefin/initrd.img", "rw", false)
+	err := WriteBLSEntry(tmp, "bluefin-live", "bluefin (live)", "EFI/bluefin/vmlinuz", "EFI/bluefin/initrd.img", "", "rw", false)
 	if err != nil {
 		t.Fatalf("first entry failed: %v", err)
 	}
-	err = WriteBLSEntry(tmp, "bluefin-persistent", "bluefin (persistent)", "EFI/bluefin/vmlinuz", "EFI/bluefin/initrd.img", "rw persist", false)
+	err = WriteBLSEntry(tmp, "bluefin-persistent", "bluefin (persistent)", "EFI/bluefin/vmlinuz", "EFI/bluefin/initrd.img", "", "rw persist", false)
 	if err != nil {
 		t.Fatalf("second entry failed: %v", err)
 	}
@@ -108,7 +132,7 @@ func TestWriteBLSEntry_MultipleEntries(t *testing.T) {
 func TestWriteBLSEntry_CreatesEntryDir(t *testing.T) {
 	tmp := t.TempDir()
 
-	err := WriteBLSEntry(tmp, "test", "Test", "vmlinuz", "initrd", "rw", false)
+	err := WriteBLSEntry(tmp, "test", "Test", "vmlinuz", "initrd", "", "rw", false)
 	if err != nil {
 		t.Fatalf("WriteBLSEntry failed: %v", err)
 	}

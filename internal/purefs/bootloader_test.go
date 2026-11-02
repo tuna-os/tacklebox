@@ -146,16 +146,26 @@ func TestLiveGrubCfg(t *testing.T) {
 	cfg := LiveGrubCfg("TunaOS browser-live (live)",
 		"/images/pxeboot/browser-live/vmlinuz",
 		"/images/pxeboot/browser-live/initrd.img",
+		"",
 		"root=tbox:CDLABEL=TUNAOS console=ttyS0")
-	for _, want := range []string{
-		"menuentry 'TunaOS browser-live (live)'",
-		"linux /images/pxeboot/browser-live/vmlinuz root=tbox:CDLABEL=TUNAOS console=ttyS0",
-		"initrd /images/pxeboot/browser-live/initrd.img",
-		"set timeout=3",
-	} {
-		if !strings.Contains(cfg, want) {
-			t.Fatalf("grub.cfg missing %q:\n%s", want, cfg)
-		}
+	// Without a device tree the config is exactly what it always was.
+	want := "set default=0\nset timeout=3\n\nmenuentry 'TunaOS browser-live (live)' {\n" +
+		"    linux /images/pxeboot/browser-live/vmlinuz root=tbox:CDLABEL=TUNAOS console=ttyS0\n" +
+		"    initrd /images/pxeboot/browser-live/initrd.img\n}\n"
+	if cfg != want {
+		t.Fatalf("grub.cfg:\n got: %q\nwant: %q", cfg, want)
+	}
+}
+
+func TestLiveGrubCfgDevicetree(t *testing.T) {
+	cfg := LiveGrubCfg("TunaOS x13s (live)",
+		"/images/pxeboot/x13s/vmlinuz",
+		"/images/pxeboot/x13s/initrd.img",
+		"/images/pxeboot/x13s/devicetree",
+		"root=tbox:CDLABEL=TUNAOS")
+	want := "    initrd /images/pxeboot/x13s/initrd.img\n    devicetree /images/pxeboot/x13s/devicetree\n}\n"
+	if !strings.HasSuffix(cfg, want) {
+		t.Fatalf("grub.cfg should load the device tree after the initrd:\n%s", cfg)
 	}
 }
 

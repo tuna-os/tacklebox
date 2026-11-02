@@ -33,7 +33,8 @@ targets, tbox-live).
 tacklebox/
 ├── cmd/tacklebox/             # CLI entry points (cobra subcommands)
 │   ├── main.go                # root command + persistent --output-base flag
-│   ├── build.go               # the `build` orchestrator
+│   ├── build.go               # `build` CLI lifecycle and target orchestration
+│   ├── build_install.go       # target install strategies and per-env pipeline
 │   ├── update.go              # the `update` command (host-side USB refresh)
 │   ├── update_all.go          # `update-all` boot-time cross-env updater
 │   ├── status.go              # the `status` command (inspect installed envs)
@@ -55,7 +56,8 @@ tacklebox/
 │   ├── blockdev/              # sgdisk + mkfs wrappers
 │   ├── oci/                   # registry client, layer unpacking, content stores
 │   ├── purefs/                # rootless EROFS, FAT ESP, and ISO9660 authoring
-│   └── runner/                # subprocess wrapper (verbose toggle, sudo)
+│   ├── runner/                # subprocess wrapper (verbose toggle, sudo)
+│   └── verify/                # artifact verification (ISO/block, BLS, and content layout)
 ├── embedded.go                # go:embed of src/dracut/ (consumed by initramfs.go)
 ├── src/
 │   ├── dracut/95tbox-root/    # initramfs module (per-env root pivot)
@@ -73,7 +75,9 @@ browser builder); it creates live ISOs without Podman, mount operations,
 
 ## The build flow
 
-`tacklebox build <recipe.json> [TARGET | --iso PATH]` runs in `cmd/tacklebox/build.go`:
+`tacklebox build <recipe.json> [TARGET | --iso PATH]` is orchestrated by
+`cmd/tacklebox/build.go`; target-specific install strategies live in
+`cmd/tacklebox/build_install.go`:
 
 1. **Parse** the recipe into `recipe.MediaRecipe`.
 2. **Validate** — bootable_envs is non-empty, size parses, target arg shape sane.
@@ -86,7 +90,8 @@ browser builder); it creates live ISOs without Podman, mount operations,
    - BlockTarget: `truncate` + `losetup` + `sgdisk` + `mkfs` + `mount` ESP+STORE + `bootctl install`.
    - IsoTarget: scratch `iso-root/` + `esp-staging/` dirs.
 6. **Pre-pull** all unique image refs in parallel.
-7. **Per-env install loop** (`installEnv`), dispatched on `Target.InstallMode()`:
+7. **Per-env install** is selected by `Target.InstallMode()` and shared-store
+   dedup policy in `build_install.go`:
    - Both modes start with **initramfs preparation** (`install.PrepareInitramfs`):
      - Compute cache key from image ID + required module set. Module set is
        determined by target type — ISO: `[tbox-live, tbox-root]`;
@@ -101,7 +106,10 @@ browser builder); it creates live ISOs without Podman, mount operations,
      - Skipped entirely when `"skip_initramfs_rebuild": true` is set on the env
        (use this for images that already ship the required modules).
    - `Bootc`: `podman run … <image> bootc install to-filesystem … --stateroot <env> /target`,
-     followed by `ExtractBootFiles` (vmlinuz + prepared initrd into the ESP).
+     followed by `ExtractBootFiles` (vmlinuz + prepared initrd, plus the
+     kernel's `devicetree` when the image ships one, into the ESP; it also
+     returns the image's `/usr/lib/bootc/kargs.d` arguments, read by bootc's
+     rules for the image's architecture).
    - `Live`: `podman image mount` + `mksquashfs` into `LiveOS/<env>.rootfs.sfs`,
      followed by `ExtractBootFiles` into `images/pxeboot/<env>/`. The squashfs
      is cached under `<output-base>/squashfs-cache/` keyed by image ID +
@@ -124,7 +132,10 @@ browser builder); it creates live ISOs without Podman, mount operations,
      (base image, env image) pair, so single-image updates re-diff only
      the changed env — the per-env caching the combined layout gives up.
    - Both: write a BLS entry under `loader/entries/<id>.conf` (menu title from
-     the recipe's per-env `title`, falling back to the env ID).
+     the recipe's per-env `title`, falling back to the env ID). Its options
+     are tacklebox's own, then the env image's kargs.d arguments, then the
+     recipe's `kargs`; it carries a `devicetree` line only when the image
+     ships `/usr/lib/modules/<kver>/devicetree`.
 8. **`Target.Finalize(track)`** returns the artifact path.
    - BlockTarget: unmount + detach loop. Returns the .img / device path.
    - IsoTarget: extract sd-boot from EFISource, mirror pxeboot to iso-root,
@@ -148,7 +159,10 @@ and `internal/purefs` packages. Their data flow is:
 4. **Author filesystems** — `purefs` streams the reconstructed tree into EROFS,
    creates the FAT32 ESP, and writes the final El Torito ISO9660 image. Kernel,
    initramfs, UKI, and systemd-boot inputs come from the image tree or explicit
-   builder options.
+   builder options. The kernel's `devicetree`, when the image ships one, is
+   staged beside the kernel and named in the BLS entry / grub.cfg
+   (`purefs.LiveBLSEntry`, `purefs.LiveGrubCfg`), and the image's kargs.d
+   arguments (`purefs.ImageKargs`) are appended to the live options.
 5. **Stream the result** — `purebuild` writes a native output file. `tbwasm`
    exposes promise-based JavaScript calls (`tboxIntrospect`, `tboxBuildIso`,
    and `tboxBuildDdiIso`) and sends the ISO to the caller in chunks.
@@ -158,6 +172,16 @@ instead of an OCI reference. These inputs join the flow after registry unpack;
 the filesystem and ISO authoring stages remain shared. Changes to the shared
 packages should be exercised through their unit tests and both entry-point
 builds so native and browser behavior do not drift.
+
+Offline OCI layouts produced by `purefs.OCILayoutInputs` include the exact
+retained manifest byte count in the synthesized index descriptor, alongside
+its digest and media type. The count must not come from re-encoding the
+decoded manifest. Browser install run
+[`41270163456`](https://github.com/tuna-os/iso-builder/actions/runs/41270163456)
+reached GUI submission but the installer refused `bound blob size mismatch`:
+the stored manifest had the correct digest and 10,834 bytes, while its
+index descriptor omitted `size`. Keep the installer's descriptor checks
+unchanged; the producer must supply the complete descriptor.
 
 ## The Target interface
 
@@ -170,6 +194,7 @@ type Target interface {
     InstallMode() InstallMode    // Bootc | Live — picks the per-env backend
     KernelPath(envID) string     // BLS-relative path for `linux=`
     InitrdPath(envID) string     // BLS-relative path for `initrd=`
+    DevicetreePath(envID) string // BLS-relative path for `devicetree=`
 }
 ```
 

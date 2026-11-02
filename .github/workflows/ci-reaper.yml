@@ -1,0 +1,70 @@
+name: ci-reaper
+
+# Daily sweep of stale GitHub Actions state for this repository, through
+# `just ci-reap-stale` (scripts/ci-reap-stale.sh):
+#
+#   * cancels runs still queued / in progress after STALE_QUEUED_HOURS
+#   * deletes completed runs older than KEEP_RUN_DAYS
+#   * deletes expired artifacts older than KEEP_RUN_DAYS
+#
+# It never touches the newest run of any (workflow, branch) pair, never a
+# default-branch push run younger than STALE_QUEUED_HOURS, and never itself.
+#
+# Why it exists: ci.yml's concurrency group supersedes runs of one ref, but
+# runs it cannot supersede still pile up (cancelled-by-timeout leftovers,
+# queued runs behind a starved RunsOn runner, months of completed history).
+# 26 stale runs once saturated the shared macOS/Windows pool for hours.
+#
+# Scheduled runs act for real. A manual dispatch defaults to a dry run that
+# prints what it would do and changes nothing.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print what would be cancelled/deleted; change nothing'
+        required: false
+        default: true
+        type: boolean
+      stale_queued_hours:
+        description: 'Cancel runs queued or in progress longer than this many hours'
+        required: false
+        default: '6'
+        type: string
+      keep_run_days:
+        description: 'Delete completed runs and expired artifacts older than this many days'
+        required: false
+        default: '14'
+        type: string
+
+concurrency:
+  group: ci-reaper
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # actions: write is what cancelling and deleting runs/artifacts needs, and
+    # it is granted to this job only.
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      STALE_QUEUED_HOURS: ${{ inputs.stale_queued_hours || '6' }}
+      KEEP_RUN_DAYS: ${{ inputs.keep_run_days || '14' }}
+      DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: reap stale runs and artifacts
+        run: just ci-reap-stale

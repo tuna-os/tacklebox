@@ -27,6 +27,10 @@
 #                                       loop-mounted at /run/tbox-delta and
 #                                       stacked as an extra overlay lowerdir
 #                                       (shared_store.dedup_layout=delta)
+#   tacklebox.x13s-adsp=required       opt-in experimental ADSP order barrier
+#   tacklebox.x13s-adsp.timeout=<sec>  --wait budget, 1..300 (60)
+# /etc/tacklebox/x13s-adsp-required also enables the barrier. This is software
+# ordering only; it does not establish physical Type-C reset completion.
 
 command -v getarg > /dev/null 2>&1 || . /lib/dracut-lib.sh
 
@@ -67,6 +71,23 @@ esac
 # parse-tbox-live.sh); the parse hook hands the path over in a file.
 dev=$1
 [ -z "$dev" ] && [ -f /run/tbox-live-root.dev ] && dev=$(cat /run/tbox-live-root.dev)
+dev_selector=$dev
+
+# Keep generic and old appended-overlay boots unchanged, including images
+# without the new helper. Explicit X13s requests must fail if it is absent.
+x13s_required=0
+if [ -f /etc/tacklebox/x13s-adsp-required ] \
+    || [ "$(getarg tacklebox.x13s-adsp)" = required ]; then
+    x13s_required=1
+fi
+case " $(cat /proc/cmdline 2>/dev/null) " in
+    *" tacklebox.x13s-adsp=required "*) x13s_required=1 ;;
+esac
+if [ "$x13s_required" = 1 ]; then
+    [ -r /lib/tbox-x13s-adsp.sh ] || die "Tacklebox: required X13s ADSP helper is absent"
+    # shellcheck source=src/dracut/90tbox-live/tbox-x13s-adsp.sh
+    . /lib/tbox-x13s-adsp.sh
+fi
 
 # Filesystem/device modules: a dracut-built tbox initramfs carries these
 # with modules.dep entries; an appended-overlay initramfs (browser
@@ -80,6 +101,18 @@ for _rel in drivers/cdrom/cdrom drivers/scsi/sr_mod drivers/block/loop \
         insmod "/usr/lib/modules/$_kv/kernel/$_rel.ko" 2> /dev/null
 done
 
+# This covers initqueue, the cmdline fallback, and direct udev/service calls.
+# Do not let the done-marker shortcut bypass a required readiness check.
+if [ "$x13s_required" = 1 ]; then
+    tbox_x13s_reason="ADSP readiness check failed"
+    tbox_x13s_resolved_device=
+    if ! tbox_x13s_prepare_device "$dev_selector" "$wait"; then
+        [ "$wait" = 1 ] && die "Tacklebox: X13s external root blocked: $tbox_x13s_reason"
+        exit 75
+    fi
+    dev=$tbox_x13s_resolved_device
+fi
+
 # Idempotence across initqueue passes; bail quietly until the device
 # exists (the wait_for_dev finished hook keeps initqueue looping until
 # the done marker below appears).
@@ -91,7 +124,7 @@ done
 # block device appearing therefore cannot bootstrap the device: measured
 # on run 30629145076, where sr0 attached at 64s, long after sysroot.mount
 # had already failed. Under --wait we poll instead.
-if [ "$wait" = "1" ]; then
+if [ "$wait" = "1" ] && [ "$x13s_required" != 1 ]; then
     _i=0
     while [ ! -e "$dev" ] && [ "$_i" -lt 60 ]; do
         udevadm settle --timeout=1 > /dev/null 2>&1 || sleep 1
@@ -137,6 +170,14 @@ _mounted() {
 }
 
 if ! _mounted /run/initramfs/live; then
+    if [ "$x13s_required" = 1 ]; then
+        # Recheck at the mount boundary and resolve again instead of retaining
+        # a numbered device path observed before ADSP became ready.
+        if ! tbox_x13s_adsp_ready || ! tbox_x13s_resolve_device "$dev_selector"; then
+            fail "Tacklebox: X13s external root blocked: $tbox_x13s_reason" || exit 75
+        fi
+        dev=$tbox_x13s_resolved_device
+    fi
     mount -o ro "$dev" /run/initramfs/live \
         || fail "Tacklebox: cannot mount live device $dev" || exit 1
 fi

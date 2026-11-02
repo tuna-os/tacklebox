@@ -1,6 +1,9 @@
 package purefs
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tuna-os/tacklebox/internal/oci"
@@ -56,7 +60,7 @@ func TestLiveOverlayRef(t *testing.T) {
 // tree) must be a clean no-op rather than a panic or an error.
 func TestGraftLiveOverlayNilClientIsNoop(t *testing.T) {
 	root, store := newImageTree(t, nil, nil)
-	applied, err := GraftLiveOverlay(root, store, nil, "tuna-os/yellowfin:kde", nil, nil)
+	applied, _, _, err := GraftLiveOverlayObserved(root, store, nil, "tuna-os/yellowfin:kde", nil, GraftOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,7 +151,7 @@ func TestGraftLiveOverlayRequiredMissingFailsClosed(t *testing.T) {
 	t.Run("unpublished-tag", func(t *testing.T) {
 		srv := serveLiveOverlay(t, nil, nil, nil)
 		root, store := newRoot(t)
-		applied, overlay, err := GraftLiveOverlayWithOptions(root, store, oci.NewClient(srv.URL), image, baseManifest,
+		applied, overlay, _, err := GraftLiveOverlayObserved(root, store, oci.NewClient(srv.URL), image, baseManifest,
 			GraftOptions{Platform: "linux/amd64", Required: true})
 		if err == nil {
 			t.Fatal("expected a missing-live-overlay blocker, got nil")
@@ -177,7 +181,7 @@ func TestGraftLiveOverlayRequiredMissingFailsClosed(t *testing.T) {
 			overlayIndexBody(t, overlayPlatformDesc("amd64", "", amdDigest)),
 			map[string][]byte{amdDigest: amdBody}, nil)
 		root, store := newRoot(t)
-		applied, _, err := GraftLiveOverlayWithOptions(root, store, oci.NewClient(srv.URL), image, baseManifest,
+		applied, _, _, err := GraftLiveOverlayObserved(root, store, oci.NewClient(srv.URL), image, baseManifest,
 			GraftOptions{Platform: "linux/arm64", Required: true})
 		if err == nil {
 			t.Fatal("expected a missing-live-overlay blocker for the absent arm64 overlay, got nil")
@@ -213,7 +217,7 @@ func TestGraftLiveOverlayExpectedDigestMismatchFailsClosed(t *testing.T) {
 	root := &oci.Node{Type: oci.TypeDir, Mode: 0o755, Children: map[string]*oci.Node{}}
 	baseManifest := &oci.Manifest{Layers: []oci.Descriptor{{Digest: "sha256:base"}}}
 	pinned := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-	applied, _, err := GraftLiveOverlayWithOptions(root, store, oci.NewClient(srv.URL), image, baseManifest,
+	applied, _, _, err := GraftLiveOverlayObserved(root, store, oci.NewClient(srv.URL), image, baseManifest,
 		GraftOptions{Platform: "linux/amd64", ExpectedOverlayDigest: pinned})
 	if err == nil {
 		t.Fatal("expected an overlay-digest-mismatch blocker, got nil")
@@ -242,7 +246,7 @@ func TestGraftLiveOverlayOptionalMissingIsNoop(t *testing.T) {
 	srv := serveLiveOverlay(t, nil, nil, nil)
 	store := &oci.MemStore{}
 	root := &oci.Node{Type: oci.TypeDir, Mode: 0o755, Children: map[string]*oci.Node{}}
-	applied, _, err := GraftLiveOverlayWithOptions(root, store, oci.NewClient(srv.URL),
+	applied, _, _, err := GraftLiveOverlayObserved(root, store, oci.NewClient(srv.URL),
 		"tuna-os/yellowfin:kde", &oci.Manifest{}, GraftOptions{Platform: "linux/amd64"})
 	if err != nil {
 		t.Fatalf("optional missing overlay must stay a no-op: %v", err)
@@ -255,14 +259,14 @@ func TestGraftLiveOverlayOptionalMissingIsNoop(t *testing.T) {
 func TestVerifyLiveOverlayBase(t *testing.T) {
 	const base = "sha256:base-digest"
 	cases := []struct {
-		name      string
-		overlay   *oci.Manifest
-		actual    string
+		name       string
+		overlay    *oci.Manifest
+		actual     string
 		wantReason string
 	}{
 		{"nil-overlay", nil, base, ""},
-		{"no-annotations", &oci.Manifest{}, base, ""},
-		{"empty-actual", &oci.Manifest{}, "", ""},
+		{"no-annotations", &oci.Manifest{}, base, OverlayReasonBaseDigestMissing},
+		{"empty-actual", &oci.Manifest{}, "", OverlayReasonBaseDigestMissing},
 		{"matching-actual", &oci.Manifest{Annotations: map[string]string{LiveOverlayActualBaseDigestAnnotation: base}}, base, ""},
 		{"matching-legacy", &oci.Manifest{Annotations: map[string]string{LiveOverlayBaseDigestAnnotation: base}}, base, ""},
 		{
@@ -286,7 +290,7 @@ func TestVerifyLiveOverlayBase(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := VerifyLiveOverlayBase(&oci.Manifest{}, tc.overlay, tc.actual)
+			err := VerifyLiveOverlayBase(tc.overlay, tc.actual)
 			if tc.wantReason == "" {
 				if err != nil {
 					t.Fatalf("expected nil, got %v", err)
@@ -300,8 +304,99 @@ func TestVerifyLiveOverlayBase(t *testing.T) {
 			if mismatch.Reason != tc.wantReason {
 				t.Errorf("reason = %q, want %q", mismatch.Reason, tc.wantReason)
 			}
-			if mismatch.Want != base || mismatch.Got != "sha256:other-base" {
-				t.Errorf("want/got = %s/%s, expected selected base vs overlay annotation", mismatch.Want, mismatch.Got)
+			if mismatch.Want != tc.actual || (tc.wantReason == OverlayReasonBaseDigestMismatch && mismatch.Got != "sha256:other-base") {
+				t.Errorf("want/got = %s/%s, inconsistent selected base or overlay annotation", mismatch.Want, mismatch.Got)
+			}
+		})
+	}
+}
+
+func TestOverlayBindingPrecedesFetchAndRootMutation(t *testing.T) {
+	base := "sha256:" + strings.Repeat("1", 64)
+	stale := "sha256:" + strings.Repeat("2", 64)
+	for _, tc := range []struct {
+		name, selected, pin, wantReason string
+		annotations                     map[string]string
+	}{
+		{"missing", base, "", OverlayReasonBaseDigestMissing, nil},
+		{"generic-OCI-annotation-only", base, "", OverlayReasonBaseDigestMissing, map[string]string{"org.opencontainers.image.base.digest": base}},
+		{"mismatched", base, "", OverlayReasonBaseDigestMismatch, map[string]string{LiveOverlayBaseDigestAnnotation: stale}},
+		{"missing-selected-base", "", "", OverlayReasonBaseDigestMissing, map[string]string{LiveOverlayBaseDigestAnnotation: base}},
+		{"caller-pin-mismatch", base, stale, OverlayReasonBaseDigestMismatch, map[string]string{LiveOverlayBaseDigestAnnotation: base}},
+		{"actual-binding-wins-over-legacy", base, "", OverlayReasonBaseDigestMismatch, map[string]string{LiveOverlayActualBaseDigestAnnotation: stale, LiveOverlayBaseDigestAnnotation: base}},
+		{"matching", base, base, "", map[string]string{LiveOverlayActualBaseDigestAnnotation: base}},
+		{"matching-legacy-key", base, "", "", map[string]string{LiveOverlayBaseDigestAnnotation: base}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const selected = "IMAGE_VERSION=selected-new\n"
+			payload := "IMAGE_VERSION=stale-overlay-old\n"
+			if tc.wantReason == "" {
+				payload = selected + "LIVE_CUSTOMIZATION=present\n"
+			}
+			var layer bytes.Buffer
+			gz := gzip.NewWriter(&layer)
+			tw := tar.NewWriter(gz)
+			if err := tw.WriteHeader(&tar.Header{Name: "usr/lib/os-release", Mode: 0o644, Size: int64(len(payload))}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tw.Write([]byte(payload)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := gz.Close(); err != nil {
+				t.Fatal(err)
+			}
+			layerDigest := overlayDigestOf(layer.Bytes())
+			manifest, err := json.Marshal(&oci.Manifest{
+				MediaType:   "application/vnd.oci.image.manifest.v1+json",
+				Annotations: tc.annotations,
+				Layers:      []oci.Descriptor{{MediaType: "application/vnd.oci.image.layer.v1.tar+gzip", Digest: layerDigest, Size: int64(layer.Len())}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var blobRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/token":
+					fmt.Fprint(w, `{"token":"disposable-fixture"}`)
+				case strings.HasPrefix(r.URL.Path, "/v2/tuna-os/live-overlay/manifests/"):
+					w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+					w.Write(manifest)
+				case r.URL.Path == "/v2/tuna-os/live-overlay/blobs/"+layerDigest:
+					blobRequests.Add(1)
+					w.Write(layer.Bytes())
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			store := &oci.MemStore{}
+			root := &oci.Node{Type: oci.TypeDir, Mode: 0o755, Children: map[string]*oci.Node{}}
+			addFile(t, store, root, "usr/lib/os-release", selected, 0o644, 0, 0)
+			applied, resolved, observed, err := GraftLiveOverlayObserved(
+				root, store, oci.NewClient(server.URL), "tuna-os/fixture:test", &oci.Manifest{},
+				GraftOptions{Platform: "linux/amd64", BaseDigest: tc.selected, ExpectedBaseDigest: tc.pin})
+			if tc.wantReason != "" {
+				var mismatch *OverlayMismatchError
+				if !errors.As(err, &mismatch) || mismatch.Reason != tc.wantReason {
+					t.Fatalf("expected %s refusal, got %v", tc.wantReason, err)
+				}
+				if applied || resolved != nil || observed != nil || blobRequests.Load() != 0 {
+					t.Fatalf("refused overlay fetched or returned applied evidence: %v %v %+v requests=%d", applied, resolved, observed, blobRequests.Load())
+				}
+				if got := readNode(t, store, root, "usr/lib/os-release"); got != selected {
+					t.Fatalf("refused overlay replaced the selected root: %q", got)
+				}
+				return
+			}
+			if err != nil || !applied || resolved == nil || observed == nil || !observed.BaseAnnotationMatched || blobRequests.Load() != 1 {
+				t.Fatalf("matching overlay failed: %v applied=%v observed=%+v requests=%d", err, applied, observed, blobRequests.Load())
+			}
+			if got := readNode(t, store, root, "usr/lib/os-release"); got != payload {
+				t.Fatalf("matching overlay did not apply its actual content: %q", got)
 			}
 		})
 	}

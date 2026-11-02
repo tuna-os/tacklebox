@@ -115,6 +115,7 @@ type pureBuildConfig struct {
 	Strict          bool
 	Overlays        []string
 	LiveMarker      string
+	EngineDigest    string // sha256 of this executable; set → receipt required
 	Packages        []string
 	Flatpaks        []string
 	ExtraRun        []string
@@ -274,10 +275,14 @@ func main() {
 		strict      = flag.Bool("strict", false, "fail instead of warn when the image's flatpak preinstall.d asks for a flatpak the rootfs does not carry")
 		overlays    stringList
 		liveMarker  = flag.String("live-marker", "", "readiness string the baked tbox-live-ready.service prints to the serial console (default "+purefs.DefaultLiveMarker+")")
+		liveSource  = flag.Bool("live-source-receipt", false, "complete the overlay's etc/tunaos/live-source.json with the base, overlay and engine digests this build used (engine = sha256 of this executable); refuses if any is unavailable")
 	)
 	flag.Var(&overlays, "overlay", "uncompressed tar applied onto the rootfs after the live setup, with layer semantics (repeatable; applied in order). For test harnesses that must add, say, an SSH key to otherwise-shipped media without rebuilding the image")
 	flag.Parse()
 	if *ddi != "" {
+		if *liveSource {
+			log.Fatal("--live-source-receipt: --ddi media has no verified overlay to bind; refusing")
+		}
 		buildFromDdiForPlatform(*ddi, *ddiStem, *label, *workdir, *out, *platform)
 		return
 	}
@@ -296,6 +301,13 @@ func main() {
 		Strict:      *strict,
 		Overlays:    overlays,
 		LiveMarker:  *liveMarker,
+	}
+	if *liveSource {
+		digest, err := executableDigest()
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.EngineDigest = digest
 	}
 	if *requestPath != "" {
 		if _, err := loadAndApplyBuildRequest(*requestPath, &cfg); err != nil {
@@ -487,6 +499,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	// skip curated TunaOS overlay grafting. A BuildRequest pinning an
 	// overlay digest makes the overlay required: a missing overlay or a
 	// digest mismatch is a blocker, never a silent uncustomized baseline.
+	var overlayObserved *purefs.OverlayObservation
 	if cfg.Request != nil && cfg.Request.CustomImage {
 		log.Printf(">>> custom image %s — skipping curated TunaOS live overlay", normImage)
 	} else {
@@ -496,26 +509,23 @@ func runPureBuild(cfg *pureBuildConfig) error {
 			expectedOverlay = strings.TrimSpace(cfg.Request.ResolvedInputs.LiveOverlayDigest)
 			expectedOverlayBase = strings.TrimSpace(cfg.Request.ResolvedInputs.LiveOverlayBaseDigest)
 		}
-		applied, overlayManifest, err := purefs.GraftLiveOverlayWithOptions(root, store, client, normImage, manifest, purefs.GraftOptions{
+		applied, _, observed, err := purefs.GraftLiveOverlayObserved(root, store, client, normImage, manifest, purefs.GraftOptions{
 			Platform:              cfg.Platform,
 			ExpectedOverlayDigest: expectedOverlay,
+			BaseDigest:            resolvedDigest,
+			ExpectedBaseDigest:    expectedOverlayBase,
 			Progress:              func(i, n int) { fmt.Printf("\r    overlay layer %d/%d", i+1, n) },
 		})
 		if err != nil {
 			return fmt.Errorf("apply live overlay: %w", err)
 		}
-		if applied && overlayManifest != nil {
-			if expectedOverlayBase != "" && expectedOverlayBase != resolvedDigest {
-				return &purefs.OverlayMismatchError{Reason: purefs.OverlayReasonBaseDigestMismatch, Want: resolvedDigest, Got: expectedOverlayBase}
-			}
-			if verr := purefs.VerifyLiveOverlayBase(manifest, overlayManifest, resolvedDigest); verr != nil {
-				return fmt.Errorf("live overlay base verification: %w", verr)
-			}
+		if applied {
 			fmt.Println()
 			log.Printf(">>> live overlay grafted")
 		} else {
 			log.Printf(">>> no live overlay for %s — plain baseline", normImage)
 		}
+		overlayObserved = observed
 	}
 
 	if err := purefs.EnsureLiveUser(root, store, "liveuser", 1000); err != nil {
@@ -542,6 +552,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	// heap. Custom images without pinned digests, and builds with no pins
 	// at all, keep their existing media shape.
 	var offlineLayout []purefs.IsoInput
+	var offlineMediaJSON []byte
 	if purefs.ShouldEmbedOfflineLayout(cfg.Request) {
 		if manifest == nil || client == nil {
 			// --rootfs-tar path: a pre-customized tree with no resolved
@@ -596,9 +607,6 @@ func runPureBuild(cfg *pureBuildConfig) error {
 					}
 				}
 			}
-			if merr := purefs.WriteLiveMarkerFiles(root, store, mediaJSON); merr != nil {
-				return merr
-			}
 			offlineLayout, merr = purefs.OCILayoutInputs(
 				&fileDigestStore{files: retained},
 				manifest, resolvedDigest, manifest.Config.Digest,
@@ -606,6 +614,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 			if merr != nil {
 				return fmt.Errorf("offline layout: %w", merr)
 			}
+			offlineMediaJSON = mediaJSON
 			log.Printf(">>> offline OCI layout embedded (%d layers)", len(manifest.Layers))
 		}
 	}
@@ -622,6 +631,20 @@ func runPureBuild(cfg *pureBuildConfig) error {
 			return fmt.Errorf("overlay %s: %w", o, err)
 		}
 		log.Printf(">>> overlay %s applied", o)
+	}
+
+	// Finalize after every tar overlay so neither the live-source receipt
+	// nor the installer's MediaInput/recipe can retain stale overlay defaults.
+	if cfg.EngineDigest != "" {
+		if err := writeLiveSourceReceipt(root, store, cfg, resolvedDigest, overlayObserved); err != nil {
+			return err
+		}
+		log.Printf(">>> live-source receipt written (engine %s)", cfg.EngineDigest)
+	}
+	if offlineMediaJSON != nil {
+		if err := purefs.WriteLiveMarkerFiles(root, store, offlineMediaJSON); err != nil {
+			return err
+		}
 	}
 
 	if missing := purefs.MissingPreinstalls(root, store); len(missing) > 0 {
@@ -692,6 +715,16 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		initrdOnDisk = combined
 	}
 
+	// The image's own kernel arguments (bootc kargs.d) and the device tree
+	// it ships for the kernel go into the live entry, as bootc and ostree
+	// give them to the installed system. Read before the EROFS pass, which
+	// consumes the blob store.
+	imageKargs, err := purefs.ImageKargs(root, store, effArch)
+	if err != nil {
+		return err
+	}
+	dtbTreePath := purefs.KernelDevicetree(root, kver)
+
 	// Resolve the boot chain from the payload binaries matching the
 	// requested architecture — a multi-arch tree must not boot the wrong
 	// arch's loader. The host fallback likewise follows the target arch.
@@ -716,6 +749,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	for _, kp := range []string{
 		"usr/lib/modules/" + kver + "/vmlinuz",
 		"usr/lib/modules/" + kver + "/initramfs.img",
+		dtbTreePath,
 		chain.SdBoot, chain.Shim, chain.Grub, chain.MokMgr,
 	} {
 		if kp == "" {
@@ -749,27 +783,30 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		return err
 	}
 
-	kargs := fmt.Sprintf(
+	kargs := purefs.AppendKargs(fmt.Sprintf(
 		"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
 			" tacklebox.live.overlay.size=8192 enforcing=0"+
 			" tacklebox.env=%s console=ttyS0,115200n8",
 		cfg.Label, sfsName, envID,
-	)
+	), imageKargs)
 	kernelPath := "/images/pxeboot/" + envID + "/vmlinuz"
 	initrdPath := "/images/pxeboot/" + envID + "/initrd.img"
+	devicetreePath := ""
+	if dtbTreePath != "" {
+		devicetreePath = "/images/pxeboot/" + envID + "/devicetree"
+	}
 
 	var espExtras []purefs.EspFile
 	switch chain.Kind {
 	case "sdboot":
-		entry := fmt.Sprintf("title TunaOS %s (live)\nlinux %s\ninitrd %s\noptions %s\n",
-			envID, kernelPath, initrdPath, kargs)
+		entry := purefs.LiveBLSEntry("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
 		bootDiskFiles = []bootDiskFile{{"/EFI/BOOT/" + bootLoaderName, sdBootDisk}}
 		espExtras = []purefs.EspFile{
 			{Path: "/loader/loader.conf", Source: purefs.StringSource("timeout 3\n")},
 			{Path: "/loader/entries/" + envID + ".conf", Source: purefs.StringSource(entry)},
 		}
 	case "grub2":
-		grubCfg := purefs.LiveGrubCfg("TunaOS "+envID+" (live)", kernelPath, initrdPath, kargs)
+		grubCfg := purefs.LiveGrubCfg("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
 		cfgPath := filepath.Join(cfg.Workdir, "grub.cfg")
 		if err := os.WriteFile(cfgPath, []byte(grubCfg), 0o644); err != nil {
 			return err
@@ -803,6 +840,13 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		purefs.EspFile{Path: kernelPath, Source: kernelSrc},
 		purefs.EspFile{Path: initrdPath, Source: initrdSource},
 	)
+	var dtbSrc func() (io.ReadCloser, error)
+	if dtbTreePath != "" {
+		if dtbSrc, err = blob(dtbTreePath); err != nil {
+			return err
+		}
+		espFiles = append(espFiles, purefs.EspFile{Path: devicetreePath, Source: dtbSrc})
+	}
 	if err := purefs.WriteEsp(espPath, espFiles); err != nil {
 		return err
 	}
@@ -821,6 +865,11 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		inputs = append(inputs,
 			purefs.IsoInput{Path: kernelPath, Size: kn.Size, Source: kernelSrc},
 			purefs.IsoInput{Path: initrdPath, Size: mustStatSize(initrdOnDisk), Source: initrdSource},
+		)
+		if dtbTreePath != "" {
+			inputs = append(inputs, purefs.IsoInput{Path: devicetreePath, Size: root.Lookup(dtbTreePath).Size, Source: dtbSrc})
+		}
+		inputs = append(inputs,
 			purefs.IsoInput{Path: "/LiveOS/" + sfsName, Size: mustStatSize(sfsPath), Source: purefs.FileSource(sfsPath)},
 		)
 		if len(cfg.Flatpaks) > 0 {
@@ -977,6 +1026,11 @@ func assembleWithXorriso(workdir, out, label, envID, espPath, sfsPath, sfsName s
 	// workdir if present.
 	if err := place(filepath.Join(px, "initrd.img"), initrdOnDisk); err != nil {
 		return err
+	}
+	if dtb := purefs.KernelDevicetree(root, kver); dtb != "" {
+		if err := place(filepath.Join(px, "devicetree"), root.Lookup(dtb).Ref); err != nil {
+			return err
+		}
 	}
 	if err := place(filepath.Join(isoRoot, "LiveOS", sfsName), sfsPath); err != nil {
 		return err

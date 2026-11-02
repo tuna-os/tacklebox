@@ -10,6 +10,7 @@ import (
 
 	"github.com/tuna-os/tacklebox/internal/install"
 	"github.com/tuna-os/tacklebox/internal/recipe"
+	"github.com/tuna-os/tacklebox/internal/verify"
 )
 
 // resolveRemora: the bootable-environment remora field accepts either a
@@ -165,14 +166,14 @@ func TestAllComposefsAllComposefs(t *testing.T) {
 // checkResult.String: verification output formatting.
 
 func TestCheckResultStringPass(t *testing.T) {
-	got := (checkResult{name: "boot entry resolves"}).String()
+	got := (verify.CheckResult{Name: "boot entry resolves"}).String()
 	if got != "  ✓ boot entry resolves" {
 		t.Fatalf("String(pass) = %q", got)
 	}
 }
 
 func TestCheckResultStringFail(t *testing.T) {
-	got := (checkResult{name: "boot entry resolves", err: errors.New("no vmlinuz")}).String()
+	got := (verify.CheckResult{Name: "boot entry resolves", Err: errors.New("no vmlinuz")}).String()
 	if got != "  ✗ boot entry resolves: no vmlinuz" {
 		t.Fatalf("String(fail) = %q", got)
 	}

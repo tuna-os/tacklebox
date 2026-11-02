@@ -47,10 +47,10 @@ func mkPE(t *testing.T, sections map[string][]byte) []byte {
 
 	// COFF file header.
 	fh := make([]byte, 20)
-	binary.LittleEndian.PutUint16(fh[0:], 0x8664)               // Machine: amd64
-	binary.LittleEndian.PutUint16(fh[2:], uint16(len(names)))   // NumberOfSections
-	binary.LittleEndian.PutUint16(fh[16:], optSize)             // SizeOfOptionalHeader
-	binary.LittleEndian.PutUint16(fh[18:], 0x2002)              // Characteristics
+	binary.LittleEndian.PutUint16(fh[0:], 0x8664)             // Machine: amd64
+	binary.LittleEndian.PutUint16(fh[2:], uint16(len(names))) // NumberOfSections
+	binary.LittleEndian.PutUint16(fh[16:], optSize)           // SizeOfOptionalHeader
+	binary.LittleEndian.PutUint16(fh[18:], 0x2002)            // Characteristics
 	buf.Write(fh)
 
 	// Optional header: only the magic matters to debug/pe.
@@ -71,10 +71,10 @@ func mkPE(t *testing.T, sections map[string][]byte) []byte {
 		}
 		hdr := make([]byte, secHdrSize)
 		copy(hdr[0:8], n)
-		binary.LittleEndian.PutUint32(hdr[8:], uint32(len(body)))  // VirtualSize
-		binary.LittleEndian.PutUint32(hdr[12:], va)                // VirtualAddress
-		binary.LittleEndian.PutUint32(hdr[16:], uint32(padded))    // SizeOfRawData
-		binary.LittleEndian.PutUint32(hdr[20:], uint32(off))       // PointerToRawData
+		binary.LittleEndian.PutUint32(hdr[8:], uint32(len(body))) // VirtualSize
+		binary.LittleEndian.PutUint32(hdr[12:], va)               // VirtualAddress
+		binary.LittleEndian.PutUint32(hdr[16:], uint32(padded))   // SizeOfRawData
+		binary.LittleEndian.PutUint32(hdr[20:], uint32(off))      // PointerToRawData
 		buf.Write(hdr)
 		pb := make([]byte, padded)
 		copy(pb, body)

@@ -173,7 +173,7 @@ func TestUnpackOverlaySemantics(t *testing.T) {
 	root.Walk(func(p string, _ *Node) error { order = append(order, p); return nil })
 	for i := 1; i < len(order); i++ {
 		if order[i-1] >= order[i] && order[i-1][:min(len(order[i-1]), len(order[i]))] != order[i][:min(len(order[i-1]), len(order[i]))] {
-			// siblings must be sorted; parent-before-child is inherent
+			t.Errorf("walk order not sorted: %s before %s", order[i-1], order[i])
 		}
 	}
 	if len(order) != 12 {

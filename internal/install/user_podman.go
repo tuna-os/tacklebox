@@ -82,12 +82,12 @@ func runScriptOnImageMount(image, script string) (string, error) {
 	mountSerialise.Lock()
 	defer mountSerialise.Unlock()
 
-	// World-writable: the script may write here as SUDO_USER.
+	// Restrict access to the user running the script.
 	outDir, err := os.MkdirTemp("", "tbox-run-*")
 	if err != nil {
 		return "", fmt.Errorf("mktemp: %w", err)
 	}
-	if err := os.Chmod(outDir, 0777); err != nil {
+	if err := privateBuildDir(outDir); err != nil {
 		os.RemoveAll(outDir)
 		return "", fmt.Errorf("chmod outdir: %w", err)
 	}

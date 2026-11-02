@@ -29,11 +29,13 @@ Never post account credentials or API keys in issues or pull requests.
 Run the fast checks used for every pull request:
 
 ```bash
+just check
 just build
-just test
 go vet ./...
 go test -tags=integration -run='Help' ./...
 ```
+
+You can format Go files with `just fmt`.
 
 If you change an example or fixture recipe, make sure that every JSON file
 still parses:
@@ -67,14 +69,18 @@ Use Conventional Commits for commits and squash-merge PR titles:
 
 Release-please runs on pushes to `main` and opens a release PR with the
 version manifest and changelog. The first release is v0.1.0. A maintainer
-reviews and merges the release PR to create the tag and GitHub Release.
-The repository must allow GitHub Actions to create pull requests.
+adds `docs/releases/<tag>.md` to the release PR before merging it to create
+the tag and GitHub Release. The repository must allow GitHub Actions to
+create pull requests.
 
 The release-please workflow then calls the binary and container publishers
 with that tag. This explicit call is needed because tags created with
 `GITHUB_TOKEN` do not trigger other workflows. No personal access token is needed.
-GoReleaser uploads static Linux amd64/arm64 tarballs and SHA-256 checksums to
-GitHub Releases. Each binary reports its version with `tacklebox --version`.
+GoReleaser builds static Linux amd64/arm64 tarballs and SHA-256 checksums
+with a read-only token. A separate job verifies the checksums and release
+notes before uploading all assets together. It preserves release-please's
+notes on an existing release. Each binary reports its version with
+`tacklebox --version`.
 The container workflow publishes both `v0.1.0` and `0.1.0` style tags to GHCR,
 as well as the existing `latest` and commit tags.
 
@@ -86,4 +92,4 @@ branch. A manual run on a release tag publishes assets to that release.
 ## Questions?
 
 - [TunaOS Documentation](https://tunaos.org)
-- [GitHub Issues](https://github.com/tuna-os/tunaOS/issues)
+- [GitHub Issues](https://github.com/tuna-os/tacklebox/issues)

@@ -87,9 +87,8 @@ func computePartitions(r recipe.MediaRecipe) ([]blockdev.Partition, error) {
 
 	// STORE: explicit override > computed remainder.
 	var storeSpec string
-	var store uint64
 	if r.Partitions.Store != "" {
-		storeSpec, store, err = resolve(r.Partitions.Store, "", 0)
+		storeSpec, _, err = resolve(r.Partitions.Store, "", 0)
 		if err != nil {
 			return nil, fmt.Errorf("partitions.store: %w", err)
 		}
@@ -100,7 +99,7 @@ func computePartitions(r recipe.MediaRecipe) ([]blockdev.Partition, error) {
 				"recipe size %s is too small: need at least %d GiB (ESP %d + store %d + persist %d)",
 				r.Size, (esp+persist+minStoreBytes)>>30, esp>>30, minStoreBytes>>30, persist>>30)
 		}
-		store = total - esp - persist
+		store := total - esp - persist
 		storeSpec = fmt.Sprintf("+%dG", store>>30)
 	}
 

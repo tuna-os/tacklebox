@@ -11,7 +11,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-binaries-${{ inputs.tag || github.ref }}
@@ -25,17 +25,58 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@7ec5c2b0c6cdda6e8bbb49444bc797dd658860711 # v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           version: '~> v2'
-          args: ${{ (inputs.tag != '' || startsWith(github.ref, 'refs/tags/')) && 'release --clean' || 'release --snapshot --clean' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          args: ${{ (inputs.tag != '' || startsWith(github.ref, 'refs/tags/')) && 'release --skip=publish --clean' || 'release --snapshot --skip=publish --clean' }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: goreleaser-artifacts
-          path: dist/
+          path: |
+            dist/*.tar.gz
+            dist/*_checksums.txt
+          if-no-files-found: error
           retention-days: 1
+
+  release:
+    if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+      - name: Download binary artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: goreleaser-artifacts
+          path: dist
+      - name: Verify release inputs
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          cd dist
+          for checksum in *_checksums.txt; do
+            sha256sum --check "$checksum"
+          done
+          test -f "../docs/releases/${RELEASE_TAG}.md"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*_checksums.txt --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/*.tar.gz dist/*_checksums.txt \
+              --verify-tag \
+              --title "Tacklebox ${RELEASE_TAG}" \
+              --notes-file "docs/releases/${RELEASE_TAG}.md"
+          fi

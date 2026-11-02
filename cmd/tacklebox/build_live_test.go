@@ -1,11 +1,10 @@
 package main
 
-// Tests for the live/ISO install pipeline in build.go — the squashfs-dedup
-// path used by IsoTarget (as opposed to the bootc/block path covered by
-// build_orchestration_test.go). These are the functions that were at 0%
-// coverage per tuna-os/tacklebox#141: installEnvLive,
-// installEnvsLiveCombined, installEnvsLiveDelta, and runEnvs's live
-// dispatch.
+// Tests for the live/ISO install pipeline in build_install.go — the
+// squashfs-dedup path used by IsoTarget (as opposed to the bootc/block path
+// covered by build_orchestration_test.go). These are the functions that were
+// at 0% coverage per tuna-os/tacklebox#141: installEnvLive,
+// installEnvsLiveCombined, installEnvsLiveDelta, and runEnvs's live dispatch.
 //
 // Everything below bottoms out in runner.RunFn/OutputFn (via
 // internal/install), so the existing mockRunner seam is enough — no root,
@@ -38,6 +37,9 @@ func (f *fakeIsoTarget) KernelPath(envID string) string {
 }
 func (f *fakeIsoTarget) InitrdPath(envID string) string {
 	return "/images/pxeboot/" + envID + "/initrd.img"
+}
+func (f *fakeIsoTarget) DevicetreePath(envID string) string {
+	return "/images/pxeboot/" + envID + "/devicetree"
 }
 
 // withLiveTestEnv wires the two globals the live pipeline reads outside

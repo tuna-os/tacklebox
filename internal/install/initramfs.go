@@ -79,15 +79,11 @@ func PrepareInitramfs(image string, modules []string, skip bool) (string, error)
 		}
 	}()
 
-	outDir, err := os.MkdirTemp("", "tbox-initramfs-*")
+	outDir, err := tempBuildDir("", "tbox-initramfs-*")
 	if err != nil {
 		return "", fmt.Errorf("mktemp: %w", err)
 	}
-	defer os.RemoveAll(outDir)
-	// World-writable so the (possibly rootless) container user can write here.
-	if err := os.Chmod(outDir, 0777); err != nil {
-		return "", fmt.Errorf("chmod outdir: %w", err)
-	}
+	defer os.RemoveAll(filepath.Dir(outDir))
 
 	fmt.Printf(">>> [initramfs] probing %s for modules: %s\n", image, strings.Join(modules, " "))
 	runArgs := append(prefix[1:],

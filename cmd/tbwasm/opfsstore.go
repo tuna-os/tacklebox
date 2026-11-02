@@ -295,7 +295,7 @@ func (r *opfsSliceReader) Close() error { return nil }
 //
 // Post-unpack writes used to land in an oci.MemStore, on the assumption
 // that they were only ever EnsureLiveUser's handful of /etc edits. They
-// are not. GraftLiveOverlay unpacks the published live-overlay delta
+// are not. GraftLiveOverlayObserved unpacks the published live-overlay delta
 // through this same store, and for a desktop edition that delta is the
 // installer flatpak payload — 2.49 GiB across 42k files under var/lib/
 // for flounder:xfce, none of it caught by Client.SkipBodies. In a wasm32

@@ -5,11 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
-  pull-requests: write
-  packages: write
-  id-token: write
-  attestations: write
+  contents: read
 
 concurrency:
   group: release-please
@@ -17,12 +13,15 @@ concurrency:
 
 jobs:
   release-please:
+    permissions:
+      contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@7987652d64b8ac0b60d9c078370ea6da906dacb5 # v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -32,6 +31,8 @@ jobs:
   # GITHUB_TOKEN-created tags do not trigger push workflows. Call the
   # publishers explicitly, checking out the exact tag release-please created.
   binaries:
+    permissions:
+      contents: write
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     uses: ./.github/workflows/release.yml
@@ -39,6 +40,11 @@ jobs:
       tag: ${{ needs.release-please.outputs.tag_name }}
 
   image:
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     uses: ./.github/workflows/release-image.yml

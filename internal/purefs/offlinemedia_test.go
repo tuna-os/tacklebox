@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -281,6 +284,7 @@ func TestOCILayoutInputs_ShapeAndLazyStreaming(t *testing.T) {
 		Manifests     []struct {
 			MediaType string `json:"mediaType"`
 			Digest    string `json:"digest"`
+			Size      int64  `json:"size"`
 		} `json:"manifests"`
 	}
 	if err := json.Unmarshal(indexBytes, &decoded); err != nil {
@@ -291,6 +295,11 @@ func TestOCILayoutInputs_ShapeAndLazyStreaming(t *testing.T) {
 	}
 	if len(decoded.Manifests) != 1 || decoded.Manifests[0].Digest != indexDigest {
 		t.Fatalf("index.json manifests = %+v, want single entry for %s", decoded.Manifests, indexDigest)
+	}
+	if descriptor := decoded.Manifests[0]; descriptor.Size != int64(len(store.blobs[indexDigest])) ||
+		descriptor.MediaType != manifest.MediaType {
+		t.Fatalf("index.json descriptor = %+v, want retained manifest size %d and media type %s",
+			descriptor, len(store.blobs[indexDigest]), manifest.MediaType)
 	}
 
 	// Manifest, config, and layer blobs stream from retention with
@@ -320,6 +329,77 @@ func TestOCILayoutInputs_ShapeAndLazyStreaming(t *testing.T) {
 		if digest != indexDigest && store.opens[digest] != before+1 {
 			t.Fatalf("%s opened %d times (was %d), want exactly one lazy open", p, store.opens[digest], before)
 		}
+	}
+}
+
+func TestOCILayoutInputs_ISORetainsManifestDescriptor(t *testing.T) {
+	if _, err := exec.LookPath("xorriso"); err != nil {
+		t.Skip("xorriso not installed")
+	}
+	for _, mediaType := range []string{defaultOCIManifestMediaType, "application/vnd.docker.distribution.manifest.v2+json"} {
+		t.Run(mediaType, func(t *testing.T) {
+			store := newCountingBlobStore()
+			manifest, _ := offlineTestManifest(t, store)
+			manifest.MediaType = mediaType
+			raw, err := json.MarshalIndent(struct {
+				SchemaVersion int `json:"schemaVersion"`
+				*oci.Manifest
+			}{SchemaVersion: 2, Manifest: manifest}, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw = append(raw, '\n')
+			digest := testOfflineDigestOf(raw)
+			store.blobs[digest] = raw
+
+			inputs, err := OCILayoutInputs(store, manifest, digest, manifest.Config.Digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inputs = append(inputs, memInput("/EFI/efi.img", strings.Repeat("\x00", 2048)))
+			directory := t.TempDir()
+			isoPath := filepath.Join(directory, "offline.iso")
+			output, err := os.Create(isoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeErr := WriteIso9660(output, "OFFLINE", inputs, "/EFI/efi.img")
+			closeErr := output.Close()
+			if writeErr != nil || closeErr != nil {
+				t.Fatalf("write ISO: %v; close: %v", writeErr, closeErr)
+			}
+			layout := filepath.Join(directory, "OCI")
+			if log, err := exec.Command("xorriso", "-indev", isoPath, "-osirrox", "on", "-extract", "/OCI", layout).CombinedOutput(); err != nil {
+				t.Fatalf("extract OCI layout: %v\n%s", err, log)
+			}
+			// Extracted ISO directories are read-only; allow TempDir cleanup.
+			for _, path := range []string{layout, filepath.Join(layout, "blobs"), filepath.Join(layout, "blobs", "sha256")} {
+				if err := os.Chmod(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			indexBytes, err := os.ReadFile(filepath.Join(layout, "index.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var index offlineIndex
+			if err := json.Unmarshal(indexBytes, &index); err != nil {
+				t.Fatal(err)
+			}
+			if len(index.Manifests) != 1 {
+				t.Fatalf("index descriptors: %+v", index.Manifests)
+			}
+			descriptor := index.Manifests[0]
+			blob, err := os.ReadFile(filepath.Join(layout, "blobs", "sha256", strings.TrimPrefix(digest, "sha256:")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if descriptor.Size != int64(len(blob)) || descriptor.Size != int64(len(raw)) ||
+				descriptor.Digest != testOfflineDigestOf(blob) || descriptor.MediaType != mediaType ||
+				!bytes.Equal(blob, raw) {
+				t.Fatalf("descriptor %+v does not bind the exact %d retained bytes", descriptor, len(raw))
+			}
+		})
 	}
 }
 
@@ -397,5 +477,171 @@ func TestShouldEmbedOfflineLayout_Matrix(t *testing.T) {
 				t.Fatalf("ShouldEmbedOfflineLayout = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func installerMediaJSON(t *testing.T, source, target string) []byte {
+	t.Helper()
+	body, err := WriteMediaInputJSON(source, "sha256:"+strings.Repeat("a", 64),
+		"", "", OfflineLayoutLivePath, target, "linux/amd64", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func TestWriteLiveMarkerFilesBindsFrontendRecipe(t *testing.T) {
+	const source = "ghcr.io/tuna-os/skipjack:gnome"
+	for _, composefs := range []bool{false, true} {
+		t.Run(fmt.Sprintf("composefs=%t", composefs), func(t *testing.T) {
+			root := &oci.Node{Type: oci.TypeDir, Children: map[string]*oci.Node{}}
+			store := &oci.MemStore{}
+			original := fmt.Sprintf(`{
+				"imgref":"ghcr.io/tuna-os/tunaos:latest",
+				"local_imgref":"containers-storage:ghcr.io/tuna-os/tunaos:latest",
+				"image":"stale-source",
+				"targetImgref":"stale-target",
+				"composeFsBackend":%t,
+				"bootloader":"grub2",
+				"filesystem":"xfs",
+				"imageType":"bootc",
+				"user":{"groups":["wheel"],"settings":{"keep":true}},
+				"futureCounter":9007199254740993
+			}`, composefs)
+			addFile(t, store, root, InstallerRecipeTreePath, original, 0o640, 17, 23)
+			before := *root.Lookup(InstallerRecipeTreePath)
+			media := installerMediaJSON(t, source, source)
+			if err := WriteLiveMarkerFiles(root, store, media); err != nil {
+				t.Fatal(err)
+			}
+			var got, want map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(original), &want); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(readNode(t, store, root, InstallerRecipeTreePath)), &got); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"imgref", "targetImgref"} {
+				var ref string
+				if err := json.Unmarshal(got[key], &ref); err != nil || ref != source {
+					t.Fatalf("%s = %s, want %s", key, got[key], source)
+				}
+			}
+			if _, ok := got["local_imgref"]; ok {
+				t.Fatal("stale containers-storage override survived")
+			}
+			var image string
+			if err := json.Unmarshal(got["image"], &image); err != nil {
+				t.Fatal(err)
+			}
+			if composefs && image != source || !composefs && image != "" {
+				t.Fatalf("composefs=%t image=%q", composefs, image)
+			}
+			// Only source-binding keys may change. Compare compact JSON
+			// without decoding numbers through float64.
+			for key, value := range want {
+				switch key {
+				case "imgref", "targetImgref", "local_imgref", "image":
+					continue
+				}
+				var a, b bytes.Buffer
+				if err := json.Compact(&a, value); err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Compact(&b, got[key]); err != nil {
+					t.Fatal(err)
+				}
+				if a.String() != b.String() {
+					t.Fatalf("unrelated field %s changed: %s -> %s", key, value, got[key])
+				}
+			}
+			after := root.Lookup(InstallerRecipeTreePath)
+			if after.Mode != before.Mode || after.UID != before.UID || after.GID != before.GID {
+				t.Fatal("recipe metadata changed")
+			}
+			if got := readNode(t, store, root, MediaInputTreePath); got != string(media) {
+				t.Fatal("final MediaInput differs from the descriptor used for recipe binding")
+			}
+			if root.Lookup(LiveISOModeTreePath) == nil {
+				t.Fatal("missing live-mode signal")
+			}
+		})
+	}
+}
+
+func TestWriteLiveMarkerFilesDistinctSourceAndTarget(t *testing.T) {
+	root := &oci.Node{Type: oci.TypeDir, Children: map[string]*oci.Node{}}
+	store := &oci.MemStore{}
+	addFile(t, store, root, InstallerRecipeTreePath, `{"composeFsBackend":true}`, 0o644, 0, 0)
+	const source = "ghcr.io/example/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const target = "ghcr.io/example/image:stable"
+	if err := WriteLiveMarkerFiles(root, store, installerMediaJSON(t, source, target)); err != nil {
+		t.Fatal(err)
+	}
+	var recipe map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(readNode(t, store, root, InstallerRecipeTreePath)), &recipe); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"imgref": target, "targetImgref": target, "image": source, "local_imgref": source,
+	} {
+		var got string
+		if err := json.Unmarshal(recipe[key], &got); err != nil || got != want {
+			t.Fatalf("%s=%q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestWriteLiveMarkerFilesWithoutFrontendRecipe(t *testing.T) {
+	root := &oci.Node{Type: oci.TypeDir, Children: map[string]*oci.Node{}}
+	store := &oci.MemStore{}
+	if err := WriteLiveMarkerFiles(root, store, installerMediaJSON(t, "example/image:stable", "example/image:stable")); err != nil {
+		t.Fatal(err)
+	}
+	if root.Lookup(InstallerRecipeTreePath) != nil {
+		t.Fatal("finalization must not invent configuration for another frontend")
+	}
+}
+
+func TestWriteLiveMarkerFilesRefusesInvalidInputsWithoutMutation(t *testing.T) {
+	const original = `{"imgref":"stale","local_imgref":"containers-storage:stale","composeFsBackend":false}`
+	valid := installerMediaJSON(t, "example/image:stable", "example/image:stable")
+	for name, media := range map[string][]byte{
+		"missing":            nil,
+		"malformed":          []byte(`{`),
+		"null":               []byte(`null`),
+		"wrong schema":       bytes.Replace(valid, []byte(`"schemaVersion":1`), []byte(`"schemaVersion":2`), 1),
+		"wrong kind":         bytes.Replace(valid, []byte(`"kind":"tacklebox-live"`), []byte(`"kind":"other"`), 1),
+		"no expected digest": bytes.Replace(valid, []byte("sha256:"+strings.Repeat("a", 64)), []byte(""), 1),
+		"relative layout":    bytes.Replace(valid, []byte(OfflineLayoutLivePath), []byte("OCI"), 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := &oci.Node{Type: oci.TypeDir, Children: map[string]*oci.Node{}}
+			store := &oci.MemStore{}
+			addFile(t, store, root, InstallerRecipeTreePath, original, 0o644, 0, 0)
+			if err := WriteLiveMarkerFiles(root, store, media); err == nil {
+				t.Fatal("invalid MediaInput must refuse source binding")
+			}
+			if got := readNode(t, store, root, InstallerRecipeTreePath); got != original {
+				t.Fatal("invalid MediaInput changed the frontend recipe")
+			}
+			if root.Lookup(MediaInputTreePath) != nil || root.Lookup(LiveISOModeTreePath) != nil {
+				t.Fatal("invalid MediaInput published live source signals")
+			}
+		})
+	}
+	for _, original := range []string{`{`, `null`, `[]`, `{"composeFsBackend":"false"}`, `{"composeFsBackend":null}`, `{"imageType":42}`} {
+		root := &oci.Node{Type: oci.TypeDir, Children: map[string]*oci.Node{}}
+		store := &oci.MemStore{}
+		addFile(t, store, root, InstallerRecipeTreePath, original, 0o644, 0, 0)
+		if err := WriteLiveMarkerFiles(root, store, valid); err == nil {
+			t.Fatalf("invalid frontend recipe %s accepted", original)
+		}
+		if got := readNode(t, store, root, InstallerRecipeTreePath); got != original {
+			t.Fatal("invalid recipe replaced by defaults")
+		}
+		if root.Lookup(MediaInputTreePath) != nil || root.Lookup(LiveISOModeTreePath) != nil {
+			t.Fatal("invalid recipe published live source signals")
+		}
 	}
 }

@@ -44,7 +44,11 @@ func SetupBootloader(espMount string) error {
 	return nil
 }
 
-func WriteBLSEntry(espMount string, id string, title string, kernelPath string, initrdPath string, options string, isDefault bool) error {
+// WriteBLSEntry writes loader/entries/<id>.conf. devicetreePath, when
+// non-empty, adds a `devicetree` line: systemd-boot loads that DTB and
+// installs it for the kernel (the EFI configuration table), as the
+// installed system's ostree entries do. Empty leaves the entry as it was.
+func WriteBLSEntry(espMount string, id string, title string, kernelPath string, initrdPath string, devicetreePath string, options string, isDefault bool) error {
 	entryDir := filepath.Join(espMount, "loader", "entries")
 	if err := os.MkdirAll(entryDir, 0755); err != nil {
 		return err
@@ -58,8 +62,12 @@ func WriteBLSEntry(espMount string, id string, title string, kernelPath string, 
 	if isDefault {
 		sortPrefix = "00-tbox-"
 	}
-	content := fmt.Sprintf("title %s\nsort-key %s%s\nlinux %s\ninitrd %s\noptions %s\n",
-		title, sortPrefix, id, kernelPath, initrdPath, options)
+	devicetree := ""
+	if devicetreePath != "" {
+		devicetree = "devicetree " + devicetreePath + "\n"
+	}
+	content := fmt.Sprintf("title %s\nsort-key %s%s\nlinux %s\ninitrd %s\n%soptions %s\n",
+		title, sortPrefix, id, kernelPath, initrdPath, devicetree, options)
 
 	entryFile := filepath.Join(entryDir, id+".conf")
 	fmt.Printf(">>> Writing BLS entry: %s\n", entryFile)

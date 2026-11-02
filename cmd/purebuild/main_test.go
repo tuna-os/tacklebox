@@ -379,13 +379,13 @@ func buildSyntheticLayerTar(t *testing.T, files map[string]string) []byte {
 func startSyntheticRegistry(t *testing.T, repo, tag string, extraFiles map[string]string) (srv *httptest.Server, amd64Digest, arm64Digest, indexDigest, cfgDigest string) {
 	t.Helper()
 	baseFiles := map[string]string{
-		"etc/passwd":    "root:x:0:0:root:/root:/bin/bash\n",
-		"etc/shadow":    "root:*:20000:0:99999:7:::\n",
-		"etc/group":     "root:x:0:\n",
-		"etc/gshadow":   "root:!::\n",
-		"etc/os-release": "ID=fedora\nVERSION_ID=42\n",
-		"usr/lib/modules/6.12.0-tunaos/vmlinuz":       "SYNTH-KERNEL-IMAGE",
-		"usr/lib/modules/6.12.0-tunaos/initramfs.img": "SYNTH-INITRD-IMAGE",
+		"etc/passwd":                            "root:x:0:0:root:/root:/bin/bash\n",
+		"etc/shadow":                            "root:*:20000:0:99999:7:::\n",
+		"etc/group":                             "root:x:0:\n",
+		"etc/gshadow":                           "root:!::\n",
+		"etc/os-release":                        "ID=fedora\nVERSION_ID=42\n",
+		"usr/lib/modules/6.12.0-tunaos/vmlinuz": "SYNTH-KERNEL-IMAGE",
+		"usr/lib/modules/6.12.0-tunaos/initramfs.img":  "SYNTH-INITRD-IMAGE",
 		"usr/lib/systemd/boot/efi/systemd-bootx64.efi": "MZ-SYNTH-SDBOOT-EFI",
 	}
 	for k, v := range extraFiles {
@@ -890,6 +890,7 @@ func TestDdiFetcher_LocalArtifactAndPlaintextRefusal(t *testing.T) {
 		}
 	})
 }
+
 // TestOfflineMediaEmbed_LayoutAndMediaInput runs a tiny pinned curated
 // build end to end and asserts the old media shape grew exactly the two
 // offline additions: the verified OCI layout under /OCI in the ISO tree,

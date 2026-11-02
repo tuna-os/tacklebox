@@ -84,11 +84,14 @@ type Target interface {
 	// loop; the target just declares which one fits its layout.
 	InstallMode() InstallMode
 
-	// KernelPath / InitrdPath return the *boot-loader-relative* paths the
-	// BLS `linux` and `initrd` lines should reference for env. For
-	// BlockTarget these are `/EFI/<env>/vmlinuz` (the ESP root *is* the
-	// boot fs). For IsoTarget they're `/images/pxeboot/<env>/vmlinuz`
-	// (the conventional live-ISO location).
+	// KernelPath / InitrdPath / DevicetreePath return the
+	// *boot-loader-relative* paths the BLS `linux`, `initrd` and
+	// `devicetree` lines should reference for env, all in one directory.
+	// For BlockTarget these are `/EFI/<env>/vmlinuz` (the ESP root *is*
+	// the boot fs). For IsoTarget they're `/images/pxeboot/<env>/vmlinuz`
+	// (the conventional live-ISO location). DevicetreePath is only
+	// referenced when the env's image ships a device tree.
 	KernelPath(envID string) string
 	InitrdPath(envID string) string
+	DevicetreePath(envID string) string
 }

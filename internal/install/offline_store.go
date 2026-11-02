@@ -80,17 +80,17 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 	}
 	defer os.RemoveAll(storeRunRoot)
 
-	// Must be world-writable: tacklebox runs as root (sudo) so os.MkdirAll
-	// creates root-owned dirs, but the SUDO_USER running inside podman unshare
-	// needs write access. os.Chmod bypasses the process umask.
+	// Only the selected Podman user may traverse or modify these roots.
 	for _, d := range []string{storeRoot, storeRunRoot} {
-		if err := ClearEnvDir(d); err != nil {
-			return fmt.Errorf("clear %s: %w", d, err)
+		if d == storeRoot {
+			if err := ClearEnvDir(d); err != nil {
+				return fmt.Errorf("clear %s: %w", d, err)
+			}
 		}
-		if err := os.MkdirAll(d, 0777); err != nil {
+		if err := os.MkdirAll(d, 0700); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
 		}
-		if err := os.Chmod(d, 0777); err != nil {
+		if err := privateBuildDir(d); err != nil {
 			return fmt.Errorf("chmod %s: %w", d, err)
 		}
 	}
@@ -139,16 +139,11 @@ func BuildOfflineStorePayloads(payloads []OfflinePayload, stagingRoot, dstSquash
 	level, block := squashParams(compression)
 
 	// User-writable temp file; sudo-move to final dest after squashfs completes.
-	tmpF, err := os.CreateTemp("", "tbox-store-*.squashfs")
+	tmpPath, err := tempSquashFile()
 	if err != nil {
-		return fmt.Errorf("create temp squashfs: %w", err)
+		return err
 	}
-	tmpF.Close()
-	tmpPath := tmpF.Name()
-	defer os.Remove(tmpPath)
-	if err := os.Chmod(tmpPath, 0666); err != nil {
-		return fmt.Errorf("chmod temp squashfs: %w", err)
-	}
+	defer os.RemoveAll(filepath.Dir(filepath.Dir(tmpPath)))
 
 	// mksquashfs inside podman unshare for correct UID mappings.
 	sqScript := fmt.Sprintf("%s %s %s -noappend %s -b %s -processors 4",
@@ -197,13 +192,15 @@ func BuildVFSStorePayloads(payloads []OfflinePayload, stagingRoot string) (strin
 	defer os.RemoveAll(vfsRunRoot)
 
 	for _, d := range []string{vfsRoot, vfsRunRoot} {
-		if err := ClearEnvDir(d); err != nil {
-			return "", fmt.Errorf("clear %s: %w", d, err)
+		if d == vfsRoot {
+			if err := ClearEnvDir(d); err != nil {
+				return "", fmt.Errorf("clear %s: %w", d, err)
+			}
 		}
-		if err := os.MkdirAll(d, 0777); err != nil {
+		if err := os.MkdirAll(d, 0700); err != nil {
 			return "", fmt.Errorf("mkdir %s: %w", d, err)
 		}
-		if err := os.Chmod(d, 0777); err != nil {
+		if err := privateBuildDir(d); err != nil {
 			return "", fmt.Errorf("chmod %s: %w", d, err)
 		}
 	}
