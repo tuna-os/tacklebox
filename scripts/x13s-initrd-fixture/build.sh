@@ -349,25 +349,25 @@ def signed_rpm(text, code):
         r"[ \t]*Header OpenPGP V4 RSA/SHA256 signature, key fingerprint: "
         r"([0-9a-fA-F]{40}): OK[ \t]*", signatures[0])
     if modern:
-        return modern[1].upper() == PINS["fedora44_fingerprint"]
+        return modern[1].upper() == PINS["fedora45_fingerprint"]
     legacy = re.fullmatch(
         r"[ \t]*Header V[34] RSA/SHA256 Signature, key ID "
         r"([0-9a-fA-F]{40}|[0-9a-fA-F]{16}|[0-9a-fA-F]{8}): OK[ \t]*", signatures[0])
-    return bool(legacy) and PINS["fedora44_fingerprint"].endswith(legacy[1].upper())
+    return bool(legacy) and PINS["fedora45_fingerprint"].endswith(legacy[1].upper())
 
 
 def validate_rpm_keyring(db, phase, observations):
     # These settings and the full-fingerprint listing were observed on the
-    # actual Fedora6.0.2 builder. Unknown native profiles require review.
+    # actual Fedora45 (RPM 6.1.0) builder. Unknown native profiles require review.
     if phase not in ("before-import", "after-import"):
         fail("unknown RPM keyring validation phase")
     if any(observations[name][0] != 0 for name in ("version", "keyring-macros", "key-list")):
         fail("RPM keyring inspection failed")
-    if observations["version"][1].splitlines() != ["RPM version 6.0.2"]:
+    if observations["version"][1].splitlines() != ["RPM version 6.1.0"]:
         fail("unreviewed native RPM version")
     required_macros = {
         "_dbpath": str(db), "_keyring": "rpmdb", "_keyringpath": str(db) + "/pubkeys/",
-        "_pkgverify_level": "digest", "_pkgverify_flags": "0x20100",
+        "_pkgverify_level": "all", "_pkgverify_flags": "0x20100",
     }
     lines = observations["keyring-macros"][1].splitlines()
     if len(lines) != len(required_macros) or set(lines) != {
@@ -378,10 +378,10 @@ def validate_rpm_keyring(db, phase, observations):
         if keys:
             fail("RPM verification keyring is not initially empty")
     else:
-        approved = (PINS["fedora44_fingerprint"].lower()
-                    + " Fedora (44) <fedora-44-primary@fedoraproject.org> public key")
+        approved = (PINS["fedora45_fingerprint"].lower()
+                    + " Fedora (45) <fedora-45-primary@fedoraproject.org> public key")
         if keys != [approved]:
-            fail("RPM verification keyring is not exactly the approved Fedora44 key")
+            fail("RPM verification keyring is not exactly the approved Fedora45 key")
 
 
 def rpm_keyring_diagnostics(db, evidence, phase):
@@ -416,7 +416,7 @@ def signature_failure(name, code, text, context):
     tail = text.encode("utf-8")[-8192:].decode("utf-8", errors="replace")
     details = context.encode("utf-8")[-4096:].decode("utf-8", errors="replace")
     fail(f"approved signature missing: {name}; rpmkeys exit={code}\n"
-         f"approved fingerprint={PINS['fedora44_fingerprint']}\n"
+         f"approved fingerprint={PINS['fedora45_fingerprint']}\n"
          f"BEGIN RPM DIAGNOSTICS\n{details}\n"
          f"BEGIN RPMKEYS RECEIPT (last 8192 bytes)\n{tail}\nEND RPM DIAGNOSTICS")
 
@@ -467,12 +467,12 @@ def internal_install():
     repodata = capture_repodata(evidence, "bootstrap")
     home = HERE / "gnupg"
     home.mkdir(mode=0o700)
-    key = Path(PINS["fedora44_key"])
+    key = Path(PINS["fedora45_key"])
     _, shown = run(["gpg", "--homedir", home, "--batch", "--with-colons", "--show-keys", key])
     fingerprints = [x.split(":")[9] for x in shown.splitlines() if x.startswith("fpr:")]
-    if fingerprints != [PINS["fedora44_fingerprint"]]:
-        fail(f"unexpected Fedora44 key fingerprints: {fingerprints}")
-    (evidence / "fedora44-key.txt").write_text(shown)
+    if fingerprints != [PINS["fedora45_fingerprint"]]:
+        fail(f"unexpected Fedora45 key fingerprints: {fingerprints}")
+    (evidence / "fedora45-key.txt").write_text(shown)
     db = HERE / "rpmkeys"
     db.mkdir()
     before_keys = rpm_keyring_diagnostics(db, evidence, "before-import")
@@ -508,7 +508,7 @@ def internal_install():
     unsigned.unlink()
     # No kernel-install/dracut scriptlets run against the build host's kernel.
     # This is a package-content fixture, not a fully configured distribution image.
-    log_run(["dnf", "-y", "--releasever=44", "--setopt=reposdir=/fixture/repos.d",
+    log_run(["dnf", "-y", "--releasever=45", "--setopt=reposdir=/fixture/repos.d",
              "--setopt=keepcache=True", "--setopt=install_weak_deps=False",
              "--setopt=tsflags=noscripts", "--setopt=localpkg_gpgcheck=True",
              "--setopt=timeout=30", "--setopt=retries=2", "--setopt=max_parallel_downloads=2",

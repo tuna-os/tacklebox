@@ -101,7 +101,7 @@ dfatal(){ echo "$*" >&2; }
 instmods(){ [[ "$*" == '-c qcom_q6v5_pas' ]]; }
 module_install(){ install; }
 module_installkernel(){ installkernel; }
-source testdata/x13s/dracut108-install-control-flow.sh`
+source testdata/x13s/dracut111-install-control-flow.sh`
 			fail := "0"
 			if tc.copyFail {
 				fail = "1"
@@ -133,7 +133,7 @@ derror(){ :; }
 dfatal(){ :; }
 module_install(){ install; }
 module_installkernel(){ installkernel; }
-source testdata/x13s/dracut108-install-control-flow.sh`
+source testdata/x13s/dracut111-install-control-flow.sh`
 	cmd := exec.Command("bash", "-c", script)
 	cmd.Env = append(os.Environ(), "initdir="+init, "dracutsysrootdir="+root)
 	if out, err := cmd.CombinedOutput(); err == nil {
@@ -148,7 +148,7 @@ initdir=/unused-test-path
 module_install(){ install; }
 module_installkernel(){ installkernel; }
 dfatal(){ :; }
-source testdata/x13s/dracut108-install-control-flow.sh`
+source testdata/x13s/dracut111-install-control-flow.sh`
 	if err := exec.Command("bash", "-c", script).Run(); err == nil {
 		t.Fatal("no-kernel mode bypassed mandatory profile inputs")
 	}

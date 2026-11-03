@@ -1,5 +1,5 @@
 # Native ARM64 CI fixture only. This is not a production bootc image.
-FROM registry.fedoraproject.org/fedora@sha256:db1539298ea4e8e7a96f1ce1f82195bff05d66bef015db79dda9954245253b24
+FROM registry.fedoraproject.org/fedora@sha256:6dae311a7b73b4d09dcce5fbe0167e088cef75c0639230583482cd433b1dd492
 
 COPY build.sh pins.json /fixture/
 
@@ -9,20 +9,20 @@ COPY build.sh pins.json /fixture/
 RUN mkdir -p /fixture/repos.d /fixture/evidence /fixture/bootstrap-repodata && \
     printf '%s\n' \
       '[fedora]' \
-      'name=Fedora44 official release' \
-      'baseurl=https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Everything/aarch64/os/' \
+      'name=Fedora45 official release' \
+      'baseurl=https://dl.fedoraproject.org/pub/fedora/linux/releases/45/Everything/aarch64/os/' \
       'enabled=1' 'gpgcheck=1' 'sslverify=1' \
-      'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-44-primary' \
+      'gpgkey=file:///usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-45-primary' \
       '[updates]' \
-      'name=Fedora44 official updates' \
-      'baseurl=https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/' \
+      'name=Fedora45 official updates' \
+      'baseurl=https://dl.fedoraproject.org/pub/fedora/linux/updates/45/Everything/aarch64/' \
       'enabled=1' 'gpgcheck=1' 'sslverify=1' \
-      'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-44-primary' \
+      'gpgkey=file:///usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-45-primary' \
       > /fixture/repos.d/fedora.repo && \
     rpm -qa --qf '%{NAME}\t%{EPOCHNUM}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{SOURCERPM}\n' \
       | sort > /fixture/evidence/base-installed.tsv && \
     ulimit -f 2097152 && \
-    (dnf -y --releasever=44 --setopt=reposdir=/fixture/repos.d \
+    (dnf -y --releasever=45 --setopt=reposdir=/fixture/repos.d \
       --setopt=keepcache=True --setopt=install_weak_deps=False \
       --setopt=timeout=30 --setopt=retries=2 --setopt=max_parallel_downloads=2 \
       install python3 gnupg2 curl rpm-sign kmod xz zstd findutils util-linux \
