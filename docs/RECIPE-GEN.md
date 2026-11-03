@@ -155,4 +155,4 @@ object maps a builder-side image to its canonical name in the embedded store.
 See [offline installs](USER-GUIDE.md#5-offline-installs-offline_payloads).
 For selected-image identity, storage ownership, and the remaining runtime
 verification for deduplicated media, see the
-[multi-image installer handoff evaluation](offline-multi-image-handoff.md).
+[evaluation of the installer handoff for multiple images](offline-multi-image-handoff.md).
