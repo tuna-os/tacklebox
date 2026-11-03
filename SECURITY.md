@@ -38,26 +38,26 @@ Tacklebox:
 ### Live media
 
 Generated live ISOs request **SELinux permissive mode** (`enforcing=0`) for
-the entire live session, even when their source image normally enforces
-SELinux. On SELinux-enabled images, policy denials are not enforced. This
+the entire live session, even if the source image uses SELinux to enforce
+access rules. On SELinux-enabled images, SELinux does not block access. This
 applies to every live ISO layout and the CLI, native pure-Go, browser and
 DDI builders. It does not describe the SELinux mode of an installed system;
 verify that system's policy and mode independently.
 
-Live assembly does not reliably retain the SELinux labels required for an
-enforcing boot. Simply removing `enforcing=0` can make unlabeled live roots
-unbootable. See [the architecture notes](ARCHITECTURE.md#live-media-security-limitations)
-for the build constraints and the separate DDI dm-verity downgrade.
+Live assembly does not reliably retain the SELinux labels that a boot with
+SELinux enforcement needs. If you remove `enforcing=0`, unlabeled live
+roots can fail to boot. See [the architecture notes](ARCHITECTURE.md#live-media-security-limitations)
+for the build constraints and the separate downgrade of dm-verity in DDI media.
 
 The live installer can run with elevated privileges, passwordless autologin
-and screen locking disabled. SELinux MAC enforcement does not limit code
-running in that session. Use trusted images, recipes and customization
+and the screen lock disabled. SELinux MAC enforcement does not limit code
+that runs in that session. Use trusted images, recipes and customization
 scripts; use the live session in a trusted environment and protect access to
 target disks and the network. Unix permissions and other security mechanisms
 still apply.
 
-Each generated ISO includes `/RELEASE-NOTES.txt` describing this limitation.
-Include it in downstream ISO release announcements as well. Enforcement
+Each generated ISO includes `/RELEASE-NOTES.txt` with this limitation.
+Include it in release announcements for downstream ISOs as well. Enforcement
 restoration remains tracked in [#281](https://github.com/tuna-os/tacklebox/issues/281).
 
 ## Supply Chain Security
