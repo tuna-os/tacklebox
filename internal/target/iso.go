@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/tuna-os/tacklebox/internal/install"
+	"github.com/tuna-os/tacklebox/internal/livemedia"
 	"github.com/tuna-os/tacklebox/internal/runner"
 )
 
@@ -128,6 +129,10 @@ func (i *IsoTarget) Prepare(_ Track) (*Mountpoints, error) {
 		if err := os.MkdirAll(d, 0755); err != nil {
 			return nil, fmt.Errorf("mkdir %s: %w", d, err)
 		}
+	}
+
+	if err := os.WriteFile(filepath.Join(i.isoRoot, livemedia.ReleaseNotesName), []byte(livemedia.ReleaseNotes), 0o644); err != nil {
+		return nil, fmt.Errorf("write live release notes: %w", err)
 	}
 
 	// loader.conf — same shape as BlockTarget's, but written here directly

@@ -35,6 +35,31 @@ Tacklebox:
 - Uses BuildKit secret mounts, never environment variables, for sensitive data
 - Operates on user-provided images from trusted registries
 
+### Live media
+
+Generated live ISOs request **SELinux permissive mode** (`enforcing=0`) for
+the entire live session, even when their source image normally enforces
+SELinux. On SELinux-enabled images, policy denials are not enforced. This
+applies to every live ISO layout and the CLI, native pure-Go, browser and
+DDI builders. It does not describe the SELinux mode of an installed system;
+verify that system's policy and mode independently.
+
+Live assembly does not reliably retain the SELinux labels required for an
+enforcing boot. Simply removing `enforcing=0` can make unlabeled live roots
+unbootable. See [the architecture notes](ARCHITECTURE.md#live-media-security-limitations)
+for the build constraints and the separate DDI dm-verity downgrade.
+
+The live installer can run with elevated privileges, passwordless autologin
+and screen locking disabled. SELinux MAC enforcement does not limit code
+running in that session. Use trusted images, recipes and customization
+scripts; use the live session in a trusted environment and protect access to
+target disks and the network. Unix permissions and other security mechanisms
+still apply.
+
+Each generated ISO includes `/RELEASE-NOTES.txt` describing this limitation.
+Include it in downstream ISO release announcements as well. Enforcement
+restoration remains tracked in [#281](https://github.com/tuna-os/tacklebox/issues/281).
+
 ## Supply Chain Security
 
 - Commit SHAs fix the versions of GitHub Actions.

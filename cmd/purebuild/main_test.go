@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/tacklebox/internal/livemedia"
 	"github.com/tuna-os/tacklebox/internal/oci"
 	"github.com/tuna-os/tacklebox/internal/purefs"
 	"github.com/tuna-os/tacklebox/internal/runner"
@@ -126,6 +127,10 @@ func TestAssembleWithXorriso_ArgsAndStaging(t *testing.T) {
 	oldRunFn := runner.RunFn
 	runner.RunFn = func(_ io.Reader, name string, args ...string) error {
 		gotName, gotArgs = name, args
+		notice, err := os.ReadFile(filepath.Join(isoRoot, livemedia.ReleaseNotesName))
+		if err != nil || string(notice) != livemedia.ReleaseNotes {
+			t.Errorf("xorriso staging is missing live security release notes: %v", err)
+		}
 		// assembleWithXorriso removes isoRoot after this call returns, so
 		// staging must be verified from inside the mock — this is the one
 		// moment iso-root exists with xorriso "invoked" against it.
@@ -558,6 +563,9 @@ func TestBuildRequestV1_RoundTripAndNativeExecution(t *testing.T) {
 		t.Fatalf("SinkWriter Written = %d, buffer len = %d", sw.Written, isoBuf.Len())
 	}
 	isoBytes := isoBuf.Bytes()
+	if !bytes.Contains(isoBytes, []byte(livemedia.ReleaseNotes)) {
+		t.Error("authored ISO is missing live security release notes")
+	}
 	if !bytes.Contains(isoBytes, []byte("CD001")) {
 		t.Error("authored ISO is missing ISO9660 CD001 primary volume descriptor")
 	}
@@ -946,6 +954,9 @@ func TestOfflineMediaEmbed_LayoutAndMediaInput(t *testing.T) {
 		t.Fatalf("runPureBuildWithRequest: %v", err)
 	}
 	isoBytes := isoBuf.Bytes()
+	if !bytes.Contains(isoBytes, []byte(livemedia.ReleaseNotes)) {
+		t.Error("authored ISO is missing live security release notes")
+	}
 	// Embedded OCI layout: static oci-layout file, synthesized index
 	// naming the verified platform manifest, and the manifest blob
 	// itself under blobs/sha256/.

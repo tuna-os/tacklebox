@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tuna-os/tacklebox/internal/livemedia"
 	"github.com/tuna-os/tacklebox/internal/runner"
 )
 
@@ -120,6 +121,11 @@ func TestIsoTarget_Prepare_CreatesDirectories(t *testing.T) {
 	// isoRoot (parent of StoreMount) must have the subdirectory structure
 	// that callers depend on (EFI boot + pxeboot staging).
 	isoRoot := filepath.Dir(mps.StoreMount)
+	notice, err := os.ReadFile(filepath.Join(isoRoot, livemedia.ReleaseNotesName))
+	if err != nil || string(notice) != livemedia.ReleaseNotes {
+		t.Fatalf("ISO staging is missing live security release notes: %v", err)
+	}
+
 	isoSubdirs := []string{"EFI/BOOT", "images/pxeboot"}
 	for _, d := range isoSubdirs {
 		p := filepath.Join(isoRoot, d)
