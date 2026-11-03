@@ -3,9 +3,10 @@
 # shellcheck disable=SC2154
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright 2005-2013 Red Hat, Inc. All rights reserved.
-# License text: dracut108-install-control-flow.sh.LICENSE
-# Exact control flow from Fedora dracut108-8.fc44 /usr/bin/dracut lines2075-2089.
-# RPM SHA256 d503e00739a79e6b326804183da66a7e62ae3cd5663b93777e2b75374bd6219b
+# License text: dracut111-install-control-flow.sh.LICENSE
+# Exact control flow from Fedora dracut111-4.fc45 /usr/bin/dracut lines2720-2733.
+# RPM SHA256 186687a21646d13802203e529500c2c477032fb564e5afcfe4f41bdff3a82eaa
+# (byte-identical dispatch to the dracut108-8.fc44 excerpt it replaces).
 # Only module callbacks are supplied by the test; no installed dracut is run.
     if [[ $kernel_only == yes ]]; then
         module_installkernel "$_d_mod" "$moddir" || {

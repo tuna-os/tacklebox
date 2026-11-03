@@ -30,7 +30,7 @@ import (
 	"unicode/utf8"
 )
 
-const fixtureRelease = "7.2.11-200.fc44.aarch64"
+const fixtureRelease = "7.2.15-300.fc45.aarch64"
 
 type fixtureFile struct {
 	Name        string `json:"name,omitempty"`
@@ -526,8 +526,10 @@ func fixtureMatchArchive(i *InitrdInventory, p fixtureFile) error {
 }
 
 func fixtureVerifySources(dir string, e fixtureExpected, i *InitrdInventory) error {
-	if e.Kernel.Size != 17365352 || e.Kernel.SHA256 != "f838299696f91f0400de9e6b796d3d862f8e9eb2899101a913314150ce9550d6" ||
-		e.KernelConfig.Size != 347141 || e.KernelConfig.SHA256 != "a51ef35e4ec68f0d066eb90550d9dae3c9ea7b93c91709653d86ba0778a95de6" {
+	// Reviewed pair from kernel-core-7.2.15-300.fc45.aarch64 (updates tree);
+	// was the 7.2.11-200.fc44 pair (17365352/f8382996…, 347141/a51ef35e…).
+	if e.Kernel.Size != 17377640 || e.Kernel.SHA256 != "ba089fcca6fa89a3c47ff96212c5c6c2ad495ac8bf0d44444b8ce20a23d9e060" ||
+		e.KernelConfig.Size != 347136 || e.KernelConfig.SHA256 != "b23c33575d1290e16c0a305b3af154c9decad988e6072724d95dfcb7ca4edb8a" {
 		return fmt.Errorf("source kernel/config differs from reviewed Fedora pair")
 	}
 	if _, err := fixtureReadPin(dir, e.Kernel, 32<<20); err != nil {
@@ -1780,7 +1782,9 @@ func TestFixtureSourceClosureObservedKmodReceipt(t *testing.T) {
 		e.Modprobe.Lines = append(e.Modprobe.Lines, "insmod //lib/modules/"+fixtureRelease+"/kernel/"+name+" ")
 	}
 	raw := strings.Join(e.Modprobe.Lines, "\n") + "\n"
-	if len(raw) != 1133 || fixtureDigest([]byte(raw)) != "e56e9e4cf4df8e5861899deeea0b0feacf12dddfa202dd1614ce053cc97df8ba" {
+	// Digest of the same 13-line shape under the current fixtureRelease
+	// (F44 golden e56e9e4c… verified reproducible before rotation).
+	if len(raw) != 1133 || fixtureDigest([]byte(raw)) != "9aa6d2f9d5b609d3ace21258685429fc810cb401a2df93230a56171cb6839100" {
 		t.Fatal("observed source-modprobe.txt regression bytes changed")
 	}
 	if err := fixtureSourceClosure(e); err != nil {

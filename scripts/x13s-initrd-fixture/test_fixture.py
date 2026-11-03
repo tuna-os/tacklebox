@@ -32,32 +32,34 @@ NAMESPACE = {}
 with mock.patch.dict(os.environ, {"TBOX_FIXTURE_SCRIPT_DIR": str(DIRECTORY)}):
     exec(CODE, NAMESPACE)
 
-# Exact rpmkeys stdout from run 39377874335, job 118480012249 (RPM6.0.2).
+# rpmkeys stdout in the shape of run 39377874335, job 118480012249 (RPM6);
+# values rotated to the current pins (was: dracut-108-8.fc44, F44 key).
 RPM6_RECEIPT = (
-    "/fixture/rpms/dracut-108-8.fc44.aarch64.rpm:\n"
+    "/fixture/rpms/dracut-111-4.fc45.aarch64.rpm:\n"
     "    Header OpenPGP V4 RSA/SHA256 signature, key fingerprint: "
-    "36f612dcf27f7d1a48a835e4dbfcf71c6d9f90a6: OK\n"
+    "4f50a6114cd5c6976a7f1179655a4b02f577861e: OK\n"
     "    Header SHA256 digest: OK\n"
     "    Payload SHA256 digest: OK\n"
 )
-# Retained 3494 native Ubuntu RPM4 receipt; this compatibility grammar remains.
+# Retained 3494 native Ubuntu RPM4 receipt shape; this compatibility grammar remains.
+# Key ID rotated to the current pins (was F44 6d9f90a6).
 RPM4_RECEIPT = (
     "/home/runner/work/_temp/x13s-handoff/kernel-uki-dtbloader.rpm:\n"
-    "    Header V4 RSA/SHA256 Signature, key ID 6d9f90a6: OK\n"
+    "    Header V4 RSA/SHA256 Signature, key ID f577861e: OK\n"
     "    Header SHA256 digest: OK\n"
     "    Header SHA1 digest: OK\n"
     "    Payload SHA256 digest: OK\n"
     "    MD5 digest: OK\n"
 )
 APPROVED_KEY_ROW = (
-    "36f612dcf27f7d1a48a835e4dbfcf71c6d9f90a6 "
-    "Fedora (44) <fedora-44-primary@fedoraproject.org> public key\n"
+    "4f50a6114cd5c6976a7f1179655a4b02f577861e "
+    "Fedora (45) <fedora-45-primary@fedoraproject.org> public key\n"
 )
-# Extracted from verified dracut-108-8.fc44 /usr/bin/dracut, lines 2484/2609.
-# File SHA256: 9399a7041414a13b213ca55b8ef4d943b8dafb2f7b5545997fbf443d5177d660.
-# The normal archive uses line 2609; line 2512 is the disabled early-cpio path.
-FEDORA108_OWNER_DEFAULT = '[[ $EUID != 0 ]] && cpio_owner="0:0"'
-FEDORA108_CPIO_COMMAND = (
+# Extracted from verified dracut-111-4.fc45 /usr/bin/dracut, lines 3134/3335.
+# File SHA256: b61c57f066820c776c375ccea90babd5a5010e046be012257da160b0fca8684d.
+# The normal archive uses line 3335; line 3178 is the disabled early-cpio path.
+FEDORA111_OWNER_DEFAULT = '[[ $EUID != 0 ]] && cpio_owner="0:0"'
+FEDORA111_CPIO_COMMAND = (
     'cpio -o ${CPIO_REPRODUCIBLE:+--reproducible} --null '
     '${cpio_owner:+-R "$cpio_owner"} -H newc --quiet'
 )
@@ -65,9 +67,9 @@ FEDORA108_CPIO_COMMAND = (
 
 def keyring_observations(db, keys=""):
     return {
-        "version": (0, "RPM version 6.0.2\n"),
+        "version": (0, "RPM version 6.1.0\n"),
         "keyring-macros": (0, f"_dbpath={db}\n_keyring=rpmdb\n_keyringpath={db}/pubkeys/\n"
-                          "_pkgverify_level=digest\n_pkgverify_flags=0x20100\n"),
+                          "_pkgverify_level=all\n_pkgverify_flags=0x20100\n"),
         "key-list": (0, keys),
     }
 
@@ -108,7 +110,7 @@ def run8_dependency_metadata():
     # Evidence ZIP SHA256 a98a6eae56f551ed2bb691a40a2e0ecd8bc183839a2157d28daefbcaa01e61c2.
     records = [
         ('source', 'modules.softdep',
-         'source/usr/lib/modules/7.2.11-200.fc44.aarch64/modules.softdep',
+         'source/usr/lib/modules/7.2.15-300.fc45.aarch64/modules.softdep',
          951, '40ecf69225c99e9980bf34b815215c94d2c97459e1d72fc7861c1b5400f76027',
          (
              b'# Soft dependencies extracted from modules themselves.\n'
@@ -141,13 +143,13 @@ def run8_dependency_metadata():
              b'softdep xt_TRACE pre: nf_log_syslog\n'
          )),
         ('source', 'modules.weakdep',
-         'source/usr/lib/modules/7.2.11-200.fc44.aarch64/modules.weakdep',
+         'source/usr/lib/modules/7.2.15-300.fc45.aarch64/modules.weakdep',
          55, 'a1fffe1059d8150b5d402b3f284f507025a8d4b5881810cb17b3fda8b8ab9304',
          (
              b'# Weak dependencies extracted from modules themselves.\n'
          )),
         ('emitted', 'modules.softdep',
-         'lib/modules/7.2.11-200.fc44.aarch64/modules.softdep',
+         'lib/modules/7.2.15-300.fc45.aarch64/modules.softdep',
          656, '89ecc83d1d672cc9ec5d090a10237b2944651d01ab49888f5e6ba3cfc1903918',
          (
              b'# Soft dependencies extracted from modules themselves.\n'
@@ -172,7 +174,7 @@ def run8_dependency_metadata():
              b'softdep qat_420xx pre: crypto-intel_qat\n'
          )),
         ('emitted', 'modules.weakdep',
-         'lib/modules/7.2.11-200.fc44.aarch64/modules.weakdep',
+         'lib/modules/7.2.15-300.fc45.aarch64/modules.weakdep',
          55, 'a1fffe1059d8150b5d402b3f284f507025a8d4b5881810cb17b3fda8b8ab9304',
          (
              b'# Weak dependencies extracted from modules themselves.\n'
@@ -220,38 +222,40 @@ class FixtureProducerTests(unittest.TestCase):
         self.assertEqual(pins["architecture"], "aarch64")
         self.assertEqual(pins["base_image"],
                          "registry.fedoraproject.org/fedora@sha256:"
-                         "db1539298ea4e8e7a96f1ce1f82195bff05d66bef015db79dda9954245253b24")
+                         "6dae311a7b73b4d09dcce5fbe0167e088cef75c0639230583482cd433b1dd492")
         self.assertEqual(pins["base_index_digest"],
-                         "sha256:99741a26ce7d4ee2746a564552210f267a458c527cc09ea7dd103ecbe62b0d5a")
-        self.assertEqual(pins["kernel_release"], "7.2.11-200.fc44.aarch64")
-        self.assertEqual(pins["source_date_epoch"], 1792078574)
-        self.assertEqual(pins["fedora44_fingerprint"],
-                         "36F612DCF27F7D1A48A835E4DBFCF71C6D9F90A6")
+                         "sha256:c15d8d6067038f1d6b10d8e1b8440f787a474fe6dc641ef77a5c74b1bf01a05d")
+        self.assertEqual(pins["kernel_release"], "7.2.15-300.fc45.aarch64")
+        self.assertEqual(pins["source_date_epoch"], 1793548039)
+        self.assertEqual(pins["fedora45_fingerprint"],
+                         "4F50A6114CD5C6976A7F1179655A4B02F577861E")
         self.assertEqual(pins["max_initrd_bytes"], 1 << 30)
         self.assertFalse(pins["transitive_dependencies_pinned"])
         self.assertIn("FROM " + pins["base_image"] + "\n",
                       (DIRECTORY / "Containerfile").read_text())
         self.assertEqual([p["name"] for p in pins["packages"]],
                          ["dracut", "kernel-core", "kernel-modules-core", "qcom-firmware"])
-        self.assertEqual(sum(p["size"] for p in pins["packages"]), 250824456)
+        self.assertEqual(sum(p["size"] for p in pins["packages"]), 259798878)
         for pin in pins["packages"]:
             self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
-            self.assertTrue(pin["url"].startswith(
-                "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/"))
+            self.assertTrue(pin["url"].startswith((
+                "https://dl.fedoraproject.org/pub/fedora/linux/releases/45/Everything/aarch64/",
+                "https://dl.fedoraproject.org/pub/fedora/linux/updates/45/Everything/aarch64/",
+            )))
             self.assertTrue(pin["url"].endswith(
                 f"/{pin['name']}-{pin['version']}-{pin['release']}.{pin['arch']}.rpm"))
 
     def test_signature_requires_approved_explicit_header(self):
-        good = ("    Header V4 RSA/SHA256 Signature, key ID 6d9f90a6: OK\n"
+        good = ("    Header V4 RSA/SHA256 Signature, key ID f577861e: OK\n"
                 "    Payload SHA256 digest: OK\n")
         check = NAMESPACE["signed_rpm"]
         self.assertTrue(check(good, 0))
-        self.assertTrue(check(good.replace("6d9f90a6",
-            "36F612DCF27F7D1A48A835E4DBFCF71C6D9F90A6"), 0))
+        self.assertTrue(check(good.replace("f577861e",
+            "4F50A6114CD5C6976A7F1179655A4B02F577861E"), 0))
         for text, code in [
             ("Payload SHA256 digest: OK\n", 0),  # rpmkeys may exit zero unsigned.
             (good, 1),
-            (good.replace("6d9f90a6", "12345678"), 0),
+            (good.replace("f577861e", "12345678"), 0),
             (good + "NOKEY", 0),
             (good + "NOT OK", 0),
             (good.replace("Header V4", "Header V5"), 0),
@@ -264,7 +268,7 @@ class FixtureProducerTests(unittest.TestCase):
         check = NAMESPACE["signed_rpm"]
         self.assertTrue(check(RPM6_RECEIPT, 0))
         self.assertTrue(check(RPM4_RECEIPT, 0))
-        fingerprint = NAMESPACE["PINS"]["fedora44_fingerprint"].lower()
+        fingerprint = NAMESPACE["PINS"]["fedora45_fingerprint"].lower()
         for receipt in (RPM4_RECEIPT, RPM6_RECEIPT):
             self.assertFalse(check(receipt, 1))
             signature = next(line for line in receipt.splitlines() if "signature" in line.lower())
@@ -291,15 +295,15 @@ class FixtureProducerTests(unittest.TestCase):
             RPM6_RECEIPT.replace(fingerprint, fingerprint[-16:]),
             RPM6_RECEIPT.replace(fingerprint, fingerprint + "0"),
             RPM6_RECEIPT.replace("key fingerprint:", "key ID"),
-            RPM4_RECEIPT.replace("6d9f90a6", "12345678"),
-            RPM4_RECEIPT.replace("6d9f90a6", fingerprint[-12:]),  # arbitrary suffix forbidden
+            RPM4_RECEIPT.replace("f577861e", "12345678"),
+            RPM4_RECEIPT.replace("f577861e", fingerprint[-12:]),  # arbitrary suffix forbidden
         ):
             with self.subTest(receipt=altered):
                 self.assertFalse(check(altered, 0))
 
     def test_signature_diagnostics_preserve_failure_and_bound_output(self):
         receipt = ("Header OpenPGP V4 RSA/SHA256 signature, key fingerprint: "
-                   "36f612dcf27f7d1a48a835e4dbfcf71c6d9f90a6: OK\n")
+                   "4f50a6114cd5c6976a7f1179655a4b02f577861e: OK\n")
         with self.assertRaises(ValueError) as caught:
             NAMESPACE["signature_failure"]("dracut", 0, receipt, "RPM version 6\n")
         message = str(caught.exception)
@@ -345,11 +349,11 @@ class FixtureProducerTests(unittest.TestCase):
             ("before-import", keyring_observations(db, APPROVED_KEY_ROW)),
             ("after-import", keyring_observations(db)),
             ("after-import", keyring_observations(db, APPROVED_KEY_ROW * 2)),
-            ("after-import", keyring_observations(db, APPROVED_KEY_ROW.replace("36f612dc", "00000000"))),
+            ("after-import", keyring_observations(db, APPROVED_KEY_ROW.replace("4f50a611", "00000000"))),
             ("after-import", keyring_observations(db, APPROVED_KEY_ROW.replace("public key", "secret key"))),
         ]
         for field, value in (
-            ("version", "RPM version 6.1.0\n"),
+            ("version", "RPM version 6.0.2\n"),
             ("keyring-macros", keyring_observations(db)["keyring-macros"][1].replace("_keyring=rpmdb", "_keyring=fs")),
             ("keyring-macros", keyring_observations(db)["keyring-macros"][1].replace(str(db), "/usr/lib/sysimage/rpm")),
             ("keyring-macros", keyring_observations(db)["keyring-macros"][1].replace("pubkeys/", "other/")),
@@ -1066,11 +1070,11 @@ class FixtureProducerTests(unittest.TestCase):
                          "--no-early-microcode", "--nohardlink", "--no-uefi"):
             self.assertIn(required, PYTHON)
 
-    def test_fedora108_archive_owner_expression_uses_controlled_config(self):
+    def test_fedora111_archive_owner_expression_uses_controlled_config(self):
         self.assertEqual(NAMESPACE["STRICT_CONFIG"].splitlines().count("cpio_owner=0:0"), 1)
         # EUID is readonly in Bash. Substitute only its variable name to cover
         # both observed source branches without privilege or an actual archive.
-        owner_default = FEDORA108_OWNER_DEFAULT.replace("$EUID", "$fixture_euid")
+        owner_default = FEDORA111_OWNER_DEFAULT.replace("$EUID", "$fixture_euid")
         for config, euid, owner in (
             (NAMESPACE["STRICT_CONFIG"], 0, "0:0"),
             (NAMESPACE["STRICT_CONFIG"], 1000, "0:0"),
@@ -1081,7 +1085,7 @@ class FixtureProducerTests(unittest.TestCase):
         ):
             script = ('set -u\nfixture_euid=$1\nCPIO_REPRODUCIBLE=1\n'
                       + config + "\n" + owner_default
-                      + '\ncpio() { printf "%s\\n" "$@"; }\n' + FEDORA108_CPIO_COMMAND)
+                      + '\ncpio() { printf "%s\\n" "$@"; }\n' + FEDORA111_CPIO_COMMAND)
             with self.subTest(euid=euid, owner=owner):
                 _, output = NAMESPACE["run"](["bash", "-c", script, "fixture", str(euid)],
                                              maximum=1024)
