@@ -140,8 +140,8 @@ func TestFedoraEmittedInitrdFixture(t *testing.T) {
 	if json.Unmarshal(pins, &reviewedPins) != nil || json.Unmarshal(expected.Pins, &observedPins) != nil || !reflect.DeepEqual(reviewedPins, observedPins) {
 		t.Fatal("producer input pins differ from reviewed repository fixture")
 	}
-	if !strings.HasPrefix(expected.Tools["dracut"], "dracut 108") {
-		t.Fatal("fixture did not report Fedora dracut 108")
+	if !strings.HasPrefix(expected.Tools["dracut"], "dracut 111") {
+		t.Fatal("fixture did not report Fedora dracut 111")
 	}
 	if expected.Initrd.Path != "initrd.img" || expected.Initrd.Size <= 0 || expected.Initrd.Size > 1<<30 || !validDigest(expected.Initrd.SHA256) {
 		t.Fatal("missing or invalid emitted-initrd pin")
