@@ -67,7 +67,7 @@ Before the CLI can use this library, the orchestrator must do these steps:
 
 The binary does not yet embed the separate `70tbox-x13s-adsp` module.
 It checks compression against the config of the selected kernel.
-Tests replay the control flow from Fedora dracut 108.
+Tests replay the control flow from Fedora dracut 111.
 Failures from firmware preparation cause the checked kernel hook to fail.
 The profile aborts in no-kernel mode.
 The fixture retains the upstream GPL-2.0-or-later notice and license.
@@ -93,4 +93,6 @@ The test checks their published hashes before it parses the files.
 Local checks use a supplemental Go 1.24 harness.
 
 The repository needs Go 1.26.3. Native CI must run the full build, test, vet, and integration-help checks.
-No final image, initrd, or media artifact exists yet.
+`OrchestrateX13sLive` implements steps 1-5. It audits caller-supplied
+initrd bytes, fresh or cached, with the same checks. Step 6 stays with
+media delivery. No final image or media artifact exists yet.
