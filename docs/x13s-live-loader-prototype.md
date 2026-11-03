@@ -93,6 +93,6 @@ The test checks their published hashes before it parses the files.
 Local checks use a supplemental Go 1.24 harness.
 
 The repository needs Go 1.26.3. Native CI must run the full build, test, vet, and integration-help checks.
-`OrchestrateX13sLive` implements steps 1-5. It audits caller-supplied
-initrd bytes, fresh or cached, with the same checks. Step 6 stays with
+`OrchestrateX13sLive` does steps 1-5. It checks initrd bytes from
+the caller, fresh or cached, with the same checks. Step 6 stays with
 media delivery. No final image or media artifact exists yet.
