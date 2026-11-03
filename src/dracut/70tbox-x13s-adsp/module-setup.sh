@@ -25,7 +25,8 @@ install() {
         dfatal 'X13s profile does not support --no-kernel'
         exit 1
     fi
-    # Names observed in Fedora kernel-core 7.2.11-200.fc44's X13s DTB.
+    # Names observed in Fedora kernel-core 7.2.11-200.fc44's X13s DTB;
+    # reconfirmed present (as .xz) in F45 qcom-firmware-20261019 filelists.
     # PAS can probe all three enabled remoteprocs when loaded early.
     local name source suffix found config flag
     rm -f "$initdir/etc/tacklebox/x13s-adsp-required" || return 1

@@ -67,7 +67,7 @@ Before the CLI can use this library, the orchestrator must do these steps:
 
 The binary does not yet embed the separate `70tbox-x13s-adsp` module.
 It checks compression against the config of the selected kernel.
-Tests replay the control flow from Fedora dracut 108.
+Tests replay the control flow from Fedora dracut 111.
 Failures from firmware preparation cause the checked kernel hook to fail.
 The profile aborts in no-kernel mode.
 The fixture retains the upstream GPL-2.0-or-later notice and license.
@@ -88,9 +88,11 @@ It includes controls with no initrd and an incorrect argument.
 It does not emulate an X13s or spoof its SMBIOS.
 
 Tests check for incorrect paths, hashes, sizes, targets, PE files, kernels, board tables, and GRUB arguments.
-The optional `TBOX_FEDORA_LOADER_FIXTURE` directory supplies `loader.efi` and `vmlinuz` from Fedora 44 7.2.11-200 RPMs.
+The optional `TBOX_FEDORA_LOADER_FIXTURE` directory supplies `loader.efi` and `vmlinuz` from Fedora 45 7.2.15-300 RPMs.
 The test checks their published hashes before it parses the files.
 Local checks use a supplemental Go 1.24 harness.
 
 The repository needs Go 1.26.3. Native CI must run the full build, test, vet, and integration-help checks.
-No final image, initrd, or media artifact exists yet.
+`OrchestrateX13sLive` does steps 1-5. It checks initrd bytes from
+the caller, fresh or cached, with the same checks. Step 6 stays with
+media delivery. No final image or media artifact exists yet.

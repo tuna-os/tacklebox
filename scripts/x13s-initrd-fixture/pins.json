@@ -1,62 +1,62 @@
 {
   "schema_version": 1,
-  "base_image": "registry.fedoraproject.org/fedora@sha256:db1539298ea4e8e7a96f1ce1f82195bff05d66bef015db79dda9954245253b24",
-  "base_index_digest": "sha256:99741a26ce7d4ee2746a564552210f267a458c527cc09ea7dd103ecbe62b0d5a",
+  "base_image": "registry.fedoraproject.org/fedora@sha256:6dae311a7b73b4d09dcce5fbe0167e088cef75c0639230583482cd433b1dd492",
+  "base_index_digest": "sha256:c15d8d6067038f1d6b10d8e1b8440f787a474fe6dc641ef77a5c74b1bf01a05d",
   "architecture": "aarch64",
-  "kernel_release": "7.2.11-200.fc44.aarch64",
-  "kernel_sha256": "f838299696f91f0400de9e6b796d3d862f8e9eb2899101a913314150ce9550d6",
-  "kernel_config_sha256": "a51ef35e4ec68f0d066eb90550d9dae3c9ea7b93c91709653d86ba0778a95de6",
-  "fedora44_fingerprint": "36F612DCF27F7D1A48A835E4DBFCF71C6D9F90A6",
-  "fedora44_key": "/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-44-primary",
-  "dist_config_sha256": "32fd38b1ad4c27acedeee34e95df7bdea0a8ecb6932b333f6b71a37e9a2e6723",
-  "source_date_epoch": 1792078574,
+  "kernel_release": "7.2.15-300.fc45.aarch64",
+  "kernel_sha256": "ba089fcca6fa89a3c47ff96212c5c6c2ad495ac8bf0d44444b8ce20a23d9e060",
+  "kernel_config_sha256": "b23c33575d1290e16c0a305b3af154c9decad988e6072724d95dfcb7ca4edb8a",
+  "fedora45_fingerprint": "4F50A6114CD5C6976A7F1179655A4B02F577861E",
+  "fedora45_key": "/usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-45-primary",
+  "dist_config_sha256": "2637226fac5c777d617fe79c4c0c7feb789597541e9eb772d194232e6512d9b9",
+  "source_date_epoch": 1793548039,
   "max_initrd_bytes": 1073741824,
   "packages": [
     {
       "name": "dracut",
       "epoch": 0,
-      "version": "108",
-      "release": "8.fc44",
+      "version": "111",
+      "release": "4.fc45",
       "arch": "aarch64",
-      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/d/dracut-108-8.fc44.aarch64.rpm",
-      "size": 636127,
-      "sha256": "d503e00739a79e6b326804183da66a7e62ae3cd5663b93777e2b75374bd6219b",
-      "source_rpm": "dracut-108-8.fc44.src.rpm"
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/45/Everything/aarch64/os/Packages/d/dracut-111-4.fc45.aarch64.rpm",
+      "size": 664825,
+      "sha256": "186687a21646d13802203e529500c2c477032fb564e5afcfe4f41bdff3a82eaa",
+      "source_rpm": "dracut-111-4.fc45.src.rpm"
     },
     {
       "name": "kernel-core",
       "epoch": 0,
-      "version": "7.2.11",
-      "release": "200.fc44",
+      "version": "7.2.15",
+      "release": "300.fc45",
       "arch": "aarch64",
-      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/k/kernel-core-7.2.11-200.fc44.aarch64.rpm",
-      "size": 24817037,
-      "sha256": "a32bb946edb9b874c7a423d78867ca2196c934b14862632292b65db0730441a1",
-      "source_rpm": "kernel-7.2.11-200.fc44.src.rpm"
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/45/Everything/aarch64/Packages/k/kernel-core-7.2.15-300.fc45.aarch64.rpm",
+      "size": 24827937,
+      "sha256": "e72c070373329e3fe08812ffb5d3a83e6c6f0b95eec1a21b13011093a87836e7",
+      "source_rpm": "kernel-7.2.15-300.fc45.src.rpm"
     },
     {
       "name": "kernel-modules-core",
       "epoch": 0,
-      "version": "7.2.11",
-      "release": "200.fc44",
+      "version": "7.2.15",
+      "release": "300.fc45",
       "arch": "aarch64",
-      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/k/kernel-modules-core-7.2.11-200.fc44.aarch64.rpm",
-      "size": 49519117,
-      "sha256": "6b076ff02115a064f7d26d9c64861cb27e8c5aaa8b84ee6ab1ccb07d16484c2f",
-      "source_rpm": "kernel-7.2.11-200.fc44.src.rpm"
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/45/Everything/aarch64/Packages/k/kernel-modules-core-7.2.15-300.fc45.aarch64.rpm",
+      "size": 49581253,
+      "sha256": "7483dbe3fddb14f6a73ed93371f62da73b4cec705f34b2e468c4e5ef17421910",
+      "source_rpm": "kernel-7.2.15-300.fc45.src.rpm"
     },
     {
       "name": "qcom-firmware",
       "epoch": 0,
-      "version": "20260916",
-      "release": "1.fc44",
+      "version": "20261019",
+      "release": "1.fc45",
       "arch": "noarch",
-      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/44/Everything/aarch64/Packages/q/qcom-firmware-20260916-1.fc44.noarch.rpm",
-      "size": 175852175,
-      "sha256": "9905349660950e995256999c66bf31c62f75e5706ca3bc863f09c3f3a4d2c4c6",
-      "source_rpm": "linux-firmware-20260916-1.fc44.src.rpm"
+      "url": "https://dl.fedoraproject.org/pub/fedora/linux/updates/45/Everything/aarch64/Packages/q/qcom-firmware-20261019-1.fc45.noarch.rpm",
+      "size": 184724863,
+      "sha256": "c3b6f69aea2704156a44d60028d09e680324898a2a0a2e0f42a8cb5a90e9b60b",
+      "source_rpm": "linux-firmware-20261019-1.fc45.src.rpm"
     }
   ],
   "transitive_dependencies_pinned": false,
-  "provenance": "Primary RPM pins observed in Fedora44 updates metadata; signature verification is mandatory at fixture generation. Base manifest resolved separately. No loader RPM is installed."
+  "provenance": "Primary RPM pins observed in Fedora45 release (dracut) and updates (kernel, firmware) metadata 2026-11-03; signature verification is mandatory at fixture generation. Base manifest resolved separately. No loader RPM is installed."
 }
