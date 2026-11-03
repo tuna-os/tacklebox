@@ -537,3 +537,30 @@ func installEnvsLiveDelta(r recipe.MediaRecipe, tgt target.Target, storeMount, e
 	}
 	return nil
 }
+
+// envTitle returns the boot-menu title for an env: the recipe's `title`
+// field when set (e.g. "Bluefin (GNOME)"), otherwise the env ID, with the
+// boot mode appended.
+func envTitle(env recipe.BootableEnvironment, mode string) string {
+	t := env.Title
+	if t == "" {
+		t = env.ID
+	}
+	return fmt.Sprintf("%s (%s)", t, mode)
+}
+
+// envBootOptions completes an env's BLS options: base, then the kernel
+// arguments its own image declares in /usr/lib/bootc/kargs.d (what bootc
+// gives the installed system), then the recipe's explicit `kargs`.
+func envBootOptions(base string, boot install.BootFiles, r recipe.MediaRecipe) string {
+	return kernelcmdline.Append(kernelcmdline.Append(base, boot.Kargs), r.Kargs)
+}
+
+// envDevicetree is the BLS `devicetree` path for an env: path when its
+// image ships a device tree for the kernel, "" (no line) otherwise.
+func envDevicetree(boot install.BootFiles, path string) string {
+	if !boot.Devicetree {
+		return ""
+	}
+	return path
+}

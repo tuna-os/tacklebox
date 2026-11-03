@@ -34,6 +34,12 @@ tacklebox/
 ├── cmd/tacklebox/             # CLI entry points (cobra subcommands)
 │   ├── main.go                # root command + persistent --output-base flag
 │   ├── build.go               # `build` CLI lifecycle and target orchestration
+│   ├── build_recipe.go        # recipe validation and customization resolution
+│   ├── build_target.go        # recipe-to-target construction
+│   ├── build_plan.go          # deterministic layout and capacity policy
+│   ├── build_pull.go          # parallel image pulls and serial retries
+│   ├── build_offline.go       # offline store preparation and provisioning
+│   ├── build_provision.go     # boot-time updater provisioning
 │   ├── build_install.go       # target install strategies and per-env pipeline
 │   ├── update.go              # the `update` command (host-side USB refresh)
 │   ├── update_all.go          # `update-all` boot-time cross-env updater
@@ -77,7 +83,15 @@ browser builder); it creates live ISOs without Podman, mount operations,
 
 `tacklebox build <recipe.json> [TARGET | --iso PATH]` is orchestrated by
 `cmd/tacklebox/build.go`; target-specific install strategies live in
-`cmd/tacklebox/build_install.go`:
+`cmd/tacklebox/build_install.go`. Recipe input resolution lives in
+`build_recipe.go`, deterministic layout policy in `build_plan.go`, and target
+construction in `build_target.go`. Image pulls (`build_pull.go`) and offline
+store assembly (`build_offline.go`) are explicit phases; `runBuild` retains
+CLI flags, confirmation, signal cleanup, timing, and target lifecycle. The VFS
+store is prepared before environment installs and kept alive through target
+finalization; separate offline stores are built after environment installs.
+
+The phase order is:
 
 1. **Parse** the recipe into `recipe.MediaRecipe`.
 2. **Validate** — bootable_envs is non-empty, size parses, target arg shape sane.
@@ -401,7 +415,7 @@ with no `R2_BUCKET`; build + verify always run.
 | Pure build fails resolving or unpacking an image | `internal/oci/`                         |
 | Pure build fails authoring EROFS, ESP, or ISO    | `internal/purefs/`                      |
 | Browser build stalls or exhausts wasm memory     | `cmd/tbwasm/` (OPFS store and progress reporting) |
-| BLS entry exists but kernel/initrd missing       | `cmd/tacklebox/build.go` (`installEnv`) |
+| BLS entry exists but kernel/initrd missing       | `cmd/tacklebox/build_install.go` (`installEnvBootc` / `installEnvLive`) |
 | Boot stalls at `ostree-prepare-root`             | `src/dracut/95tbox-root/*`              |
 | Boot stalls at `dracut-initqueue` on a live ISO  | `internal/kernelcmdline` (`Live`) — overlay flag syntax |
 | Two envs end up with the same content            | bootc upstream bug; see TODO.md §Bugs   |
