@@ -687,11 +687,11 @@ func startMovedTagRegistry(t *testing.T, repo, tag, qualifiedMarker, rebuiltMark
 				return
 			}
 			if resp.StatusCode == http.StatusOK {
-				defer resp.Body.Close()
-				io.Copy(w, resp.Body)
+				_, _ = io.Copy(w, resp.Body)
+				_ = resp.Body.Close()
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		http.NotFound(w, r)
 	}))

@@ -78,7 +78,7 @@ func newMovedTagRegistry(t *testing.T) *movedTagRegistry {
 			http.NotFound(w, req)
 			return
 		}
-		w.Write(body)
+		_, _ = w.Write(body)
 	}))
 	t.Cleanup(r.srv.Close)
 	return r
