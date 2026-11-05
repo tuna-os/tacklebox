@@ -21,8 +21,8 @@ const (
 	// OverlayReasonMissing: the overlay is required (pinned by the caller)
 	// but no overlay exists for the exact requested platform.
 	OverlayReasonMissing = "missing-live-overlay"
-	// OverlayReasonDigestMismatch: the resolved overlay platform manifest
-	// digest differs from the caller-pinned overlay digest.
+	// OverlayReasonDigestMismatch: the overlay platform manifest bytes do
+	// not hash to the index descriptor digest that named them.
 	OverlayReasonDigestMismatch = "overlay-digest-mismatch"
 	// OverlayReasonBaseDigestMismatch: the overlay's base-digest
 	// annotation differs from the selected base platform manifest digest.
@@ -80,9 +80,9 @@ type GraftOptions struct {
 	// "amd64".
 	Platform string
 	// ExpectedOverlayDigest pins the overlay's platform-manifest digest
-	// (BuildRequest ResolvedInputs.LiveOverlayDigest). Non-empty both
-	// requires the overlay's presence and refuses a digest mismatch
-	// rather than grafting the wrong delta.
+	// (BuildRequest ResolvedInputs.LiveOverlayDigest). Non-empty requires
+	// the overlay's presence and fetches exactly that manifest by digest
+	// (FetchPinnedPlatformManifest) instead of resolving the overlay tag.
 	ExpectedOverlayDigest string
 	// BaseDigest is the selected base platform manifest digest, obtained from
 	// the same resolution that produced baseManifest, not a request or tag.
@@ -145,28 +145,43 @@ func GraftLiveOverlayObserved(
 	}
 	expected := strings.TrimSpace(opts.ExpectedOverlayDigest)
 	required := opts.Required || expected != ""
-	m, digest, err := c.ResolveManifestForPlatformWithDigest(ref, platform, expected)
-	if err != nil {
-		var notFound *oci.PlatformNotFoundError
-		var digestMismatch *oci.ManifestDigestMismatchError
-		switch {
-		case errors.As(err, &digestMismatch):
-			// The overlay exists but is not the pinned one — always a
-			// blocker, even for otherwise-optional overlays: grafting
-			// the wrong delta is worse than grafting none.
-			return false, nil, nil, &OverlayMismatchError{Image: image, Reason: OverlayReasonDigestMismatch, Want: digestMismatch.Want, Got: digestMismatch.Got}
-		case errors.As(err, &notFound):
-			if !required {
-				return false, nil, &OverlayObservation{Status: "absent"}, nil
-			}
-			return false, nil, nil, &OverlayMismatchError{Image: image, Reason: OverlayReasonMissing, Want: platform, Got: strings.Join(notFound.Available, ", ")}
-		default:
-			// No overlay published for this variant — the common case.
-			if !required {
-				return false, nil, &OverlayObservation{Status: "absent"}, nil
-			}
+	var m *oci.Manifest
+	var digest string
+	if expected != "" {
+		// A pinned overlay is fetched by digest, never through its tag: the
+		// tag follows every base rebuild, so after a pinned base's tag moves
+		// the tag's overlay is bound to a different base. The pin is the
+		// overlay qualified together with that base.
+		pinned, _, err := FetchPinnedPlatformManifest(c, ref, platform, expected)
+		if err != nil {
 			return false, nil, nil, &OverlayMismatchError{Image: image, Reason: OverlayReasonMissing, Want: platform, Got: err.Error()}
 		}
+		m, digest = pinned, expected
+	} else {
+		resolved, resolvedDigest, err := c.ResolveManifestForPlatform(ref, platform)
+		if err != nil {
+			var notFound *oci.PlatformNotFoundError
+			var digestMismatch *oci.ManifestDigestMismatchError
+			switch {
+			case errors.As(err, &digestMismatch):
+				// The platform manifest bytes do not hash to the index
+				// descriptor — always a blocker, even for otherwise-optional
+				// overlays: grafting the wrong delta is worse than grafting none.
+				return false, nil, nil, &OverlayMismatchError{Image: image, Reason: OverlayReasonDigestMismatch, Want: digestMismatch.Want, Got: digestMismatch.Got}
+			case errors.As(err, &notFound):
+				if !required {
+					return false, nil, &OverlayObservation{Status: "absent"}, nil
+				}
+				return false, nil, nil, &OverlayMismatchError{Image: image, Reason: OverlayReasonMissing, Want: platform, Got: strings.Join(notFound.Available, ", ")}
+			default:
+				// No overlay published for this variant — the common case.
+				if !required {
+					return false, nil, &OverlayObservation{Status: "absent"}, nil
+				}
+				return false, nil, nil, &OverlayMismatchError{Image: image, Reason: OverlayReasonMissing, Want: platform, Got: err.Error()}
+			}
+		}
+		m, digest = resolved, resolvedDigest
 	}
 	if expectedBase := strings.TrimSpace(opts.ExpectedBaseDigest); expectedBase != "" && expectedBase != strings.TrimSpace(opts.BaseDigest) {
 		return false, nil, nil, &OverlayMismatchError{Reason: OverlayReasonBaseDigestMismatch, Want: opts.BaseDigest, Got: expectedBase}

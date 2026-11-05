@@ -392,20 +392,54 @@ const acceptOCIManifest = "application/vnd.oci.image.index.v1+json, " +
 	"application/vnd.docker.distribution.manifest.list.v2+json, " +
 	"application/vnd.docker.distribution.manifest.v2+json"
 
-// ResolveManifestWithDigest resolves ref for the requested platform (or arch),
-// returning both the decoded platform Manifest and its sha256 digest. Unlike
-// a bare fallback to Manifests[0], it refuses when a multi-arch index does not
-// contain the requested architecture.
-func ResolveManifestWithDigest(c *oci.Client, ref oci.Ref, platform string) (*oci.Manifest, string, error) {
-	m, observed, err := ResolveManifestObserved(c, ref, platform)
-	if err != nil {
-		return nil, "", err
+// PinnedPlatformManifestDigest returns the platform manifest digest the
+// request pins its source image to (resolvedInputs.platformManifestDigest),
+// or "" when the request is nil or carries no pin.
+func (r *BuildRequest) PinnedPlatformManifestDigest() string {
+	if r == nil || r.ResolvedInputs == nil {
+		return ""
 	}
-	return m, observed.ManifestDigest, nil
+	return strings.TrimSpace(r.ResolvedInputs.PlatformManifestDigest)
 }
 
-// ResolveManifestObserved retains evidence from the exact resolution requests.
-// Selection policy is identical to ResolveManifestWithDigest.
+// ResolveSourceManifestObserved resolves a build's source image. A non-empty
+// pinnedDigest (BuildRequest.PinnedPlatformManifestDigest) is fetched directly
+// as ref.Repo@pinnedDigest and the tag is never consulted, so a target
+// qualified at that digest stays buildable after its tag moves to a newer
+// image; FetchPinnedPlatformManifest still refuses a manifest whose verified
+// config names another platform. Without a pin this is
+// ResolveManifestObserved (tag → index → exact platform).
+func ResolveSourceManifestObserved(c *oci.Client, ref oci.Ref, platform, pinnedDigest string) (*oci.Manifest, *ManifestObservation, error) {
+	pinnedDigest = strings.TrimSpace(pinnedDigest)
+	if pinnedDigest == "" {
+		return ResolveManifestObserved(c, ref, platform)
+	}
+	if c == nil {
+		return nil, nil, fmt.Errorf("nil oci client")
+	}
+	base, err := observedRegistryBase(c)
+	if err != nil {
+		return nil, nil, err
+	}
+	m, content, err := FetchPinnedPlatformManifest(c, ref, platform, pinnedDigest)
+	if err != nil {
+		return nil, nil, err
+	}
+	// No index was read, so there is no index digest or platform
+	// descriptor to report; the platform evidence is the verified config.
+	return m, &ManifestObservation{
+		RegistryEndpoint:   base,
+		Repository:         ref.Repo,
+		RequestedReference: pinnedDigest,
+		ManifestDigest:     pinnedDigest,
+		Config:             ConfigObservation{Descriptor: m.Config, BytesVerified: true, Content: content},
+	}, nil
+}
+
+// ResolveManifestObserved resolves ref for the requested platform (or arch)
+// and retains evidence from the exact resolution requests. Unlike a bare
+// fallback to Manifests[0], it refuses when a multi-arch index does not
+// contain the requested architecture.
 func ResolveManifestObserved(c *oci.Client, ref oci.Ref, platform string) (*oci.Manifest, *ManifestObservation, error) {
 	if c == nil {
 		return nil, nil, fmt.Errorf("nil oci client")
@@ -422,10 +456,9 @@ func ResolveManifestObserved(c *oci.Client, ref oci.Ref, platform string) (*oci.
 	if timeout <= 0 {
 		timeout = oci.DefaultHeaderTimeout
 	}
-	base := strings.TrimRight(c.Base, "/")
-	endpoint, err := url.Parse(base)
-	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" || strings.Contains(base, "#") {
-		return nil, nil, fmt.Errorf("unsafe registry endpoint for observed resolution")
+	base, err := observedRegistryBase(c)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	token, err := fetchRegistryToken(httpClient, base, ref.Repo, timeout)
@@ -503,6 +536,18 @@ func ResolveManifestObserved(c *oci.Client, ref oci.Ref, platform string) (*oci.
 		return nil, nil, fmt.Errorf("platform manifest decode: %w", err)
 	}
 	return &pm, &ManifestObservation{RegistryEndpoint: base, Repository: ref.Repo, RequestedReference: ref.Tag, ManifestDigest: pick.Digest, IndexDigest: topDigest, PlatformDescriptor: &PlatformObservation{Architecture: pick.Platform.Architecture, Variant: pick.Platform.Variant}, Config: ConfigObservation{Descriptor: pm.Config}}, nil
+}
+
+// observedRegistryBase returns the client's registry endpoint for
+// observations, refusing endpoints that could smuggle credentials, queries or
+// fragments into recorded evidence.
+func observedRegistryBase(c *oci.Client) (string, error) {
+	base := strings.TrimRight(c.Base, "/")
+	endpoint, err := url.Parse(base)
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" || strings.Contains(base, "#") {
+		return "", fmt.Errorf("unsafe registry endpoint for observed resolution")
+	}
+	return base, nil
 }
 
 func defaultPlatform(platform string) string {

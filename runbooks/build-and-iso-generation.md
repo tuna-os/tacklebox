@@ -45,22 +45,30 @@ If two environments share an identical stateroot commit hash, verify will reject
 
 ## Remediation
 
-### A pinned live overlay resolves to a different manifest
+### A pinned source or live overlay is not available
 
-`resolvedInputs.liveOverlayDigest` pins the selected platform manifest, not
-the multi-architecture index. Both the native pure builder and browser pass
-this value to `GraftLiveOverlayObserved`.
+`resolvedInputs.platformManifestDigest` and `resolvedInputs.liveOverlayDigest`
+pin platform manifests, not multi-architecture indexes. When a BuildRequest
+carries them, the native pure builder and the browser fetch
+`<repo>@<digest>` directly (`ResolveSourceManifestObserved` for the source,
+`GraftLiveOverlayObserved` for the overlay, both through
+`FetchPinnedPlatformManifest`) and never consult the tag. Tags move on every
+daily rebuild; the pin keeps a target buildable at the exact manifest it was
+qualified at. The installed system's origin is still the request's canonical
+tag (`image`, MediaInput `targetImgref`), so updates track the tag.
 
-A tag can name either an index or a platform manifest directly. The latter
-path previously returned its hash without comparing the expected digest.
-The direct-manifest regression reproduces a wrong pin being accepted. Both
-paths now reject it with `ManifestDigestMismatchError`, before overlay layers
-are applied. This pin check is separate from the base check below.
+A pinned manifest is accepted only when its bytes hash to the pin, it is a
+platform manifest rather than an index, and its digest-verified config
+declares the requested `os`/`architecture`/`variant`. The errors name the
+cause: `is not available` (the registry no longer serves the digest),
+`names a manifest index`, or `does not match requested platform`. A missing
+pinned overlay is an `OverlayReasonMissing` blocker.
 
-Check the requested platform-manifest pin against the exact served bytes.
-Do not replace it with the index digest or remove the pin to silence a
-mismatch. This check proves content identity against the supplied pin; it
-does not authenticate the source or establish boot qualification.
+Do not replace a pin with the index digest or remove it to silence a refusal.
+A pin that is no longer served means the qualification is stale: requalify
+the current image. These checks prove content identity against the supplied
+pin; they do not authenticate the source or establish boot qualification.
+Without a pin, resolution is unchanged: tag, index, exact platform.
 
 ### A live overlay has no valid base binding
 

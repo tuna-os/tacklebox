@@ -202,41 +202,90 @@ func TestGraftLiveOverlayRequiredMissingFailsClosed(t *testing.T) {
 	})
 }
 
-// A pinned overlay digest that does not match the resolved overlay platform
-// manifest is a typed digest blocker — grafting the wrong delta is worse
-// than grafting none.
-func TestGraftLiveOverlayExpectedDigestMismatchFailsClosed(t *testing.T) {
-	const image = "tuna-os/yellowfin:kde"
-	amdBody, _ := json.Marshal(&oci.Manifest{MediaType: "application/vnd.oci.image.manifest.v1+json"})
-	amdDigest := overlayDigestOf(amdBody)
-	srv := serveLiveOverlay(t,
-		overlayIndexBody(t, overlayPlatformDesc("amd64", "", amdDigest)),
-		map[string][]byte{amdDigest: amdBody}, nil)
+// pinnedOverlayManifest publishes one overlay platform manifest by digest:
+// a config declaring arch, a base-digest annotation, and a plain tar layer
+// carrying payload at usr/share/overlay-build.txt.
+func pinnedOverlayManifest(t *testing.T, bodies, blobs map[string][]byte, arch, baseDigest, payload string) string {
+	t.Helper()
+	var layer bytes.Buffer
+	tw := tar.NewWriter(&layer)
+	if err := tw.WriteHeader(&tar.Header{Name: "usr/share/overlay-build.txt", Mode: 0o644, Size: int64(len(payload)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(payload)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := []byte(`{"architecture":"` + arch + `","os":"linux"}`)
+	cfgDigest := overlayDigestOf(cfg)
+	layerDigest := overlayDigestOf(layer.Bytes())
+	blobs[cfgDigest] = cfg
+	blobs[layerDigest] = layer.Bytes()
+	body, err := json.Marshal(&oci.Manifest{
+		MediaType:   "application/vnd.oci.image.manifest.v1+json",
+		Config:      oci.Descriptor{MediaType: "application/vnd.oci.image.config.v1+json", Digest: cfgDigest, Size: int64(len(cfg))},
+		Annotations: map[string]string{LiveOverlayBaseDigestAnnotation: baseDigest},
+		Layers:      []oci.Descriptor{{MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: layerDigest, Size: int64(layer.Len())}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := overlayDigestOf(body)
+	bodies[digest] = body
+	return digest
+}
 
-	store := &oci.MemStore{}
-	root := &oci.Node{Type: oci.TypeDir, Mode: 0o755, Children: map[string]*oci.Node{}}
+// A pinned overlay is fetched by digest, never through its tag. The overlay
+// tag follows every base rebuild, so once a qualified base's tag has moved the
+// tag's overlay is bound to the new base; the pinned overlay is the one bound
+// to the pinned base.
+func TestGraftLiveOverlayPinnedDigestFetchedByDigest(t *testing.T) {
+	const image = "tuna-os/yellowfin:kde"
+	pinnedBase := "sha256:" + strings.Repeat("1", 64)
+	rebuiltBase := "sha256:" + strings.Repeat("2", 64)
+	bodies, blobs := map[string][]byte{}, map[string][]byte{}
+	qualified := pinnedOverlayManifest(t, bodies, blobs, "amd64", pinnedBase, "qualified overlay\n")
+	rebuilt := pinnedOverlayManifest(t, bodies, blobs, "amd64", rebuiltBase, "rebuilt overlay\n")
+	arm64 := pinnedOverlayManifest(t, bodies, blobs, "arm64", pinnedBase, "arm64 overlay\n")
+	srv := serveLiveOverlay(t, overlayIndexBody(t, overlayPlatformDesc("amd64", "", rebuilt)), bodies, blobs)
 	baseManifest := &oci.Manifest{Layers: []oci.Descriptor{{Digest: "sha256:base"}}}
-	pinned := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-	applied, _, _, err := GraftLiveOverlayObserved(root, store, oci.NewClient(srv.URL), image, baseManifest,
-		GraftOptions{Platform: "linux/amd64", ExpectedOverlayDigest: pinned})
-	if err == nil {
-		t.Fatal("expected an overlay-digest-mismatch blocker, got nil")
+	newRoot := func() (*oci.Node, oci.BlobStore) {
+		return &oci.Node{Type: oci.TypeDir, Mode: 0o755, Children: map[string]*oci.Node{}}, &oci.MemStore{}
 	}
-	var mismatch *OverlayMismatchError
-	if !errors.As(err, &mismatch) {
-		t.Fatalf("error type = %T, want *OverlayMismatchError: %v", err, err)
-	}
-	if mismatch.Reason != OverlayReasonDigestMismatch {
-		t.Errorf("reason = %q, want %q", mismatch.Reason, OverlayReasonDigestMismatch)
-	}
-	if mismatch.Want != pinned || mismatch.Got != amdDigest {
-		t.Errorf("want/got = %s/%s, expected pin vs resolved descriptor digest", mismatch.Want, mismatch.Got)
-	}
-	if errors.Is(err, ErrLiveOverlayMissing) {
-		t.Error("a digest mismatch must NOT report as missing")
-	}
-	if applied {
-		t.Error("applied = true despite the blocker")
+
+	t.Run("tag-moved", func(t *testing.T) {
+		root, store := newRoot()
+		applied, m, observed, err := GraftLiveOverlayObserved(root, store, oci.NewClient(srv.URL), image, baseManifest,
+			GraftOptions{Platform: "linux/amd64", ExpectedOverlayDigest: qualified, BaseDigest: pinnedBase, ExpectedBaseDigest: pinnedBase})
+		if err != nil || !applied || m == nil {
+			t.Fatalf("pinned overlay not applied: applied=%v err=%v", applied, err)
+		}
+		if observed.ManifestDigest != qualified || observed.BaseDigest != pinnedBase || !observed.BaseAnnotationMatched {
+			t.Fatalf("observation = %+v, want pinned overlay %s bound to %s", observed, qualified, pinnedBase)
+		}
+		if got := readNode(t, store, root, "usr/share/overlay-build.txt"); got != "qualified overlay\n" {
+			t.Fatalf("applied overlay content %q, want the pinned overlay's", got)
+		}
+	})
+
+	for _, tc := range []struct{ name, pin string }{
+		{"absent-from-registry", "sha256:" + strings.Repeat("0", 64)},
+		{"other-architecture", arm64},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, store := newRoot()
+			applied, _, observed, err := GraftLiveOverlayObserved(root, store, oci.NewClient(srv.URL), image, baseManifest,
+				GraftOptions{Platform: "linux/amd64", ExpectedOverlayDigest: tc.pin, BaseDigest: pinnedBase})
+			var mismatch *OverlayMismatchError
+			if !errors.As(err, &mismatch) || mismatch.Reason != OverlayReasonMissing || !errors.Is(err, ErrLiveOverlayMissing) {
+				t.Fatalf("pinned overlay %s: want a missing-live-overlay blocker, got %v", tc.pin, err)
+			}
+			if applied || observed != nil || root.Lookup("usr/share/overlay-build.txt") != nil {
+				t.Fatalf("refused pinned overlay mutated the root or returned evidence: applied=%v observed=%+v", applied, observed)
+			}
+		})
 	}
 }
 
