@@ -463,7 +463,9 @@ func introspect(_ js.Value, args []js.Value) any {
 		}
 		ref := oci.Ref{Repo: repo, Tag: tag}
 		emitProgress("resolve", 0, 1)
-		m, observed, err := purefs.ResolveManifestObserved(c, ref, platform)
+		// A request pinning platformManifestDigest is built from exactly
+		// that manifest, fetched by digest; the tag may have moved since.
+		m, observed, err := purefs.ResolveSourceManifestObserved(c, ref, platform, req.PinnedPlatformManifestDigest())
 		if err != nil {
 			return nil, err
 		}

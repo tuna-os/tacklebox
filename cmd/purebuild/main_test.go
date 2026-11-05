@@ -576,7 +576,7 @@ func TestResolveAndVerifyRequest_RefusesDigestAndPlatformMismatches(t *testing.T
 	srv, amd64Digest, arm64Digest, _, cfgDigest := startSyntheticRegistry(t, "tuna-os/flounder", "xfce", nil)
 	client := oci.NewClient(srv.URL)
 
-	t.Run("digest mismatch refused", func(t *testing.T) {
+	t.Run("pinned digest absent from registry refused", func(t *testing.T) {
 		wrongDigest := "sha256:" + strings.Repeat("0", 64)
 		req := &BuildRequest{
 			SchemaVersion: 1,
@@ -598,10 +598,10 @@ func TestResolveAndVerifyRequest_RefusesDigestAndPlatformMismatches(t *testing.T
 		}
 		_, _, _, _, _, err := resolveAndVerifyRequest(client, cfg)
 		if err == nil {
-			t.Fatal("expected error when resolved platformManifestDigest does not match pinned digest")
+			t.Fatal("expected error when the pinned platformManifestDigest is not in the registry")
 		}
-		if !strings.Contains(err.Error(), "platformManifestDigest mismatch") {
-			t.Errorf("error = %v, want platformManifestDigest mismatch", err)
+		if !strings.Contains(err.Error(), "is not available") || !strings.Contains(err.Error(), "HTTP 404") {
+			t.Errorf("error = %v, want pinned manifest not available (HTTP 404)", err)
 		}
 	})
 
@@ -667,6 +667,94 @@ func TestResolveAndVerifyRequest_RefusesDigestAndPlatformMismatches(t *testing.T
 		err := applyBuildRequestToConfig(req, cfg)
 		if err == nil || !strings.Contains(err.Error(), "conflicts with build request image") {
 			t.Fatalf("expected image conflict error, got %v", err)
+		}
+	})
+}
+
+// startMovedTagRegistry serves repo whose tag has moved: the tag resolves to a
+// rebuilt image, while the qualified image's manifests and blobs stay
+// fetchable by digest (GHCR keeps them). It returns the qualified and rebuilt
+// amd64 platform manifest digests.
+func startMovedTagRegistry(t *testing.T, repo, tag, qualifiedMarker, rebuiltMarker string) (srv *httptest.Server, qualified, rebuilt string) {
+	t.Helper()
+	old, qualified, _, _, _ := startSyntheticRegistry(t, repo, "retired", map[string]string{"etc/tunaos-build-id": qualifiedMarker})
+	cur, rebuilt, _, _, _ := startSyntheticRegistry(t, repo, tag, map[string]string{"etc/tunaos-build-id": rebuiltMarker})
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, upstream := range []string{cur.URL, old.URL} {
+			resp, err := http.Get(upstream + r.URL.RequestURI())
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			if resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				io.Copy(w, resp.Body)
+				return
+			}
+			resp.Body.Close()
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, qualified, rebuilt
+}
+
+// A request pinned to the qualified digest builds the qualified image after
+// the tag moved: the pinned manifest is fetched by digest, VerifyResolved
+// passes, and the ISO and its MediaInput carry the qualified image and the
+// canonical tag. Without a pin the same tag builds the rebuilt image.
+func TestPinnedRequestBuildsQualifiedImageAfterTagMoved(t *testing.T) {
+	const qualifiedMarker, rebuiltMarker = "QUALIFIED-BUILD-7f3a\n", "REBUILT-BUILD-9c1e\n"
+	srv, qualified, rebuilt := startMovedTagRegistry(t, "tuna-os/flounder", "xfce", qualifiedMarker, rebuiltMarker)
+	if qualified == rebuilt {
+		t.Fatal("fixture tag did not move")
+	}
+	build := func(t *testing.T, pin string) []byte {
+		t.Helper()
+		req := &BuildRequest{
+			SchemaVersion: purefs.BuildRequestSchemaVersion,
+			Kind:          purefs.BuildRequestKind,
+			Image:         "ghcr.io/tuna-os/flounder:xfce",
+			Registry:      srv.URL,
+			Target:        &TargetIdentity{Variant: "flounder", Flavor: "xfce", Platform: "linux/amd64"},
+		}
+		if pin != "" {
+			req.ResolvedInputs = &ResolvedInputs{PlatformManifestDigest: pin, LiveOverlayBaseDigest: pin}
+		}
+		raw, err := req.ExportJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmp := t.TempDir()
+		reqPath := filepath.Join(tmp, "build-request.json")
+		writeTestFile(t, reqPath, string(raw))
+		initrd := filepath.Join(tmp, "initrd.img")
+		writeTestFile(t, initrd, "SYNTH-TBOX-INITRD")
+		var iso bytes.Buffer
+		cfg := &pureBuildConfig{Workdir: filepath.Join(tmp, "work"), Initrd: initrd, Sink: NewSinkWriter(func(chunk []byte) error {
+			_, err := iso.Write(chunk)
+			return err
+		})}
+		if err := runPureBuildWithRequest(reqPath, cfg); err != nil {
+			t.Fatalf("build (pin %q): %v", pin, err)
+		}
+		return iso.Bytes()
+	}
+
+	t.Run("pinned", func(t *testing.T) {
+		iso := build(t, qualified)
+		if !bytes.Contains(iso, []byte(qualifiedMarker)) || bytes.Contains(iso, []byte(rebuiltMarker)) {
+			t.Fatal("pinned build did not ship exactly the qualified image")
+		}
+		media := `"image":"ghcr.io/tuna-os/flounder:xfce","platformManifestDigest":"` + qualified + `"`
+		if !bytes.Contains(iso, []byte(media)) || !bytes.Contains(iso, []byte(`"targetImgref":"ghcr.io/tuna-os/flounder:xfce"`)) {
+			t.Fatal("MediaInput does not record the pinned digest with the canonical tag")
+		}
+	})
+	t.Run("unpinned", func(t *testing.T) {
+		iso := build(t, "")
+		if !bytes.Contains(iso, []byte(rebuiltMarker)) || bytes.Contains(iso, []byte(qualifiedMarker)) {
+			t.Fatal("unpinned build did not follow the moved tag")
 		}
 	})
 }

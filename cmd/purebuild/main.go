@@ -230,10 +230,13 @@ func resolveAndVerifyRequest(c *oci.Client, cfg *pureBuildConfig) (repo, tag, en
 			plat = "amd64"
 		}
 	}
-	m, digest, err = purefs.ResolveManifestWithDigest(c, oci.Ref{Repo: repo, Tag: tag}, plat)
+	// A request pinning platformManifestDigest is built from exactly that
+	// manifest, fetched by digest; the tag may have moved since.
+	m, observed, err := purefs.ResolveSourceManifestObserved(c, oci.Ref{Repo: repo, Tag: tag}, plat, cfg.Request.PinnedPlatformManifestDigest())
 	if err != nil {
 		return "", "", "", nil, "", err
 	}
+	digest = observed.ManifestDigest
 	if cfg.Request != nil {
 		if err := cfg.Request.VerifyResolved(normImg, plat, digest); err != nil {
 			return "", "", "", nil, "", err

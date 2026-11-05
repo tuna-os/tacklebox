@@ -757,6 +757,9 @@ func (f *observedFixture) addOverlay(t *testing.T) string {
 	f.documents["/v2/tuna-os/live-overlay/manifests/fixture-test"] = index
 	f.documents["/v2/tuna-os/live-overlay/manifests/"+digest] = manifest
 	f.documents["/v2/tuna-os/live-overlay/blobs/"+deltaDigest] = append([]byte(nil), delta.Bytes()...)
+	// A repository serving a manifest serves its config: a pinned overlay's
+	// platform is validated from it.
+	f.documents["/v2/tuna-os/live-overlay/blobs/"+f.config.Digest] = f.documents["/v2/fixture/boot/blobs/"+f.config.Digest]
 	return digest
 }
 
@@ -768,10 +771,10 @@ type observedPayloadScan struct {
 // Scan across chunk boundaries without retaining an ISO in the Go heap. The
 // current EROFS author emits file bodies uncompressed, so the sentinel proves
 // overlay content reached (or did not reach) the actual streamed artifact.
-func observedPayloadSink(t *testing.T) (js.Func, *observedPayloadScan) {
+func observedPayloadSink(t *testing.T, payload string) (js.Func, *observedPayloadScan) {
 	t.Helper()
 	state := &observedPayloadScan{}
-	needle := []byte(observedOverlayPayload)
+	needle := []byte(payload)
 	var scratch, tail []byte
 	cb := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		n := args[0].Get("byteLength").Int()
@@ -815,7 +818,7 @@ func TestObservedResultAppliedOverlayThenFailedApplyAndCustomRetry(t *testing.T)
 	overlayDigest := f.addOverlay(t)
 	observedIntrospectImage(t, observedOverlayImage)
 	base := observedBaseSnapshot(t)
-	appliedSink, appliedScan := observedPayloadSink(t)
+	appliedSink, appliedScan := observedPayloadSink(t, observedOverlayPayload)
 	applied := observedDecodeResult(t, observedMustResolve(t, js.Global().Call("tboxBuildIsoWithResult", observedOverlayOpts(t, f, overlayDigest, false), appliedSink)))
 	observedAssertIdentity(t, f, applied, false, "tuna-os/fixture")
 	if got := applied.ObservedInputs.Overlay; got.Status != "applied" || got.ManifestDigest != overlayDigest || !got.LayersApplied || !got.BaseAnnotationMatched || got.BaseDigest != f.manifestDigest {
@@ -851,7 +854,7 @@ func TestObservedResultAppliedOverlayThenFailedApplyAndCustomRetry(t *testing.T)
 	}
 	shim.Call("failWrite", "")
 
-	customSink, customScan := observedPayloadSink(t)
+	customSink, customScan := observedPayloadSink(t, observedOverlayPayload)
 	custom := observedDecodeResult(t, observedMustResolve(t, js.Global().Call("tboxBuildIsoWithResult", observedOverlayOpts(t, f, overlayDigest, true), customSink)))
 	observedAssertSource(t, f, custom, false, "tuna-os/fixture")
 	if custom.BytesWritten != customScan.written || customScan.found {
@@ -900,6 +903,8 @@ func TestObservedOverlayRefusesUnboundBaseBeforePayload(t *testing.T) {
 			sink, written := observedCounter(t)
 			if _, err := observedAwait(t, js.Global().Call("tboxBuildIsoWithResult", opts, sink)); err == nil {
 				t.Fatal("unbound overlay produced a successful browser build")
+			} else if !strings.Contains(err.Error(), "base digest") {
+				t.Fatalf("overlay refused for another reason than its base binding: %v", err)
 			}
 			if *written != 0 || f.hits("/v2/tuna-os/live-overlay/blobs/"+deltaDigest) != 0 {
 				t.Fatalf("unbound overlay reached delta fetch or ISO output: bytes=%d", *written)
@@ -940,7 +945,7 @@ func TestObservedByteCountBoundaries(t *testing.T) {
 	}
 }
 
-func TestIntrospectionObjectRequestRejectsPinBeforeOPFSAndUnpack(t *testing.T) {
+func TestIntrospectionObjectRequestRejectsAbsentPinBeforeOPFSAndUnpack(t *testing.T) {
 	f, shim := observedSetup(t)
 	req := observedOpts(t, f, true).Get("request")
 	req.Get("resolvedInputs").Set("platformManifestDigest", "sha256:"+strings.Repeat("0", 64))
@@ -948,9 +953,66 @@ func TestIntrospectionObjectRequestRejectsPinBeforeOPFSAndUnpack(t *testing.T) {
 		"image": observedFixtureImage, "registry": observedFixtureRegistry, "platform": "amd64",
 		"request": js.Global().Get("JSON").Call("stringify", req).String(),
 	})
-	observedMustReject(t, js.Global().Call("tboxIntrospect", wrapper), "platformManifestDigest mismatch")
-	if shim.Call("count").Int() != 0 || f.hits("/v2/fixture/boot/blobs/"+f.layerDigest) != 0 || gObserved != nil || gRoot != nil {
-		t.Fatal("mismatched request reached OPFS/unpack or retained source evidence")
+	observedMustReject(t, js.Global().Call("tboxIntrospect", wrapper), "is not available")
+	if shim.Call("count").Int() != 0 || f.hits("/v2/fixture/boot/blobs/"+f.layerDigest) != 0 || f.hits(f.indexPath) != 0 || gObserved != nil || gRoot != nil {
+		t.Fatal("absent pin reached the tag, OPFS or unpack, or retained source evidence")
+	}
+}
+
+// The tag has moved to a rebuilt image whose layer this registry does not
+// even serve. A request pinning the qualified manifest introspects and builds
+// exactly that manifest, fetched by digest, and the shipped MediaInput names
+// the pinned digest beside the canonical tag.
+func TestPinnedIntrospectionBuildsQualifiedManifestAfterTagMoved(t *testing.T) {
+	f, _ := observedSetup(t)
+	rebuilt := observedJSON(t, map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config":        f.config,
+		"layers": []oci.Descriptor{{
+			MediaType: "application/vnd.oci.image.layer.v1.tar",
+			Digest:    "sha256:" + strings.Repeat("e", 64),
+			Size:      1,
+		}},
+	})
+	rebuiltDigest := observedDigest(rebuilt)
+	f.mu.Lock()
+	f.documents["/v2/fixture/boot/manifests/"+rebuiltDigest] = rebuilt
+	f.documents[f.indexPath] = observedJSON(t, map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.index.v1+json",
+		"manifests": []map[string]any{{
+			"mediaType": "application/vnd.oci.image.manifest.v1+json",
+			"digest":    rebuiltDigest,
+			"size":      len(rebuilt),
+			"platform":  map[string]string{"architecture": "amd64", "os": "linux"},
+		}},
+	})
+	f.mu.Unlock()
+
+	opts := observedOpts(t, f, true)
+	observedMustResolve(t, js.Global().Call("tboxIntrospect", opts.Get("request")))
+	if got := f.hits(f.indexPath); got != 0 {
+		t.Fatalf("pinned introspection resolved the moved tag %d times", got)
+	}
+	media := `"image":"` + observedFixtureImage + `","platformManifestDigest":"` + f.manifestDigest + `"`
+	sink, scan := observedPayloadSink(t, media)
+	result := observedDecodeResult(t, observedMustResolve(t, js.Global().Call("tboxBuildIsoWithResult", opts, sink)))
+	source := result.ObservedInputs.Source
+	if source.ManifestDigest != f.manifestDigest || source.RequestedReference != f.manifestDigest || source.Repository != "fixture/boot" {
+		t.Fatalf("source = %+v, want pinned manifest %s fetched by digest", source, f.manifestDigest)
+	}
+	if source.IndexDigest != "" || source.PlatformDescriptor != nil {
+		t.Fatalf("pinned build invented index evidence: %+v", source)
+	}
+	if !source.Config.BytesVerified || source.Config.Content == nil || source.Config.Content.Architecture != "amd64" || source.Config.Content.OS != "linux" {
+		t.Fatalf("pinned platform evidence missing: %+v", source.Config)
+	}
+	if result.BytesWritten != scan.written || !scan.found {
+		t.Fatalf("result count=%d streamed=%d; MediaInput with pinned digest and tag found=%v", result.BytesWritten, scan.written, scan.found)
+	}
+	if got := f.hits(f.indexPath); got != 0 {
+		t.Fatalf("pinned build resolved the moved tag %d times", got)
 	}
 }
 
