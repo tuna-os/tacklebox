@@ -41,6 +41,10 @@ const observedOPFSShim = `(() => {
   let failingWrite = "";
   let writesBeforeFailure = 0;
   let successfulWrites = 0;
+  let failingSeek = "";
+  let failingSeekOffset = -1;
+  let seeks = [];
+  let failingClose = "";
   const directory = {
     async getFileHandle(name, options = {}) {
       if (!files.has(name)) {
@@ -56,6 +60,7 @@ const observedOPFSShim = `(() => {
           let closed = false;
           return {
             async write(chunk) {
+              await Promise.resolve();
               if (closed) throw new Error("write after close");
               if (name === failingWrite && successfulWrites >= writesBeforeFailure) {
                 throw new Error("fixture write failure");
@@ -70,8 +75,14 @@ const observedOPFSShim = `(() => {
               position = end;
               if (name === failingWrite) successfulWrites++;
             },
-            async seek(offset) { position = offset; },
+            async seek(offset) {
+              await Promise.resolve();
+              seeks.push(name + ":" + offset);
+              if (name === failingSeek && (offset === failingSeekOffset || failingSeekOffset === -2)) throw new Error("fixture seek failure");
+              position = offset;
+            },
             async close() {
+              if (name === failingClose) throw new Error("fixture close failure");
               if (closed) throw new Error("close after close");
               files.set(name, data.slice());
               closed = true;
@@ -112,6 +123,9 @@ const observedOPFSShim = `(() => {
       successfulWrites = 0;
     },
     failRemoval(name) { failingRemoval = name; },
+    failSeek(name, offset = -1) { failingSeek = name; failingSeekOffset = offset; },
+    seekTrace() { return seeks.join(","); },
+    failClose(name) { failingClose = name; },
     names() { return [...files.keys()].sort().join(","); },
     restore() {
       if (previous) Object.defineProperty(globalThis, "navigator", previous);
@@ -143,19 +157,31 @@ func observedJSON(t *testing.T, v any) []byte {
 }
 
 func newObservedFixture(t *testing.T) *observedFixture {
+	return newObservedFixtureKernel(t, "test")
+}
+
+func newObservedFixtureKernel(t *testing.T, kernel string) *observedFixture {
 	t.Helper()
 	var layer bytes.Buffer
 	tw := tar.NewWriter(&layer)
-	for _, file := range []struct{ path, data string }{
+	files := []struct{ path, data string }{
 		{"etc/passwd", "root:x:0:0:root:/root:/bin/bash\n"},
 		{"etc/shadow", "root:!:20000:0:99999:7:::\n"},
 		{"etc/group", "root:x:0:\n"},
 		{"etc/gshadow", "root:!::\n"},
 		{"etc/skel/.fixture", "keep the introspected tree immutable\n"},
-		{"usr/lib/modules/test/vmlinuz", "not a bootable kernel\n"},
-		{"usr/lib/modules/test/initramfs.img", "not a bootable initramfs\n"},
+		{"usr/lib/modules/" + kernel + "/vmlinuz", "not a bootable kernel\n"},
+		{"usr/lib/modules/" + kernel + "/initramfs.img", "not a bootable initramfs\n"},
 		{"usr/lib/systemd/boot/efi/systemd-bootx64.efi", "not an EFI executable\n"},
-	} {
+	}
+	if kernel != "test" {
+		files = append(files, struct{ path, data string }{
+			"usr/lib/modules/" + kernel + "/config", "CONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_LZ4_DECOMPRESS=y\n",
+		}, struct{ path, data string }{
+			"usr/share/compression-fixture", strings.Repeat("wasm-raw-lz4-fixture\n", 16384),
+		})
+	}
+	for _, file := range files {
 		if err := tw.WriteHeader(&tar.Header{Name: file.path, Mode: 0o644, Size: int64(len(file.data)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
 		}
@@ -690,6 +716,10 @@ const observedOverlayPayload = "tbox-overlay-contract-payload: present only when
 // addOverlay aliases the base image into the TunaOS namespace and publishes an
 // index-selected overlay containing the shared base layer plus a real tar delta.
 func (f *observedFixture) addOverlay(t *testing.T) string {
+	return f.addOverlayFiles(t, nil)
+}
+
+func (f *observedFixture) addOverlayFiles(t *testing.T, files map[string]string) string {
 	t.Helper()
 	var delta bytes.Buffer
 	tw := tar.NewWriter(&delta)
@@ -715,6 +745,14 @@ func (f *observedFixture) addOverlay(t *testing.T) string {
 		Mode: 0o777, Typeflag: tar.TypeSymlink, Linkname: commit,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	for name, data := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(tw, data); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
@@ -1032,5 +1070,386 @@ func TestIntrospectionFormsKeepExplicitPlatform(t *testing.T) {
 	_, _, platform, req, err := parseIntrospectArgs([]js.Value{js.ValueOf(observedFixtureImage), js.ValueOf(observedFixtureRegistry)})
 	if err != nil || platform != "amd64" || req != nil {
 		t.Fatal("legacy two-argument form changed")
+	}
+}
+
+func TestArenaWriterAtRestoresAppendCursorAndSealsPatchedBytes(t *testing.T) {
+	_, shim := observedSetup(t)
+	a, err := newOpfsArena("patch.img", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := a.Destroy(); err != nil {
+			t.Error(err)
+		}
+	})
+	w := arenaWriter{a}
+	initial := bytes.Repeat([]byte("a"), 3*(64<<10))
+	if n, err := w.Write(initial); n != len(initial) || err != nil {
+		t.Fatalf("append n=%d err=%v", n, err)
+	}
+	patch := bytes.Repeat([]byte("0123456789"), 9000)
+	if n, err := w.WriteAt(patch, 17); n != len(patch) || err != nil {
+		t.Fatalf("patch n=%d err=%v", n, err)
+	}
+	if a.off != int64(len(initial)) {
+		t.Fatalf("patch grew byte count to %d", a.off)
+	}
+	if n, err := w.Write([]byte("tail")); n != 4 || err != nil {
+		t.Fatalf("append after patch n=%d err=%v", n, err)
+	}
+	if err := a.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := a.Open(formatArenaRef("p", 0, a.off))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(append([]byte(nil), initial...), []byte("tail")...)
+	copy(want[17:], patch)
+	if !bytes.Equal(got, want) {
+		t.Fatal("patch offsets, bounded buffer reuse, or append restoration corrupted final bytes")
+	}
+	if !strings.Contains(shim.Call("seekTrace").String(), fmt.Sprintf("patch.img:17,patch.img:%d", len(initial))) {
+		t.Fatal("patch did not seek back to the original append cursor")
+	}
+	if n, err := w.WriteAt([]byte("x"), 0); n != 0 || err == nil {
+		t.Fatal("patch after Seal accepted")
+	}
+	if n, err := w.Write([]byte("x")); n != 0 || err == nil {
+		t.Fatal("append after Seal accepted")
+	}
+}
+
+func TestArenaWriterAtFailurePropagationAndAbort(t *testing.T) {
+	for _, failure := range []string{"seek", "write", "restore", "close"} {
+		t.Run(failure, func(t *testing.T) {
+			_, shim := observedSetup(t)
+			a, err := newOpfsArena("failure.img", "p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := arenaWriter{a}
+			if _, err := w.Write([]byte("original")); err != nil {
+				t.Fatal(err)
+			}
+			want := "fixture " + failure + " failure"
+			switch failure {
+			case "seek":
+				shim.Call("failSeek", a.name, 1)
+			case "restore":
+				shim.Call("failSeek", a.name, 8)
+				want = "restore arena append cursor"
+			case "write":
+				shim.Call("failWrite", a.name)
+			case "close":
+				shim.Call("failClose", a.name)
+			}
+			n, patchErr := w.WriteAt([]byte("XX"), 1)
+			if failure == "close" {
+				if patchErr != nil || n != 2 {
+					t.Fatalf("patch n=%d err=%v", n, patchErr)
+				}
+			} else {
+				if patchErr == nil || !strings.Contains(patchErr.Error(), want) {
+					t.Fatalf("patch n=%d err=%v, want %q", n, patchErr, want)
+				}
+				if _, err := w.Write([]byte("tail")); err == nil {
+					t.Fatal("append after failed patch accepted")
+				}
+			}
+			if a.off != 8 {
+				t.Fatalf("failed patch changed authored byte count to %d", a.off)
+			}
+			if err := a.Seal(); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Seal err=%v, want %q", err, want)
+			}
+			if err := a.Destroy(); err != nil {
+				t.Fatal(err)
+			}
+			if shim.Call("lockCount").Int() != 0 || shim.Call("count").Int() != 0 {
+				t.Fatal("failed staging did not abort and release OPFS file")
+			}
+		})
+	}
+}
+
+func TestArenaWriterAtRejectsGrowingPatchesWithoutPoisoning(t *testing.T) {
+	observedSetup(t)
+	a, err := newOpfsArena("bounds.img", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Destroy()
+	w := arenaWriter{a}
+	if _, err := w.Write([]byte("abcd")); err != nil {
+		t.Fatal(err)
+	}
+	for _, off := range []int64{-1, 4, 5} {
+		if n, err := w.WriteAt([]byte("x"), off); n != 0 || err == nil {
+			t.Fatalf("out-of-bounds patch offset=%d n=%d err=%v", off, n, err)
+		}
+	}
+	if err := a.Seal(); err != nil {
+		t.Fatalf("invalid caller range poisoned valid bytes: %v", err)
+	}
+}
+
+func TestRootFSCompressionBrowserRequestAndLegacyBuilds(t *testing.T) {
+	_, shim := observedSetup(t)
+	f := newObservedFixtureKernel(t, "6.12.0-fixture")
+	http.DefaultClient.Transport = f
+	observedMustResolve(t, js.Global().Call("tboxIntrospect", observedFixtureImage, observedFixtureRegistry))
+	var plainBytes int64
+	for _, tc := range []struct {
+		name, legacy, requested string
+		compressed              bool
+	}{
+		{name: "default"},
+		{name: "none", legacy: "none", requested: "none"},
+		{name: "legacy", legacy: "lz4", compressed: true},
+		{name: "request", requested: "lz4", compressed: true},
+		{name: "matching", legacy: "lz4", requested: "lz4", compressed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := observedOpts(t, f, false)
+			if tc.legacy != "" {
+				opts.Set("rootfsCompression", tc.legacy)
+			}
+			opts.Get("request").Set("options", map[string]any{"rootfsCompression": tc.requested})
+			sink, count := observedCounter(t)
+			value := observedMustResolve(t, js.Global().Call("tboxBuildIso", opts, sink))
+			if int64(value.Float()) != *count || *count <= 0 {
+				t.Fatal("compression build changed legacy byte-count contract")
+			}
+			if tc.compressed {
+				if plainBytes == 0 || *count >= plainBytes {
+					t.Fatalf("lz4 build did not reduce real authored ISO: plain=%d compressed=%d", plainBytes, *count)
+				}
+			} else {
+				plainBytes = *count
+			}
+			if names := shim.Call("names").String(); strings.Contains(names, "erofs") || strings.Contains(names, "post") {
+				t.Fatalf("build leaked arenas: %s", names)
+			}
+		})
+	}
+}
+
+func TestRootFSCompressionBrowserRefusesUnknownConflictingAndUnsupported(t *testing.T) {
+	for _, tc := range []struct{ legacy, requested, want string }{
+		{"zstd", "", "unsupported rootfsCompression"},
+		{"", "zstd", "unsupported rootfsCompression"},
+		{"none", "lz4", "conflicts"},
+		{"lz4", "none", "conflicts"},
+		{"lz4", "", "unknown kernel version"},
+		{"", "lz4", "unknown kernel version"},
+	} {
+		t.Run(tc.legacy+"-"+tc.requested, func(t *testing.T) {
+			f, shim := observedSetup(t)
+			observedIntrospect(t)
+			opts := observedOpts(t, f, false)
+			if tc.legacy != "" {
+				opts.Set("rootfsCompression", tc.legacy)
+			}
+			opts.Get("request").Set("options", map[string]any{"rootfsCompression": tc.requested})
+			sink, count := observedCounter(t)
+			observedMustReject(t, js.Global().Call("tboxBuildIsoWithResult", opts, sink), tc.want)
+			if *count != 0 || strings.Contains(shim.Call("names").String(), "erofs") {
+				t.Fatal("invalid compression reached output authoring")
+			}
+		})
+	}
+}
+
+func TestRootFSCompressionDdiRefusesLegacyAndRequestSelections(t *testing.T) {
+	for _, tc := range []struct{ legacy, requested, want string }{
+		{"lz4", "", "published root is not reauthored"},
+		{"", "lz4", "published root is not reauthored"},
+		{"zstd", "", "unsupported rootfsCompression"},
+		{"", "zstd", "unsupported rootfsCompression"},
+		{"none", "lz4", "conflicts"},
+		{"lz4", "none", "conflicts"},
+	} {
+		t.Run(tc.legacy+"-"+tc.requested, func(t *testing.T) {
+			f, shim := observedSetup(t)
+			opts := observedOpts(t, f, false)
+			opts.Set("base", "https://unreachable.invalid/artifacts")
+			if tc.legacy != "" {
+				opts.Set("rootfsCompression", tc.legacy)
+			}
+			opts.Get("request").Set("options", map[string]any{"rootfsCompression": tc.requested})
+			sink, count := observedCounter(t)
+			observedMustReject(t, js.Global().Call("tboxBuildDdiIso", opts, sink), tc.want)
+			if *count != 0 || shim.Call("count").Int() != 0 {
+				t.Fatal("DDI silently accepted compression or reached output staging")
+			}
+		})
+	}
+}
+
+func TestRootFSCompressionUsesIntrospectionRequestAndDirectRequest(t *testing.T) {
+	for _, direct := range []bool{false, true} {
+		t.Run(fmt.Sprintf("direct-%v", direct), func(t *testing.T) {
+			observedSetup(t)
+			f := newObservedFixtureKernel(t, "6.12.0-fixture")
+			http.DefaultClient.Transport = f
+			opts := observedOpts(t, f, false)
+			req := opts.Get("request")
+			req.Set("options", map[string]any{"rootfsCompression": "lz4"})
+			observedMustResolve(t, js.Global().Call("tboxIntrospect", map[string]any{"request": req}))
+			if direct {
+				req.Set("initrd", opts.Get("initrd"))
+				opts = req
+			} else {
+				opts = js.ValueOf(map[string]any{"initrd": opts.Get("initrd")})
+			}
+			sink, count := observedCounter(t)
+			result := observedMustResolve(t, js.Global().Call("tboxBuildIso", opts, sink))
+			if int64(result.Float()) != *count || *count <= 0 {
+				t.Fatal("active request build failed to stream ISO")
+			}
+			// Explicit legacy none must conflict with the same active request,
+			// rather than silently replacing its selected codec.
+			opts.Set("rootfsCompression", "none")
+			rejectedSink, rejectedCount := observedCounter(t)
+			observedMustReject(t, js.Global().Call("tboxBuildIso", opts, rejectedSink), "conflicts")
+			if *rejectedCount != 0 {
+				t.Fatal("conflicting active request reached output")
+			}
+		})
+	}
+}
+
+func TestArenaWriterAtPartialBackendFailurePreservesByteCount(t *testing.T) {
+	_, shim := observedSetup(t)
+	a, err := newOpfsArena("partial.img", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := arenaWriter{a}
+	initial := bytes.Repeat([]byte("a"), 3*(64<<10))
+	if _, err := w.Write(initial); err != nil {
+		t.Fatal(err)
+	}
+	shim.Call("failWrite", a.name, 1)
+	patch := bytes.Repeat([]byte("p"), 2*(64<<10))
+	n, err := w.WriteAt(patch, 1)
+	if n != 64<<10 || err == nil || !strings.Contains(err.Error(), "fixture write failure") {
+		t.Fatalf("partial patch n=%d err=%v", n, err)
+	}
+	if a.off != int64(len(initial)) {
+		t.Fatalf("partial patch double-counted bytes: %d", a.off)
+	}
+	if err := a.Seal(); err == nil {
+		t.Fatal("partially patched image sealed successfully")
+	}
+	if err := a.Destroy(); err != nil {
+		t.Fatal(err)
+	}
+	if shim.Call("lockCount").Int() != 0 {
+		t.Fatal("partial patch failure retained OPFS lock")
+	}
+}
+
+func TestRootFSCompressionBrowserGatesFinalOverlaySelectedKernel(t *testing.T) {
+	_, shim := observedSetup(t)
+	f := newObservedFixtureKernel(t, "6.12.0-fixture")
+	http.DefaultClient.Transport = f
+	digest := f.addOverlayFiles(t, map[string]string{
+		"usr/lib/modules/6.12.0-fixture/config": "CONFIG_EROFS_FS=y\n# CONFIG_EROFS_FS_ZIP is not set\nCONFIG_LZ4_DECOMPRESS=y\n",
+		"usr/lib/modules/6.13.0-other/config":   "CONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_LZ4_DECOMPRESS=y\n",
+	})
+	observedMustResolve(t, js.Global().Call("tboxIntrospect", observedOverlayImage, observedFixtureRegistry))
+	opts := observedOverlayOpts(t, f, digest, false)
+	opts.Get("request").Set("options", map[string]any{"rootfsCompression": "lz4"})
+	sink, count := observedCounter(t)
+	observedMustReject(t, js.Global().Call("tboxBuildIsoWithResult", opts, sink), "CONFIG_EROFS_FS_ZIP")
+	if *count != 0 || strings.Contains(shim.Call("names").String(), "erofs") {
+		t.Fatal("overlay's unsupported selected config reached authoring")
+	}
+}
+
+func TestRootFSCompressionBrowserPatchFailureDoesNotFallback(t *testing.T) {
+	_, shim := observedSetup(t)
+	f := newObservedFixtureKernel(t, "6.12.0-fixture")
+	http.DefaultClient.Transport = f
+	observedMustResolve(t, js.Global().Call("tboxIntrospect", observedFixtureImage, observedFixtureRegistry))
+	opts := observedOpts(t, f, false)
+	opts.Set("rootfsCompression", "lz4")
+	shim.Call("failSeek", "tbox-erofs.img", -2)
+	sink, count := observedCounter(t)
+	observedMustReject(t, js.Global().Call("tboxBuildIsoWithResult", opts, sink), "fixture seek failure")
+	if *count != 0 {
+		t.Fatal("failed compressed authoring fell back or emitted ISO bytes")
+	}
+	if names := shim.Call("names").String(); strings.Contains(names, "erofs") || strings.Contains(names, "post") {
+		t.Fatalf("failed compressed authoring retained staging arenas: %s", names)
+	}
+}
+
+func TestRootFSCompressionExportPreservesSelectionAndGlobalRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name, legacy, requested, want, reject string
+		nested                                bool
+	}{
+		{name: "omitted", nested: true},
+		{name: "legacy lz4 with nested request", legacy: "lz4", want: "lz4", nested: true},
+		{name: "legacy none with nested request", legacy: "none", want: "none", nested: true},
+		{name: "request lz4", requested: "lz4", want: "lz4", nested: true},
+		{name: "request none", requested: "none", want: "none", nested: true},
+		{name: "legacy global copy", legacy: "lz4", want: "lz4"},
+		{name: "conflict none lz4", legacy: "none", requested: "lz4", reject: "conflicts", nested: true},
+		{name: "conflict lz4 none", legacy: "lz4", requested: "none", reject: "conflicts", nested: true},
+		{name: "unknown", legacy: "zstd", reject: "unsupported rootfsCompression", nested: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			observedSetup(t)
+			f := newObservedFixtureKernel(t, "6.12.0-fixture")
+			http.DefaultClient.Transport = f
+			baseOpts := observedOpts(t, f, false)
+			baseRequest := baseOpts.Get("request")
+			observedMustResolve(t, js.Global().Call("tboxIntrospect", map[string]any{"request": baseRequest}))
+			before, err := gRequest.ExportJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts := js.ValueOf(map[string]any{})
+			if tc.nested {
+				baseRequest.Set("options", map[string]any{"rootfsCompression": tc.requested})
+				opts.Set("request", baseRequest)
+			}
+			if tc.legacy != "" {
+				opts.Set("rootfsCompression", tc.legacy)
+			}
+			if tc.reject != "" {
+				observedMustReject(t, js.Global().Call("tboxExportBuildRequest", opts), tc.reject)
+			} else {
+				raw := observedMustResolve(t, js.Global().Call("tboxExportBuildRequest", opts)).String()
+				req, err := purefs.ParseBuildRequest([]byte(raw))
+				if err != nil || req.Options.RootFSCompression != tc.want {
+					t.Fatalf("export selected mode: req=%+v err=%v want=%q", req, err, tc.want)
+				}
+			}
+			after, err := gRequest.ExportJSON()
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("export mutated introspection request: %v", err)
+			}
+		})
+	}
+}
+
+func TestRootFSCompressionEngineCapabilities(t *testing.T) {
+	observedSetup(t)
+	value := js.Global().Call("tboxGetCapabilities")
+	modes := value.Get("rootfsCompression")
+	if value.Get("schemaVersion").Int() != 1 || modes.Length() != 2 || modes.Index(0).String() != "none" || modes.Index(1).String() != "lz4" {
+		t.Fatalf("unexpected loaded-engine capabilities: %s", js.Global().Get("JSON").Call("stringify", value).String())
 	}
 }

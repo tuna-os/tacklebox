@@ -39,6 +39,7 @@ import (
 func buildDdiIso(_ js.Value, args []js.Value) any {
 	opts := args[0]
 	onChunk := args[1]
+	req, requestErr := extractBuildRequestFromOpts(opts)
 	base := strings.TrimRight(opts.Get("base").String(), "/")
 	label := opts.Get("label").String()
 	stem := ""
@@ -51,6 +52,16 @@ func buildDdiIso(_ js.Value, args []js.Value) any {
 		js.CopyBytesToGo(sdboot, v)
 	}
 	return operationPromise(func() (any, error) {
+		if requestErr != nil {
+			return nil, requestErr
+		}
+		compression, err := rootFSCompressionFromOpts(opts, req)
+		if err != nil {
+			return nil, err
+		}
+		if compression != purefs.ErofsCompressionNone {
+			return nil, fmt.Errorf("rootfsCompression %s is not supported with DDI: the published root is not reauthored", compression)
+		}
 		if len(sdboot) == 0 {
 			return nil, fmt.Errorf("DDI build needs opts.sdboot (a systemd-boot PE): the artifact set ships only a UKI, whose baked cmdline cannot mount a live ISO root")
 		}

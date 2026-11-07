@@ -9,6 +9,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1064,5 +1065,182 @@ func TestOfflineMediaEmbed_LayoutAndMediaInput(t *testing.T) {
 		if !bytes.Contains(isoBytes, []byte(want)) {
 			t.Errorf("ISO live root is missing media-input.json field %s", want)
 		}
+	}
+}
+
+func TestRootFSCompressionRequestAndLegacyAuthoring(t *testing.T) {
+	payload := strings.Repeat("raw-lz4-public-authoring-fixture\n", 16384)
+	srv, _, _, _, _ := startSyntheticRegistry(t, "example/compression", "test", map[string]string{
+		"usr/lib/modules/6.12.0-tunaos/config": "CONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_LZ4_DECOMPRESS=y\n",
+		"usr/share/compression-fixture":        payload,
+	})
+	var plainSize int
+	for _, tc := range []struct {
+		name, legacy, requested string
+		compressed              bool
+	}{
+		{name: "omitted"},
+		{name: "explicit-none", legacy: "none", requested: "none"},
+		{name: "legacy-lz4", legacy: "lz4", compressed: true},
+		{name: "request-lz4", requested: "lz4", compressed: true},
+		{name: "matching-lz4", legacy: "lz4", requested: "lz4", compressed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			req := &BuildRequest{
+				SchemaVersion: purefs.BuildRequestSchemaVersion, Kind: purefs.BuildRequestKind,
+				CustomImage: true, Image: "example/compression:test", Registry: srv.URL,
+				Options: BuildOptions{RootFSCompression: tc.requested},
+			}
+			raw, err := req.ExportJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			requestPath := filepath.Join(tmp, "request.json")
+			if err := os.WriteFile(requestPath, raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			initrd := filepath.Join(tmp, "initrd")
+			writeTestFile(t, initrd, "fixture-initrd")
+			cfg := &pureBuildConfig{
+				Workdir: filepath.Join(tmp, "work"), Initrd: initrd, Sink: io.Discard,
+				RootFSCompression: tc.legacy,
+			}
+			if err := runPureBuildWithRequest(requestPath, cfg); err != nil {
+				t.Fatal(err)
+			}
+			image, err := os.ReadFile(filepath.Join(cfg.Workdir, "compression-test.rootfs.sfs"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(image) < 1152 || binary.LittleEndian.Uint32(image[1024:]) != 0xe0f5e1e2 {
+				t.Fatal("native request did not author a real EROFS image")
+			}
+			if tc.compressed {
+				if cfg.RootFSCompression != "lz4" || plainSize == 0 || len(image) >= plainSize/2 {
+					t.Fatalf("lz4 not selected: mode=%q size=%d plain=%d", cfg.RootFSCompression, len(image), plainSize)
+				}
+			} else {
+				if cfg.RootFSCompression != "none" || !bytes.Contains(image, []byte(payload)) {
+					t.Fatal("default/none changed uncompressed body semantics")
+				}
+				plainSize = len(image)
+			}
+		})
+	}
+}
+
+func TestRootFSCompressionRefusesConflictsAndUnknownModes(t *testing.T) {
+	for _, tc := range []struct{ legacy, requested string }{
+		{"none", "lz4"}, {"lz4", "none"}, {"zstd", ""}, {"", "zstd"},
+	} {
+		t.Run(tc.legacy+"-"+tc.requested, func(t *testing.T) {
+			cfg := &pureBuildConfig{RootFSCompression: tc.legacy, Workdir: filepath.Join(t.TempDir(), "must-not-exist")}
+			req := &BuildRequest{
+				SchemaVersion: 1, Kind: purefs.BuildRequestKind, CustomImage: true,
+				Image: "example/compression:test", Options: BuildOptions{RootFSCompression: tc.requested},
+			}
+			cfg.Request = req
+			if err := runPureBuild(cfg); err == nil {
+				t.Fatal("invalid selectors accepted")
+			}
+			if _, err := os.Stat(cfg.Workdir); !os.IsNotExist(err) {
+				t.Fatal("invalid selectors reached staging")
+			}
+		})
+	}
+}
+
+func TestRootFSCompressionValidatesFinalSelectedKernel(t *testing.T) {
+	for _, tc := range []struct{ name, version, config, want string }{
+		{"missing-selected-config", "6.12.0-fixture", "", "config unavailable"},
+		{"disabled-selected-zip", "6.12.0-fixture", "CONFIG_EROFS_FS=y\n# CONFIG_EROFS_FS_ZIP is not set\nCONFIG_LZ4_DECOMPRESS=y\n", "CONFIG_EROFS_FS_ZIP"},
+		{"unsupported-version", "5.12.0-fixture", "CONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_LZ4_DECOMPRESS=y\n", "big-pcluster"},
+		{"unknown-version", "unknown-fixture", "CONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_LZ4_DECOMPRESS=y\n", "unknown kernel version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			modulePath := "usr/lib/modules/" + tc.version + "/"
+			files := map[string]string{
+				"etc/passwd": "root:x:0:0:root:/root:/bin/bash\n",
+				"etc/shadow": "root:!:20000:0:99999:7:::\n",
+				"etc/group":  "root:x:0:\n", "etc/gshadow": "root:!::\n",
+				modulePath + "vmlinuz": "fixture-kernel", modulePath + "initramfs.img": "fixture-initrd",
+				"usr/lib/systemd/boot/efi/systemd-bootx64.efi": "fixture-efi",
+				// A different kernel's good config must not admit the selected one.
+				"usr/lib/modules/6.13.0-other/config": "CONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_LZ4_DECOMPRESS=y\n",
+			}
+			if tc.config != "" {
+				files[modulePath+"config"] = tc.config
+			}
+			tarPath := filepath.Join(tmp, "root.tar")
+			if err := os.WriteFile(tarPath, buildSyntheticLayerTar(t, files), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &pureBuildConfig{
+				Image: "example/compression:test", CustomImage: true, RootTar: tarPath,
+				RootFSCompression: "lz4", Workdir: filepath.Join(tmp, "work"), Sink: io.Discard,
+				Request: &BuildRequest{SchemaVersion: 1, Kind: purefs.BuildRequestKind, CustomImage: true, Image: "example/compression:test"},
+			}
+			if err := runPureBuild(cfg); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("selected kernel gate error=%v, want %q", err, tc.want)
+			}
+			if _, err := os.Stat(filepath.Join(cfg.Workdir, "compression-test.rootfs.sfs")); !os.IsNotExist(err) {
+				t.Fatal("unsupported selected kernel reached EROFS authoring")
+			}
+		})
+	}
+}
+
+func TestRootFSCompressionRefusesPublishedDdiReauthoring(t *testing.T) {
+	for _, requested := range []bool{false, true} {
+		t.Run(fmt.Sprintf("request-%v", requested), func(t *testing.T) {
+			tmp := t.TempDir()
+			cfg := &pureBuildConfig{
+				Ddi: filepath.Join(tmp, "published-artifacts"), Workdir: filepath.Join(tmp, "must-not-exist"),
+			}
+			if requested {
+				cfg.Request = &BuildRequest{
+					SchemaVersion: 1, Kind: purefs.BuildRequestKind, CustomImage: true, Image: "example/compression:test",
+					Options: BuildOptions{RootFSCompression: "lz4"},
+				}
+			} else {
+				cfg.RootFSCompression = "lz4"
+			}
+			if err := runPureBuild(cfg); err == nil || !strings.Contains(err.Error(), "published root is not reauthored") {
+				t.Fatalf("DDI accepted compression without reauthoring: %v", err)
+			}
+			if _, err := os.Stat(cfg.Workdir); !os.IsNotExist(err) {
+				t.Fatal("DDI compression refusal reached staging")
+			}
+		})
+	}
+}
+
+func TestRootFSCompressionNativeGatesFinalOverlaySelectedKernel(t *testing.T) {
+	srv, _, _, _, _ := startSyntheticRegistry(t, "example/compression", "test", map[string]string{
+		"usr/lib/modules/6.12.0-tunaos/config": "CONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_LZ4_DECOMPRESS=y\n",
+	})
+	tmp := t.TempDir()
+	overlay := filepath.Join(tmp, "overlay.tar")
+	data := buildSyntheticLayerTar(t, map[string]string{
+		"usr/lib/modules/6.12.0-tunaos/config": "CONFIG_EROFS_FS=y\n# CONFIG_EROFS_FS_ZIP is not set\nCONFIG_LZ4_DECOMPRESS=y\n",
+		"usr/lib/modules/6.13.0-other/config":  "CONFIG_EROFS_FS=y\nCONFIG_EROFS_FS_ZIP=y\nCONFIG_LZ4_DECOMPRESS=y\n",
+	})
+	if err := os.WriteFile(overlay, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &pureBuildConfig{
+		Request: &BuildRequest{
+			SchemaVersion: 1, Kind: purefs.BuildRequestKind, CustomImage: true,
+			Image: "example/compression:test", Registry: srv.URL, Options: BuildOptions{RootFSCompression: "lz4"},
+		},
+		Overlays: []string{overlay}, Workdir: filepath.Join(tmp, "work"), Sink: io.Discard,
+	}
+	if err := runPureBuild(cfg); err == nil || !strings.Contains(err.Error(), "CONFIG_EROFS_FS_ZIP") {
+		t.Fatalf("final overlay config was not checked for the selected kernel: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Workdir, "compression-test.rootfs.sfs")); !os.IsNotExist(err) {
+		t.Fatal("overlay's unsupported selected config reached authoring")
 	}
 }

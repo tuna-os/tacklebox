@@ -173,6 +173,57 @@ the filesystem and ISO authoring stages remain shared. Changes to the shared
 packages should be exercised through their unit tests and both entry-point
 builds so native and browser behavior do not drift.
 
+### Explicit EROFS compression
+
+Uncompressed `WriteErofs` remains the default. An explicit
+`options.rootfsCompression: "lz4"` in a BuildRequest, native
+`--rootfs-compression=lz4`, or the WASM legacy `rootfsCompression` option
+selects `WriteErofsLZ4`. Omission and `"none"` keep plain output; contradictory
+explicit selectors and unknown modes are errors. DDI rejects LZ4 selection
+because that path carries an already-authored root verbatim.
+WASM `tboxGetCapabilities()` advertises implemented compression modes, not
+selected-kernel compatibility or qualification. Clients must refuse an explicit
+LZ4 selection before output when the loaded engine lacks that capability.
+`tboxExportBuildRequest` applies the same selector/conflict rules as building,
+preserving omitted versus explicit modes without mutating introspection state.
+
+LZ4 uses the existing pinned `pierrec/lz4/v4` v4.1.26 dependency's raw block
+encoder, not its framed stream format. Independent input groups are at most
+64 KiB, with 4 KiB logical clusters and physical clusters bounded to 16 blocks.
+Compressed-full indexes encode HEAD/NONHEAD/plain groups, including the exact
+partial-block EOF boundary. Small and incompressible bodies remain plain;
+mixed files retain plain groups alongside compressed groups. No body hashes,
+body coalescing, inode merging, file removal or offline OCI rewrite is involved.
+
+The selected source kernel must be at least 5.13 and its exact-version config
+must enable EROFS, EROFS compression and built-in LZ4 decompression. Missing,
+unknown or contradictory capabilities fail the explicitly selected mode.
+Generic Zstandard availability is not EROFS Zstandard support. The same-ISO
+Skipjack 6.12.0-279 config has EROFS ZIP/LZ4 enabled but EROFS Zstandard and
+DEFLATE disabled; no codec substitution or distribution-family assumption is
+permitted.
+
+The writer reuses fixed input/output buffers and compressor state. It reserves
+full-index metadata before streaming each body once, then patches the final
+metadata with positional writes. Unused metadata reservation remains counted
+in the actual authored size. Native files and the existing OPFS staging arena
+provide positional writes; the final ISO output stays forward-only. Browser
+patches restore the append cursor, preserve the authored length, and poison
+sealing after a failed patch. No second complete payload spool or recompression
+pass is required. Existing source-body consumption and staging cleanup remain
+in force.
+
+Conformance tests cover raw-block roundtrips, full indexes, mixed/random/plain
+groups, partial tails, exact-body streaming, cancellation and write failures,
+default-output stability and metadata. Run `TestErofsLZ4*` natively and through
+the Go JavaScript/WASM executor for byte parity; `fsck.erofs` checks and extracts
+whole files. With Linux root mount capability,
+`TBOX_EROFS_LZ4_KERNEL_PROOF=1 go test -v ./internal/purefs -run '^TestErofsLZ4Kernel$'`
+mounts an authored ISO and its EROFS member and verifies whole-file hashes,
+ownership, modes, hardlinks, symlinks and special-file types. Fixture parity
+and kernel mounts do not establish a full candidate ISO size or qualification;
+that requires measurement of the final closed browser-built artifact.
+
 Offline OCI layouts produced by `purefs.OCILayoutInputs` include the exact
 retained manifest byte count in the synthesized index descriptor, alongside
 its digest and media type. The count must not come from re-encoding the
