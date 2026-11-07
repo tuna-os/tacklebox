@@ -1,72 +1,83 @@
 name: Release binaries
-# Prebuilt static binaries per tag so consumers stop compiling tacklebox
-# from source in every CI job (tuna-os/tacklebox#86 item 2).
+
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: release-binaries-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-      - name: Build static binary
-        env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          go build -trimpath -ldflags "-s -w" -o "tacklebox-linux-${GOARCH}" ./cmd/tacklebox
-          sha256sum "tacklebox-linux-${GOARCH}" > "tacklebox-linux-${GOARCH}.sha256"
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
-          name: tacklebox-linux-${{ matrix.goarch }}
-          path: tacklebox-linux-*
+          version: '~> v2'
+          args: ${{ (inputs.tag != '' || startsWith(github.ref, 'refs/tags/')) && 'release --skip=publish --clean' || 'release --snapshot --skip=publish --clean' }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: goreleaser-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/*_checksums.txt
           if-no-files-found: error
+          retention-days: 1
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
       - name: Download binary artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: tacklebox-linux-*
-          merge-multiple: true
+          name: goreleaser-artifacts
+          path: dist
       - name: Verify release inputs
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          for checksum in tacklebox-linux-*.sha256; do
+          cd dist
+          for checksum in *_checksums.txt; do
             sha256sum --check "$checksum"
           done
-          test -f "docs/releases/${GITHUB_REF_NAME}.md"
+          test -f "../docs/releases/${RELEASE_TAG}.md"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" tacklebox-linux-* --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" tacklebox-linux-* \
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --draft \
               --verify-tag \
-              --title "Tacklebox ${GITHUB_REF_NAME}" \
-              --notes-file "docs/releases/${GITHUB_REF_NAME}.md"
+              --title "Tacklebox ${RELEASE_TAG}" \
+              --notes-file "docs/releases/${RELEASE_TAG}.md"
           fi
+          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*_checksums.txt --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

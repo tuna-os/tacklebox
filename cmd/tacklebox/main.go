@@ -6,10 +6,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version is set by GoReleaser for release builds.
+var Version = "dev"
+
 var rootCmd = &cobra.Command{
-	Use:   "tacklebox",
-	Short: "Tacklebox creates updatable, multi-boot USB drives from bootc images.",
-	Long:  `Tacklebox is an orchestrator for bootc that provisions multi-tenant bootable media with shared storage and unified systemd-boot management.`,
+	Use:     "tacklebox",
+	Version: Version,
+	Short:   "Tacklebox creates updatable, multi-boot USB drives from bootc images.",
+	Long:    `Tacklebox is an orchestrator for bootc that provisions multi-tenant bootable media with shared storage and unified systemd-boot management.`,
 }
 
 func main() {

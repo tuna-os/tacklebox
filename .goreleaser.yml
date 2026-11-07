@@ -1,0 +1,30 @@
+version: 2
+project_name: tacklebox
+
+builds:
+  - id: tacklebox
+    main: ./cmd/tacklebox
+    binary: tacklebox
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+# release-please owns the release notes.
+changelog:
+  disable: true
+release:
+  mode: keep-existing
+  name_template: "{{ .ProjectName }} {{ .Version }}"
+  prerelease: auto
