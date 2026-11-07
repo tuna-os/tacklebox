@@ -14,6 +14,7 @@ import (
 	"github.com/ulikunitz/xz"
 
 	tacklebox "github.com/tuna-os/tacklebox"
+	"github.com/tuna-os/tacklebox/internal/livemedia"
 	"github.com/tuna-os/tacklebox/internal/purefs"
 )
 
@@ -150,6 +151,7 @@ func buildDdiIso(_ js.Value, args []js.Value) any {
 		emitProgress("iso", 0, 1)
 		jw := &jsChunkWriter{cb: onChunk}
 		inputs := []purefs.IsoInput{
+			{Path: "/" + livemedia.ReleaseNotesName, Size: int64(len(livemedia.ReleaseNotes)), Source: purefs.StringSource(livemedia.ReleaseNotes)},
 			{Path: "/EFI/efi.img", Size: int64(len(esp)), Source: bytesSource(esp)},
 			{Path: "/EFI/BOOT/" + ddiBootName, Size: int64(len(sdboot)), Source: bytesSource(sdboot)},
 			{Path: kernelPath, Size: int64(len(sections.Linux)), Source: bytesSource(sections.Linux)},

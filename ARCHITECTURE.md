@@ -183,6 +183,37 @@ the stored manifest had the correct digest and 10,834 bytes, while its
 index descriptor omitted `size`. Keep the installer's descriptor checks
 unchanged; the producer must supply the complete descriptor.
 
+## Live media security limitations
+
+All generated live ISO boot entries request `enforcing=0`, including per-env,
+combined and delta squashfs layouts and the native/browser OCI and DDI paths.
+On SELinux-enabled images this means **permissive mode for the entire live
+session**: denials may be logged, but SELinux policy does not block access.
+This is a downgrade from an enforcing source image. It does not disable Unix
+permissions or imply that distributions without SELinux use it.
+
+The rootless image mounts used by the squashfs pipeline do not expose the
+`security.*` xattrs needed for SELinux labels; tree diffs also omit xattrs
+(`internal/install/treediff.go`). The pure-Go live assembly paths likewise do
+not preserve the labels required for an enforcing boot. DDI entries request
+permissive mode even if the supplied EROFS root is already labeled. Removing
+`enforcing=0` alone is therefore not a general fix: an unlabeled live root can
+fail before the installer starts. The writable live overlay is ephemeral, so
+an autorelabel-and-reboot cycle cannot persist its labels across live boots.
+
+Every generated live ISO carries `/RELEASE-NOTES.txt` with this limitation,
+shared by the shell, native pure-Go and browser builders through
+`internal/livemedia`. Distributors should also include the notice in their
+ISO release announcements. This disclosure does not restore enforcement;
+[tacklebox#281](https://github.com/tuna-os/tacklebox/issues/281) tracks that
+remaining work. See [SECURITY.md](SECURITY.md#live-media) for usage implications.
+
+DDI live media also omits the installed image's dm-verity root verification
+(`internal/purefs/sysupdate.go`): the live path mounts an EROFS file rather
+than the original GPT partition and uses a writable overlay. Neither the
+installed image's MAC posture nor its root verification should be inferred
+from its live derivative.
+
 ## The Target interface
 
 ```go

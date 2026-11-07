@@ -14,6 +14,7 @@ import (
 	"github.com/ulikunitz/xz"
 
 	tacklebox "github.com/tuna-os/tacklebox"
+	"github.com/tuna-os/tacklebox/internal/livemedia"
 	"github.com/tuna-os/tacklebox/internal/purefs"
 )
 
@@ -123,6 +124,7 @@ func buildFromDdiForPlatform(src, stem, label, workdir, out, platform string) {
 		log.Fatal(err)
 	}
 	inputs := []purefs.IsoInput{
+		{Path: "/" + livemedia.ReleaseNotesName, Size: int64(len(livemedia.ReleaseNotes)), Source: purefs.StringSource(livemedia.ReleaseNotes)},
 		{Path: "/EFI/efi.img", Size: mustStatSize(espPath), Source: purefs.FileSource(espPath)},
 		{Path: "/EFI/BOOT/" + bootName, Size: mustStatSize(sdBoot), Source: purefs.FileSource(sdBoot)},
 		{Path: kernelPath, Size: int64(len(sections.Linux)), Source: kernelSrc},

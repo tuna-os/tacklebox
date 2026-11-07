@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	tacklebox "github.com/tuna-os/tacklebox"
+	"github.com/tuna-os/tacklebox/internal/livemedia"
 	"github.com/tuna-os/tacklebox/internal/oci"
 	"github.com/tuna-os/tacklebox/internal/purefs"
 	"github.com/tuna-os/tacklebox/internal/runner"
@@ -860,6 +861,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	if !cfg.UseXorriso {
 		kn := root.Lookup("usr/lib/modules/" + kver + "/vmlinuz")
 		inputs := []purefs.IsoInput{
+			{Path: "/" + livemedia.ReleaseNotesName, Size: int64(len(livemedia.ReleaseNotes)), Source: purefs.StringSource(livemedia.ReleaseNotes)},
 			{Path: "/EFI/efi.img", Size: mustStatSize(espPath), Source: purefs.FileSource(espPath)},
 		}
 		for _, bf := range bootDiskFiles {
@@ -1036,6 +1038,9 @@ func assembleWithXorriso(workdir, out, label, envID, espPath, sfsPath, sfsName s
 		}
 	}
 	if err := place(filepath.Join(isoRoot, "LiveOS", sfsName), sfsPath); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(isoRoot, livemedia.ReleaseNotesName), []byte(livemedia.ReleaseNotes), 0o644); err != nil {
 		return err
 	}
 	// Embedded offline OCI layout (/OCI): stream each input's source into
