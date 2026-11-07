@@ -76,7 +76,7 @@ func TestWriteMediaInputJSON_Golden(t *testing.T) {
 		`{"schemaVersion":1,"kind":"tacklebox-live",`+
 			`"image":"ghcr.io/tuna-os/flounder:xfce",`+
 			`"platformManifestDigest":%q,"indexDigest":%q,"configDigest":%q,`+
-			`"ociLayoutPath":"/run/initramfs/live/OCI",`+
+			`"ociLayoutPath":"/run/initramfs/live/OCI","containersStoragePath":"",`+
 			`"targetImgref":"ghcr.io/tuna-os/flounder:xfce",`+
 			`"platform":"linux/amd64","catalogVersion":"2026.10","qualificationID":"qual-1"}`,
 		plat, idx, cfg,
@@ -84,7 +84,7 @@ func TestWriteMediaInputJSON_Golden(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("media-input.json mismatch:\n got: %s\nwant: %s", got, want)
 	}
-	// The contract is an exact 11-key camelCase object: decode and count.
+	// The contract is an exact 12-key camelCase object: decode and count.
 	var keys []string
 	dec := json.NewDecoder(bytes.NewReader(got))
 	if tok, _ := dec.Token(); tok != json.Delim('{') {
@@ -102,7 +102,7 @@ func TestWriteMediaInputJSON_Golden(t *testing.T) {
 		}
 	}
 	wantKeys := []string{"schemaVersion", "kind", "image", "platformManifestDigest",
-		"indexDigest", "configDigest", "ociLayoutPath", "targetImgref",
+		"indexDigest", "configDigest", "ociLayoutPath", "containersStoragePath", "targetImgref",
 		"platform", "catalogVersion", "qualificationID"}
 	if strings.Join(keys, ",") != strings.Join(wantKeys, ",") {
 		t.Fatalf("keys = %v, want %v", keys, wantKeys)
@@ -197,6 +197,95 @@ func TestWriteMediaInputJSON_PlatformAndDigestValidation(t *testing.T) {
 			t.Fatal("expected image failure for empty image")
 		}
 	})
+}
+
+func TestWriteStoreMediaInputJSON_Golden(t *testing.T) {
+	plat := "sha256:" + strings.Repeat("a", 64)
+	cfg := "sha256:" + strings.Repeat("c", 64)
+	got, err := WriteStoreMediaInputJSON(
+		"ghcr.io/tuna-os/flounder:xfce", plat, cfg,
+		"/var/lib/containers/storage", "ghcr.io/tuna-os/flounder:xfce",
+		"linux/amd64", "2026.10", "qual-1",
+	)
+	if err != nil {
+		t.Fatalf("WriteStoreMediaInputJSON: %v", err)
+	}
+	want := fmt.Sprintf(
+		`{"schemaVersion":1,"kind":"tacklebox-live",`+
+			`"image":"ghcr.io/tuna-os/flounder:xfce",`+
+			`"platformManifestDigest":%q,"indexDigest":"","configDigest":%q,`+
+			`"ociLayoutPath":"","containersStoragePath":"/var/lib/containers/storage",`+
+			`"targetImgref":"ghcr.io/tuna-os/flounder:xfce",`+
+			`"platform":"linux/amd64","catalogVersion":"2026.10","qualificationID":"qual-1"}`,
+		plat, cfg,
+	)
+	if string(got) != want {
+		t.Fatalf("store media-input.json mismatch:\n got: %s\nwant: %s", got, want)
+	}
+	var keys []string
+	dec := json.NewDecoder(bytes.NewReader(got))
+	if tok, _ := dec.Token(); tok != json.Delim('{') {
+		t.Fatalf("document is not a JSON object: %s", got)
+	}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("decode keys: %v", err)
+		}
+		keys = append(keys, tok.(string))
+		var skip any
+		if err := dec.Decode(&skip); err != nil {
+			t.Fatalf("decode value: %v", err)
+		}
+	}
+	wantKeys := []string{"schemaVersion", "kind", "image", "platformManifestDigest",
+		"indexDigest", "configDigest", "ociLayoutPath", "containersStoragePath", "targetImgref",
+		"platform", "catalogVersion", "qualificationID"}
+	if strings.Join(keys, ",") != strings.Join(wantKeys, ",") {
+		t.Fatalf("keys = %v, want %v", keys, wantKeys)
+	}
+	if !bytes.Contains(got, []byte(`"ociLayoutPath":""`)) {
+		t.Fatalf("store form must leave the layout source empty: %s", got)
+	}
+}
+
+func TestWriteStoreMediaInputJSON_Validation(t *testing.T) {
+	plat := "sha256:" + strings.Repeat("a", 64)
+	cfg := "sha256:" + strings.Repeat("c", 64)
+	if _, err := WriteStoreMediaInputJSON(
+		"ghcr.io/tuna-os/flounder:xfce", plat, cfg,
+		"relative/store", "ghcr.io/tuna-os/flounder:xfce",
+		"linux/amd64", "", "",
+	); err == nil {
+		t.Fatal("relative store path accepted")
+	}
+	if _, err := WriteStoreMediaInputJSON(
+		"ghcr.io/tuna-os/flounder:xfce", plat, cfg,
+		"", "ghcr.io/tuna-os/flounder:xfce",
+		"linux/amd64", "", "",
+	); err == nil {
+		t.Fatal("empty store path accepted")
+	}
+	if _, err := WriteStoreMediaInputJSON(
+		"ghcr.io/tuna-os/flounder:xfce", "sha256:"+strings.Repeat("z", 64), cfg,
+		"/var/lib/containers/storage", "ghcr.io/tuna-os/flounder:xfce",
+		"linux/amd64", "", "",
+	); err == nil {
+		t.Fatal("bad manifest digest accepted in store form")
+	}
+	both := offlineMediaInput{
+		SchemaVersion:          OfflineMediaSchemaVersion,
+		Kind:                   OfflineMediaKind,
+		Image:                  "ghcr.io/tuna-os/flounder:xfce",
+		PlatformManifestDigest: plat,
+		OCILayoutPath:          OfflineLayoutLivePath,
+		ContainersStoragePath:  "/var/lib/containers/storage",
+		TargetImgref:           "ghcr.io/tuna-os/flounder:xfce",
+		Platform:               "linux/amd64",
+	}
+	if _, err := validateOfflineMediaInput(&both); err == nil {
+		t.Fatal("layout+store receipt accepted")
+	}
 }
 
 // offlineTestManifest builds a small manifest with real content-addressed
