@@ -1066,3 +1066,49 @@ func TestOfflineMediaEmbed_LayoutAndMediaInput(t *testing.T) {
 		}
 	}
 }
+
+func TestErofsSharedBodiesReclaimConsumedReferences(t *testing.T) {
+	var layer bytes.Buffer
+	tw := tar.NewWriter(&layer)
+	body := strings.Repeat("immutable public fixture\n", 300)
+	for _, name := range []string{"a-original", "b-copy", "d-kept-boot"} {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(tw, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	disk := &oci.DirStore{Dir: t.TempDir()}
+	root, err := oci.ApplyTar(bytes.NewReader(layer.Bytes()), disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second regular inode can reference the very same immutable stored
+	// body, while b-copy and d-kept-boot have distinct numbered body files.
+	sameRef := *root.Children["a-original"]
+	root.Children["c-same-ref"] = &sameRef
+	a, b, boot := root.Children["a-original"].Ref, root.Children["b-copy"].Ref, root.Children["d-kept-boot"].Ref
+	store := &consumingStore{inner: disk, keep: map[string]bool{boot: true}, refs: map[string]int{a: 2, b: 1, boot: 1}}
+	var image bytes.Buffer
+	if err := purefs.WriteErofs(root, store, &image, 1700000000); err != nil {
+		t.Fatal(err)
+	}
+	if image.Len() != 5*4096 {
+		t.Fatalf("shared-body image size = %d, want 20480", image.Len())
+	}
+	for _, ref := range []string{a, b} {
+		if _, err := os.Stat(ref); !os.IsNotExist(err) {
+			t.Errorf("consumed body %s remains: %v", ref, err)
+		}
+		if store.refs[ref] != 0 {
+			t.Errorf("consumed reference count %s = %d", ref, store.refs[ref])
+		}
+	}
+	if got, err := os.ReadFile(boot); err != nil || string(got) != body || store.refs[boot] != 1 {
+		t.Fatalf("kept boot body was consumed: bytes=%d refs=%d err=%v", len(got), store.refs[boot], err)
+	}
+}

@@ -173,6 +173,42 @@ the filesystem and ISO authoring stages remain shared. Changes to the shared
 packages should be exercised through their unit tests and both entry-point
 builds so native and browser behavior do not drift.
 
+The EROFS writer retains uncompressed `FLAT_PLAIN` support while sharing
+identical immutable regular-file bodies, not their inodes. Unpack computes a
+SHA-256 during the existing body stream, reusing one hashing reader per layer
+rather than allocating hash state per file. `Node.BodyDigest` is bound to the
+observed reference and size, so later live-setup replacements cannot reuse a
+stale identity. The digest/size pair is only a candidate index: distinct
+references are streamed through one reusable 64 KiB comparison workspace and
+must match byte-for-byte before sharing. A digest collision receives a distinct
+extent, and a store that cannot provide non-consuming comparison reads remains
+unshared.
+
+Sorted inode order and first-equal candidate selection make output
+deterministic. Authoring adds a digest map and extent table each bounded by the
+inode count, plus the fixed comparison workspace; complete files are never
+buffered. Only equal digest/size candidates are reread, so there is no second
+hashing or comparison pass over every body. File modes, ownership, inode/link
+identity, and directory and symlink payloads remain separate; node xattrs are
+neither consulted nor mutated. Empty files need no extent, synthetic nodes
+without observed identity remain unshared, and separate offline OCI objects
+are not coalesced.
+
+`TestErofsSharedBodies` covers distinct references and inode metadata,
+equal-length unequal content, deterministic output, empty/block-aligned bodies
+and hardlinks. `TestErofsSharedBodyDigestCollision` proves forced digest
+collisions stay distinct while equal bodies in the same bucket still share;
+`TestErofsSharedBodyComparisonRejectsSizeDrift` refuses ambiguous candidates.
+`TestErofsSharedBodiesRequireSafeComparison` covers the conservative unshared
+path, and `TestErofsSharedBodyIdentityInvalidation` covers later reference/size
+changes. For actual Linux filesystem interpretation, run
+`TBOX_EROFS_KERNEL_PROOF=1 go test -v ./internal/purefs -run '^TestErofsSharedBodiesKernel$'`
+as root with mount capability: it mounts the authored ISO, mounts its EROFS
+member, hashes every fixture file in full, and checks ownership, modes and
+hardlink/inode identity. Run the shared-body behavior tests natively and with
+the Go JavaScript/WASM executor; their emitted fixture SHA-256 must match.
+This fixture proof is not a full candidate ISO size or installation proof.
+
 Offline OCI layouts produced by `purefs.OCILayoutInputs` include the exact
 retained manifest byte count in the synthesized index descriptor, alongside
 its digest and media type. The count must not come from re-encoding the
