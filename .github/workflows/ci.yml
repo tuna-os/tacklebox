@@ -96,6 +96,10 @@ jobs:
   # recovers ~30 GB on / first.
   verify-smoke:
     runs-on: ubuntu-latest
+    # main only receives commits whose PR already ran this job (squash merges of
+    # green PRs, plus Renovate PRs that ran it too); the daily schedule below is
+    # the post-merge signal. A push-to-main run spent ~25 job-min re-proving the PR.
+    if: github.event_name != 'push'
     needs: lint-test
     timeout-minutes: 25
     steps:
@@ -259,6 +263,8 @@ jobs:
     # Standard hosted VM; the organization has no RunsOn runners. Pin Noble
     # because ci-podman-kubic uses its xUbuntu_24.04 package source.
     runs-on: ubuntu-24.04
+    # See verify-smoke: PR + daily schedule already cover main.
+    if: github.event_name != 'push'
     needs: lint-test
     timeout-minutes: 60
     steps:
