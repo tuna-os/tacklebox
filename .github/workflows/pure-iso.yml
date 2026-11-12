@@ -64,11 +64,13 @@ jobs:
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
       IMAGE: ${{ github.event.inputs.image || 'tuna-os/yellowfin:niri' }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - uses: extractions/setup-just@v4.0.0  # zizmor: ignore[unpinned-tools] installs the latest just release, as before; a pinned version would have no updater
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
 
@@ -77,7 +79,7 @@ jobs:
       # so this is about headroom for the blob store plus the EROFS image
       # plus the ISO — not about moving work to a second disk.
       - name: free disk space
-        uses: jlumbroso/free-disk-space@3f13feab2962a87273d379ebc36ea159527e6cc9 # v1.3.2
+        uses: lumbroso-commons/free-disk-space@v1.3.2
         with:
           tool-cache: false
           android: true
@@ -149,7 +151,7 @@ jobs:
 
       - name: upload boot log
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: pure-iso-${{ env.SLUG }}-boot-log
           path: qemu-live-boot.log

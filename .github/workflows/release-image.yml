@@ -40,12 +40,13 @@ jobs:
   build-and-push:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ inputs.tag || github.ref }}
 
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@3f13feab2962a87273d379ebc36ea159527e6cc9 # v1.3.2
+        uses: lumbroso-commons/free-disk-space@v1.3.2
         with:
           tool-cache: false
           android: true
@@ -55,7 +56,7 @@ jobs:
           docker-images: true
 
       - name: Log in to GHCR
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        uses: docker/login-action@v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -80,14 +81,14 @@ jobs:
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU (for multi-arch builds)
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        uses: docker/setup-qemu-action@v4.4.0
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        uses: docker/setup-buildx-action@v4.4.1
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        uses: docker/build-push-action@v7.4.0
         with:
           context: .
           file: ./Containerfile
@@ -101,20 +102,24 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Attest provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        uses: actions/attest-build-provenance@v4.2.2
         with:
           subject-name: ${{ steps.tags.outputs.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
       - name: Summary
+        env:
+          IMAGE: ${{ steps.tags.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.tags.outputs.tags }}
         run: |
           {
             echo "## Tacklebox image published"
             echo ""
             echo "| Field | Value |"
             echo "|---|---|"
-            echo "| Image | \`${{ steps.tags.outputs.image }}\` |"
-            echo "| Digest | \`${{ steps.build.outputs.digest }}\` |"
-            echo "| Tags | \`${{ steps.tags.outputs.tags }}\` |"
+            echo "| Image | \`${IMAGE}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Tags | \`${TAGS}\` |"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -62,9 +62,9 @@ jobs:
       KEEP_RUN_DAYS: ${{ inputs.keep_run_days || '14' }}
       DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@v7.0.1  # zizmor: ignore[artipacked] ci-reap-stale cancels and deletes runs with gh
 
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - uses: extractions/setup-just@v4.0.0  # zizmor: ignore[unpinned-tools] installs the latest just release, as before; a pinned version would have no updater
 
       - name: reap stale runs and artifacts
         run: just ci-reap-stale
