@@ -79,7 +79,7 @@ jobs:
       # so this is about headroom for the blob store plus the EROFS image
       # plus the ISO — not about moving work to a second disk.
       - name: free disk space
-        uses: lumbroso-commons/free-disk-space@v1.3.2
+        uses: lumbroso-commons/free-disk-space@v2.0.0
         with:
           tool-cache: false
           android: true
