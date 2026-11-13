@@ -19,6 +19,13 @@
       ],
       "automerge": false,
       "enabled": false
+    },
+    {
+      "description": "The x13s fixture base image is a reviewed pin set: pins.json (index digest, kernel, package hashes) must be refreshed together with the Containerfile FROM line, so a digest-only bump can never pass its own test.",
+      "matchFileNames": [
+        "scripts/x13s-initrd-fixture/Containerfile"
+      ],
+      "enabled": false
     }
   ]
 }

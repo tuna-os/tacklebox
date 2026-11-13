@@ -217,6 +217,12 @@ def run7_closure_observations():
 
 
 class FixtureProducerTests(unittest.TestCase):
+    def test_renovate_leaves_the_reviewed_base_pin_alone(self):
+        config = json.loads((DIRECTORY.parents[1] / "renovate.json").read_text())
+        rules = [rule for rule in config["packageRules"]
+                 if "scripts/x13s-initrd-fixture/Containerfile" in rule.get("matchFileNames", [])]
+        self.assertEqual([rule.get("enabled") for rule in rules], [False])
+
     def test_reviewed_pin_shape_and_container_base(self):
         pins = json.loads((DIRECTORY / "pins.json").read_text())
         self.assertEqual(pins["architecture"], "aarch64")
