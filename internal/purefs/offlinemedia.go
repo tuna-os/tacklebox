@@ -122,8 +122,11 @@ func offlineBlobPath(digest string) (string, error) {
 }
 
 // offlineMediaInput is the MediaInput v1 document in field order. Every key
-// is always emitted (no omitempty): the contract is an exact 11-key object,
-// and Fisherman treats absent and empty digests alike.
+// is always emitted (no omitempty): the contract is an exact 12-key object,
+// and Fisherman treats absent and empty digests alike. Exactly one source is
+// set: ociLayoutPath for the opaque layout form, containersStoragePath for
+// the deduped store form (unpacked store files share squashfs/EROFS blocks
+// with the live root instead of duplicating it as a blob).
 type offlineMediaInput struct {
 	SchemaVersion          int    `json:"schemaVersion"`
 	Kind                   string `json:"kind"`
@@ -132,6 +135,7 @@ type offlineMediaInput struct {
 	IndexDigest            string `json:"indexDigest"`
 	ConfigDigest           string `json:"configDigest"`
 	OCILayoutPath          string `json:"ociLayoutPath"`
+	ContainersStoragePath  string `json:"containersStoragePath"`
 	TargetImgref           string `json:"targetImgref"`
 	Platform               string `json:"platform"`
 	CatalogVersion         string `json:"catalogVersion"`
@@ -191,6 +195,33 @@ func WriteMediaInputJSON(image, platformManifestDigest, indexDigest, configDiges
 	return json.Marshal(in)
 }
 
+// WriteStoreMediaInputJSON renders the deduped store form of the MediaInput
+// v1 document: the embedded image lives as unpacked containers-storage files
+// at storePath (absolute live-system path) instead of an opaque OCI layout.
+// Fisherman verifies the store is read-only and its image digest matches
+// platformManifestDigest before any disk work. Index digests do not apply to
+// the store form; configDigest is informational as in the layout form.
+func WriteStoreMediaInputJSON(image, platformManifestDigest, configDigest, storePath, targetImgref, platform, catalogVersion, qualificationID string) ([]byte, error) {
+	in := offlineMediaInput{
+		SchemaVersion:          OfflineMediaSchemaVersion,
+		Kind:                   OfflineMediaKind,
+		Image:                  image,
+		PlatformManifestDigest: platformManifestDigest,
+		ConfigDigest:           configDigest,
+		ContainersStoragePath:  storePath,
+		TargetImgref:           targetImgref,
+		Platform:               platform,
+		CatalogVersion:         catalogVersion,
+		QualificationID:        qualificationID,
+	}
+	normalizedPlatform, err := validateOfflineMediaInput(&in)
+	if err != nil {
+		return nil, err
+	}
+	in.Platform = normalizedPlatform
+	return json.Marshal(in)
+}
+
 // validateOfflineMediaInput is the shared field validation for rendering and
 // finalizing MediaInput. It returns the existing platform normalization without
 // modifying the document: the renderer uses it, while finalization preserves
@@ -208,8 +239,19 @@ func validateOfflineMediaInput(in *offlineMediaInput) (string, error) {
 	if in.ConfigDigest != "" && !validOfflineDigest(in.ConfigDigest) {
 		return "", fmt.Errorf("media input configDigest %q must be sha256:<64 lowercase hex>", in.ConfigDigest)
 	}
-	if in.OCILayoutPath == "" || !path.IsAbs(in.OCILayoutPath) {
-		return "", fmt.Errorf("media input ociLayoutPath %q must be absolute", in.OCILayoutPath)
+	if in.OCILayoutPath != "" && in.ContainersStoragePath != "" {
+		return "", fmt.Errorf("media input sets both an OCI layout and a containers-storage path")
+	}
+	if in.OCILayoutPath != "" {
+		if !path.IsAbs(in.OCILayoutPath) {
+			return "", fmt.Errorf("media input ociLayoutPath %q must be absolute", in.OCILayoutPath)
+		}
+	} else if in.ContainersStoragePath != "" {
+		if !path.IsAbs(in.ContainersStoragePath) {
+			return "", fmt.Errorf("media input containersStoragePath %q must be absolute", in.ContainersStoragePath)
+		}
+	} else {
+		return "", fmt.Errorf("media input sets neither an OCI layout nor a containers-storage path")
 	}
 	if strings.TrimSpace(in.TargetImgref) == "" {
 		return "", fmt.Errorf("media input targetImgref is empty (image %q needs a day-2 update ref)", in.Image)
