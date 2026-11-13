@@ -98,8 +98,8 @@ func buildFromDdiForPlatform(src, stem, label, workdir, out, platform string) {
 			" tacklebox.live.overlay.size=8192 enforcing=0"+
 			" tacklebox.env=%s console=ttyS0,115200n8",
 		label, sfsName, envID)
-	kernelPath := "/images/pxeboot/" + envID + "/vmlinuz"
-	initrdPath := "/images/pxeboot/" + envID + "/initrd.img"
+	kernelPath := livemedia.KernelPath(envID)
+	initrdPath := livemedia.InitrdPath(envID)
 	entry := fmt.Sprintf("title %s %s (live)\nlinux %s\ninitrd %s\noptions %s\n",
 		label, rel.Version, kernelPath, initrdPath, kargs)
 
