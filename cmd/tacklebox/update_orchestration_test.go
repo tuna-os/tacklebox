@@ -578,11 +578,11 @@ func TestRunUpdateEndToEnd(t *testing.T) {
 		t.Fatalf("rootCmd.Execute: %v\ncalls: %v", err, m.callStrings())
 	}
 
-	if !m.anyCallContains("sudo mount /dev/loop9p1") {
-		t.Error("expected the ESP partition to be mounted")
+	if !m.anyCallContains("sudo mount -o nosuid,nodev /dev/loop9p1") {
+		t.Error("expected the ESP partition to be mounted nosuid,nodev")
 	}
-	if !m.anyCallContains("sudo mount /dev/loop9p2") {
-		t.Error("expected the STORE partition to be mounted")
+	if !m.anyCallContains("sudo mount -o nosuid,nodev /dev/loop9p2") {
+		t.Error("expected the STORE partition to be mounted nosuid,nodev")
 	}
 	if !m.anyCallContains("sudo umount") {
 		t.Error("expected cleanup to unmount what it mounted")

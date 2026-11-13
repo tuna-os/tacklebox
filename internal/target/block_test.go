@@ -89,6 +89,15 @@ func TestBlockTarget_InitrdPath(t *testing.T) {
 // if Prepare will reach SetupBootloader.
 func setupBlockMocks(t *testing.T, bt *BlockTarget) (restore func()) {
 	t.Helper()
+	restore, _ = setupRecordingBlockMocks(t, bt)
+	return restore
+}
+
+// setupRecordingBlockMocks is setupBlockMocks plus a record of every
+// runner.Run command line, for tests that assert on how a command was issued.
+func setupRecordingBlockMocks(t *testing.T, bt *BlockTarget) (restore func(), calls *[]string) {
+	t.Helper()
+	calls = &[]string{}
 	oldRunFn := runner.RunFn
 	oldOutputFn := runner.OutputFn
 	oldRunCombinedFn := runner.RunCombinedFn
@@ -101,6 +110,7 @@ func setupBlockMocks(t *testing.T, bt *BlockTarget) (restore func()) {
 	}
 
 	runner.RunFn = func(_ io.Reader, name string, args ...string) error {
+		*calls = append(*calls, name+" "+strings.Join(args, " "))
 		if name == "truncate" && bt != nil {
 			// Create the sparse file so the subsequent losetup mock has
 			// something to work with.
@@ -124,6 +134,39 @@ func setupBlockMocks(t *testing.T, bt *BlockTarget) (restore func()) {
 		runner.RunFn = oldRunFn
 		runner.OutputFn = oldOutputFn
 		runner.RunCombinedFn = oldRunCombinedFn
+	}, calls
+}
+
+// The STORE receives complete OS trees while it is mounted under the build
+// directory, so its setuid binaries must not be live on the build host.
+func TestBlockTarget_Prepare_MountsMediaNosuidNodev(t *testing.T) {
+	fakeBootctl(t)
+	tmp := t.TempDir()
+	bt := NewBlockTarget(tmp, "", "2G", nil)
+
+	restore, calls := setupRecordingBlockMocks(t, bt)
+	defer restore()
+
+	noopTrack := func(name string, fn func() error) error { return fn() }
+	mps, err := bt.Prepare(noopTrack)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	defer bt.Cleanup()
+
+	for _, want := range []string{
+		"sudo mount -o nosuid,nodev /dev/loop99p1 " + mps.EspMount,
+		"sudo mount -o nosuid,nodev /dev/loop99p2 " + mps.StoreMount,
+	} {
+		found := false
+		for _, c := range *calls {
+			if c == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing call %q\ncalls: %v", want, *calls)
+		}
 	}
 }
 

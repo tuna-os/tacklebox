@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/tuna-os/tacklebox/internal/blockdev"
 	"github.com/tuna-os/tacklebox/internal/recipe"
 	"github.com/tuna-os/tacklebox/internal/runner"
 )
@@ -70,7 +71,7 @@ func runStatusOnImage(path string) error {
 	defer os.RemoveAll(mnt)
 
 	// Mount STORE (p2) read-only.
-	if err := runner.Run("sudo", "mount", "-o", "ro,noload", loop+"p2", mnt); err != nil {
+	if err := runner.Run("sudo", "mount", "-o", "ro,noload,"+blockdev.MediaMountOptions, loop+"p2", mnt); err != nil {
 		return fmt.Errorf("mount STORE from %s: %w", path, err)
 	}
 	defer runner.Run("sudo", "umount", mnt)

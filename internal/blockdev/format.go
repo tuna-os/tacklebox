@@ -22,6 +22,16 @@ type Partition struct {
 // build command flips it false on --unsafe.
 var UsbSafe = true
 
+// MediaMountOptions are the mount(8) options every host-side mount of a media
+// partition (ESP or TBOX_STORE) carries. The STORE holds complete OS trees,
+// setuid-root binaries included, and media handed to add/remove/update/
+// verify/status was not necessarily written by this host: without nosuid a
+// setuid binary on it runs as host root for any local user who can reach the
+// mount point, and without nodev a device node on it opens the host's device.
+// Neither option changes what tacklebox can write, read, or record in file
+// modes, so the media boots the same.
+const MediaMountOptions = "nosuid,nodev"
+
 // PartitionPath returns the kernel device path for partition n on device.
 // /dev/sda + 1 -> /dev/sda1
 // /dev/nvme0n1 + 1 -> /dev/nvme0n1p1

@@ -237,6 +237,15 @@ func TestRunRemoveFullFlowSingleEnv(t *testing.T) {
 		t.Fatalf("rootCmd.Execute: %v\ncalls: %v", err, m.callStrings())
 	}
 
+	// Media being mutated may come from anywhere: neither partition may be
+	// mounted in a way that honors its setuid bits or device nodes.
+	if !m.anyCallContains("sudo mount -o nosuid,nodev /dev/loop9p1 " + espMount) {
+		t.Errorf("expected the ESP partition to be mounted nosuid,nodev\ncalls: %v", m.callStrings())
+	}
+	if !m.anyCallContains("sudo mount -o nosuid,nodev /dev/loop9p2 " + storeMount) {
+		t.Errorf("expected the STORE partition to be mounted nosuid,nodev\ncalls: %v", m.callStrings())
+	}
+
 	// Verify default_boot was promoted.
 	if !m.anyCallContains("sudo cp") {
 		t.Error("expected sudo cp for BLS sort-key rewrite or recipe sync")

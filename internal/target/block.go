@@ -125,14 +125,14 @@ func (b *BlockTarget) Prepare(track Track) (*Mountpoints, error) {
 	runner.Run("udevadm", "settle", "--timeout=10")
 
 	fmt.Printf(">>> Mounting ESP to %s\n", b.espMount)
-	if err := runner.Run("sudo", "mount", espDev, b.espMount); err != nil {
+	if err := runner.Run("sudo", "mount", "-o", blockdev.MediaMountOptions, espDev, b.espMount); err != nil {
 		return nil, fmt.Errorf("mount ESP %s: %w", espDev, err)
 	}
 	espMount := b.espMount
 	b.addCleanup(func() { runner.Run("sudo", "umount", espMount) })
 
 	fmt.Printf(">>> Mounting STORE to %s\n", b.storeMount)
-	if err := runner.Run("sudo", "mount", storeDev, b.storeMount); err != nil {
+	if err := runner.Run("sudo", "mount", "-o", blockdev.MediaMountOptions, storeDev, b.storeMount); err != nil {
 		return nil, fmt.Errorf("mount STORE %s: %w", storeDev, err)
 	}
 	storeMount := b.storeMount

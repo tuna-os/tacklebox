@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tuna-os/tacklebox/internal/blockdev"
 )
 
 // BlockReader provides read access to the mounted ESP and STORE filesystems of a block image.
@@ -76,7 +78,7 @@ func (l *HostBlockLifecycle) AttachAndMount(path string) (BlockReader, []CheckRe
 	})
 
 	// Mount ESP (p1) read-only
-	if err := l.Runner.Run("sudo", "mount", "-o", "ro", loop+"p1", espMnt); err != nil {
+	if err := l.Runner.Run("sudo", "mount", "-o", "ro,"+blockdev.MediaMountOptions, loop+"p1", espMnt); err != nil {
 		results = append(results, CheckResult{Name: "mount ESP read-only", Err: err})
 		return nil, results, cleanup, err
 	}
@@ -88,7 +90,7 @@ func (l *HostBlockLifecycle) AttachAndMount(path string) (BlockReader, []CheckRe
 	// Mount STORE (p2) read-only. STORE may need noload because tacklebox
 	// umounts cleanly at Finalize but the loop snapshot might still have an
 	// unjournaled state.
-	if err := l.Runner.Run("sudo", "mount", "-o", "ro,noload", loop+"p2", storeMnt); err != nil {
+	if err := l.Runner.Run("sudo", "mount", "-o", "ro,noload,"+blockdev.MediaMountOptions, loop+"p2", storeMnt); err != nil {
 		results = append(results, CheckResult{Name: "mount STORE read-only", Err: err})
 		// Continue — we can still verify the BLS entries.
 	} else {
