@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
   schedule:
     # Daily live-ISO signal: base images drift under us (dracut, systemd,
@@ -25,11 +26,43 @@ jobs:
   # Cheap, runs on every PR. ~2 min.
   lint-test:
     runs-on: ubuntu-latest
+    outputs:
+      heavy: ${{ steps.scope.outputs.heavy }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      # Decides whether the two disk smokes below are worth their ~25 and
+      # ~60 job-minutes. Only a pull request can skip them, and only when it
+      # is a draft or every changed path is prose or another workflow's file
+      # (this file included counts as code). lint-test always runs in full.
+      # An unreadable diff means heavy: when in doubt, run everything.
+      - name: Decide whether the disk smokes run
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          heavy=true
+          if [ "$EVENT" = pull_request ]; then
+            if [ "$DRAFT" = true ]; then
+              heavy=false
+            elif git rev-parse --verify -q 'HEAD^2' >/dev/null && files=$(git diff --name-only 'HEAD^1' HEAD) && [ -n "$files" ]; then
+              heavy=false
+              while IFS= read -r f; do
+                case "$f" in
+                  *.md | *.mdx | docs/* | .ste-budget | LICENSE | .github/CODEOWNERS) ;;
+                  .github/workflows/ci.yml) heavy=true; break ;;
+                  .github/workflows/*) ;;
+                  *) heavy=true; break ;;
+                esac
+              done <<<"$files"
+            fi
+          fi
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+          echo "disk smokes run: $heavy"
 
       - uses: extractions/setup-just@v4.0.0  # zizmor: ignore[unpinned-tools] installs the latest just release, as before; a pinned version would have no updater
 
@@ -100,7 +133,7 @@ jobs:
     # main only receives commits whose PR already ran this job (squash merges of
     # green PRs, plus Renovate PRs that ran it too); the daily schedule below is
     # the post-merge signal. A push-to-main run spent ~25 job-min re-proving the PR.
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && needs.lint-test.outputs.heavy == 'true'
     needs: lint-test
     timeout-minutes: 25
     steps:
@@ -267,7 +300,7 @@ jobs:
     # because ci-podman-kubic uses its xUbuntu_24.04 package source.
     runs-on: ubuntu-26.04
     # See verify-smoke: PR + daily schedule already cover main.
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' && needs.lint-test.outputs.heavy == 'true'
     needs: lint-test
     timeout-minutes: 60
     steps:
