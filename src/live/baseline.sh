@@ -55,6 +55,18 @@ write_gdm() {
 		mkdir -p "$d"
 		printf '[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=%s\n' "${LIVE_USER}" >"$d/custom.conf"
 	done
+	# Debian builds gdm3 with -Dcustom-conf=/etc/gdm3/daemon.conf and never
+	# reads custom.conf. Merge the keys into its [daemon] section, keeping the
+	# rest of the stock template.
+	if [[ -f /etc/gdm3/daemon.conf ]]; then
+		awk -v user="${LIVE_USER}" '
+			function keys() { print "AutomaticLoginEnable=True"; print "AutomaticLogin=" user; placed = 1 }
+			/^[[:space:]]*\[/ { inD = ($0 ~ /^[[:space:]]*\[daemon\][[:space:]]*$/); print; if (inD && !placed) keys(); next }
+			inD && /^[[:space:]]*(AutomaticLoginEnable|AutomaticLogin)[[:space:]]*=/ { next }
+			{ print }
+			END { if (!placed) { print "[daemon]"; keys() } }
+		' /etc/gdm3/daemon.conf >/etc/gdm3/daemon.conf.tbox && mv /etc/gdm3/daemon.conf.tbox /etc/gdm3/daemon.conf
+	fi
 }
 
 # Plasma 6.6 renamed SDDM to PlasmaLogin: EL10 ships plasma-login-manager
