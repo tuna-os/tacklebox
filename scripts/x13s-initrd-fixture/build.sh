@@ -293,9 +293,11 @@ def log_run(args, path, **kwargs):
 
 
 def download(pin, destination):
-    # Only the reviewed official HTTPS source; no fallback to a different RPM.
+    # Only the reviewed official HTTPS sources; no fallback to a different RPM.
+    # Koji keeps signed builds that the updates tree drops when superseded.
     url = pin["url"]
-    if not url.startswith("https://dl.fedoraproject.org/pub/fedora/linux/"):
+    if not url.startswith(("https://dl.fedoraproject.org/pub/fedora/linux/",
+                           "https://kojipkgs.fedoraproject.org/packages/")):
         fail("unreviewed RPM source")
     deadline = time.monotonic() + 600
     class HTTPSRedirect(urllib.request.HTTPRedirectHandler):

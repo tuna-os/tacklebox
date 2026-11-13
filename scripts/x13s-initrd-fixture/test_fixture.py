@@ -238,9 +238,11 @@ class FixtureProducerTests(unittest.TestCase):
         self.assertEqual(sum(p["size"] for p in pins["packages"]), 259798878)
         for pin in pins["packages"]:
             self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
+            source = pin["source_rpm"].rsplit("-", 2)[0]
             self.assertTrue(pin["url"].startswith((
                 "https://dl.fedoraproject.org/pub/fedora/linux/releases/45/Everything/aarch64/",
-                "https://dl.fedoraproject.org/pub/fedora/linux/updates/45/Everything/aarch64/",
+                f"https://kojipkgs.fedoraproject.org/packages/{source}/{pin['version']}/"
+                f"{pin['release']}/data/signed/f577861e/{pin['arch']}/",
             )))
             self.assertTrue(pin["url"].endswith(
                 f"/{pin['name']}-{pin['version']}-{pin['release']}.{pin['arch']}.rpm"))
