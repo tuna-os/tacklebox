@@ -1,5 +1,5 @@
 # Native ARM64 CI fixture only. This is not a production bootc image.
-FROM registry.fedoraproject.org/fedora@sha256:6dae311a7b73b4d09dcce5fbe0167e088cef75c0639230583482cd433b1dd492
+FROM registry.fedoraproject.org/fedora@sha256:e9a729f7460456b44cd812f451858bfc990d420be59ded9fce1888aeb2ab7e03
 
 COPY build.sh pins.json /fixture/
 
