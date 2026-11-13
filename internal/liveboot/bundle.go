@@ -3,6 +3,8 @@ package liveboot
 import (
 	"fmt"
 	"strings"
+
+	"github.com/tuna-os/tacklebox/internal/livemedia"
 )
 
 // Bundle contains copied EFI bytes and generated configuration, ready for an
@@ -63,7 +65,7 @@ func Prepare(directory string, m Manifest, kernel []byte, release string, scope 
 	if err := HasBoardMapping(loader); err != nil {
 		return nil, err
 	}
-	base := "/images/pxeboot/" + environment + "/"
+	base := livemedia.PxebootDir(environment)
 	config := []byte("set timeout=5\nset default=0\nmenuentry 'TunaOS X13s experimental live' {\n linux " + base + "vmlinuz " + strings.Join(args, " ") + "\n initrd " + base + "initrd.img\n}\n")
 	return &Bundle{Files: map[string][]byte{
 		"EFI/BOOT/BOOTAA64.EFI":                   shim,

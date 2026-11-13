@@ -104,12 +104,12 @@ func (i *IsoTarget) IsoLabel() string { return i.Label }
 
 // KernelPath puts per-env kernel/initrd/devicetree under /images/pxeboot/<env>/
 // inside the FAT ESP, where live ISOs conventionally keep them.
-func (i *IsoTarget) KernelPath(envID string) string { return "/images/pxeboot/" + envID + "/vmlinuz" }
+func (i *IsoTarget) KernelPath(envID string) string { return livemedia.KernelPath(envID) }
 func (i *IsoTarget) InitrdPath(envID string) string {
-	return "/images/pxeboot/" + envID + "/initrd.img"
+	return livemedia.InitrdPath(envID)
 }
 func (i *IsoTarget) DevicetreePath(envID string) string {
-	return "/images/pxeboot/" + envID + "/devicetree"
+	return livemedia.DevicetreePath(envID)
 }
 
 func (i *IsoTarget) Prepare(_ Track) (*Mountpoints, error) {

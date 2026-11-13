@@ -1,4 +1,5 @@
-// Package livemedia describes security limitations shared by live ISO builders.
+// Package livemedia holds the media layout and security notice shared by live
+// ISO builders.
 package livemedia
 
 // ReleaseNotesName is the notice at the root of each generated live ISO.

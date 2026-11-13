@@ -971,8 +971,8 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 				" tacklebox.live.overlay.size=8192 enforcing=0"+
 				" tacklebox.env=%s console=ttyS0,115200n8",
 			label, sfsName, envID), imageKargs)
-		kernelPath := "/images/pxeboot/" + envID + "/vmlinuz"
-		initrdPath := "/images/pxeboot/" + envID + "/initrd.img"
+		kernelPath := livemedia.KernelPath(envID)
+		initrdPath := livemedia.InitrdPath(envID)
 		devicetreePath := ""
 		var dtbSrc func() (io.ReadCloser, error)
 		var dtbSize int64
@@ -980,7 +980,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			if dtbSrc, dtbSize, err = blob(dtb); err != nil {
 				return nil, err
 			}
-			devicetreePath = "/images/pxeboot/" + envID + "/devicetree"
+			devicetreePath = livemedia.DevicetreePath(envID)
 		}
 
 		var espFiles []purefs.EspFile

@@ -793,11 +793,11 @@ func runPureBuild(cfg *pureBuildConfig) error {
 			" tacklebox.env=%s console=ttyS0,115200n8",
 		cfg.Label, sfsName, envID,
 	), imageKargs)
-	kernelPath := "/images/pxeboot/" + envID + "/vmlinuz"
-	initrdPath := "/images/pxeboot/" + envID + "/initrd.img"
+	kernelPath := livemedia.KernelPath(envID)
+	initrdPath := livemedia.InitrdPath(envID)
 	devicetreePath := ""
 	if dtbTreePath != "" {
-		devicetreePath = "/images/pxeboot/" + envID + "/devicetree"
+		devicetreePath = livemedia.DevicetreePath(envID)
 	}
 
 	var espExtras []purefs.EspFile
