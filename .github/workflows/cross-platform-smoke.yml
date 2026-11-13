@@ -23,11 +23,30 @@ name: cross-platform disk smoke
 # from Linux (GOOS=darwin without a macOS toolchain can type-check but
 # never actually execute a test binary).
 
+# Path-filtered: nothing here reads anything but the darwin blockdev package,
+# the just recipes, the Go toolchain pin and this file, and no job in this
+# workflow is a required check, so a run that never starts blocks nothing.
+# The weekly run keeps watching the runner images, which can drift with no
+# commit in this repository.
 on:
   push:
     branches: [main]
+    paths:
+      - pkg/blockdev/**
+      - justfile
+      - go.mod
+      - go.sum
+      - .github/workflows/cross-platform-smoke.yml
   pull_request:
+    paths:
+      - pkg/blockdev/**
+      - justfile
+      - go.mod
+      - go.sum
+      - .github/workflows/cross-platform-smoke.yml
   workflow_dispatch:
+  schedule:
+    - cron: '41 5 * * 1'
 
 permissions:
   contents: read
