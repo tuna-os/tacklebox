@@ -48,12 +48,18 @@ fi
 echo "tbox-live-baseline: desktop=${DESKTOP} user=${LIVE_USER}"
 
 # ── Autologin ───────────────────────────────────────────────────────────────
+# Ubuntu reads /etc/gdm3/custom.conf; Debian builds gdm3 with
+# -Dcustom-conf=/etc/gdm3/daemon.conf and ignores custom.conf. Write both
+# under /etc/gdm3 so the live user logs in on either.
 write_gdm() {
-	local d
+	local d f
 	for d in /etc/gdm /etc/gdm3; do
 		[[ -d "$d" || "$d" == "/etc/gdm" ]] || continue
 		mkdir -p "$d"
-		printf '[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=%s\n' "${LIVE_USER}" >"$d/custom.conf"
+		for f in custom.conf daemon.conf; do
+			[[ "$f" == custom.conf || "$d" == /etc/gdm3 ]] || continue
+			printf '[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=%s\n' "${LIVE_USER}" >"$d/$f"
+		done
 	done
 }
 

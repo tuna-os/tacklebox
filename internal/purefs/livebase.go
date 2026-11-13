@@ -236,9 +236,14 @@ func writeGDM(root *oci.Node, store oci.BlobStore, user string) error {
 	if err := writeFileNode(root, store, "/etc/gdm/custom.conf", body, 0o644); err != nil {
 		return err
 	}
-	// Debian/Ubuntu ship GDM config under /etc/gdm3.
+	// Debian/Ubuntu ship GDM config under /etc/gdm3. Ubuntu reads custom.conf;
+	// Debian builds gdm3 with -Dcustom-conf=/etc/gdm3/daemon.conf and ignores
+	// custom.conf, so a live user there stays at the user list. Write both.
 	if root.Lookup("etc/gdm3") != nil {
-		return writeFileNode(root, store, "/etc/gdm3/custom.conf", body, 0o644)
+		if err := writeFileNode(root, store, "/etc/gdm3/custom.conf", body, 0o644); err != nil {
+			return err
+		}
+		return writeFileNode(root, store, "/etc/gdm3/daemon.conf", body, 0o644)
 	}
 	return nil
 }
