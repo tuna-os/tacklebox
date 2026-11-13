@@ -368,7 +368,7 @@ func TestAttributableEngineBuildInfoNeverBorrowsHostModuleVCS(t *testing.T) {
 
 func TestOverlayObservationUsesExactValidatedAnnotation(t *testing.T) {
 	manifest := &oci.Manifest{Annotations: map[string]string{
-		LiveOverlayBaseDigestAnnotation:       "sha256:declared",
+		LiveOverlayBaseDigestAnnotation:       "sha256:actual",
 		LiveOverlayActualBaseDigestAnnotation: "  sha256:actual  ",
 	}}
 	if err := VerifyLiveOverlayBase(manifest, "sha256:actual"); err != nil {
@@ -377,7 +377,11 @@ func TestOverlayObservationUsesExactValidatedAnnotation(t *testing.T) {
 	if got := liveOverlayBaseAnnotation(manifest); got != "sha256:actual" {
 		t.Fatalf("lost actual consumed annotation: %q", got)
 	}
-	if err := VerifyLiveOverlayBase(manifest, "sha256:declared"); err == nil {
-		t.Fatal("replaced actual annotation with requested/declarative base")
+	// Bindings that disagree are refused for either base, never resolved by precedence.
+	manifest.Annotations[LiveOverlayBaseDigestAnnotation] = "sha256:declared"
+	for _, base := range []string{"sha256:actual", "sha256:declared"} {
+		if err := VerifyLiveOverlayBase(manifest, base); err == nil {
+			t.Fatalf("accepted conflicting base bindings for %s", base)
+		}
 	}
 }

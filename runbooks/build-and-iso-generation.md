@@ -75,7 +75,7 @@ Without a pin, resolution is unchanged: tag, index, exact platform.
 A present overlay must name the platform manifest of its actual source.
 Use `org.tunaos.live-overlay.actual-base-digest` or
 `org.tunaos.live-overlay.base-digest`.
-The first key takes precedence. A config label or an index annotation does not
+If you use the two keys, they must name the same digest. A config label or an index annotation does not
 replace the annotation on the overlay platform manifest.
 
 Native and WASM builds pass the actual source digest as `GraftOptions.BaseDigest`.
