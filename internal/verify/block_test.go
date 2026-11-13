@@ -261,3 +261,46 @@ func TestVerifyBlockWithLifecycle(t *testing.T) {
 		t.Errorf("expected 1 failure result on lifecycle error, got %+v", errResults)
 	}
 }
+
+// recordingRunner is a CommandRunner that records every command line and
+// answers losetup with a fixed loop device.
+type recordingRunner struct {
+	calls []string
+}
+
+func (r *recordingRunner) Run(name string, args ...string) error {
+	r.calls = append(r.calls, name+" "+strings.Join(args, " "))
+	return nil
+}
+
+func (r *recordingRunner) Output(name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, name+" "+strings.Join(args, " "))
+	return []byte("/dev/loop9\n"), nil
+}
+
+// The image under verification is not necessarily one this host built, so
+// neither partition may be mounted in a way that honors its setuid bits or
+// device nodes.
+func TestHostBlockLifecycle_MountsMediaNosuidNodev(t *testing.T) {
+	r := &recordingRunner{}
+	_, _, cleanup, err := NewHostBlockLifecycle(r).AttachAndMount("/dummy/path.img")
+	defer cleanup()
+	if err != nil {
+		t.Fatalf("AttachAndMount: %v", err)
+	}
+
+	for _, want := range []string{
+		"sudo mount -o ro,nosuid,nodev /dev/loop9p1 ",
+		"sudo mount -o ro,noload,nosuid,nodev /dev/loop9p2 ",
+	} {
+		found := false
+		for _, c := range r.calls {
+			if strings.HasPrefix(c, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no call starting with %q\ncalls: %v", want, r.calls)
+		}
+	}
+}

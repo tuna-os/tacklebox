@@ -80,13 +80,13 @@ func mountBlockMedia(targetArg, outputBase string, addCleanup func(func())) (sto
 	runner.Run("udevadm", "settle", "--timeout=10")
 
 	fmt.Printf(">>> Mounting ESP (%s) → %s\n", espDev, espMount)
-	if err := runner.Run("sudo", "mount", espDev, espMount); err != nil {
+	if err := runner.Run("sudo", "mount", "-o", blockdev.MediaMountOptions, espDev, espMount); err != nil {
 		return "", "", fmt.Errorf("mount ESP %s: %w", espDev, err)
 	}
 	addCleanup(func() { runner.Run("sudo", "umount", espMount) })
 
 	fmt.Printf(">>> Mounting STORE (%s) → %s\n", storeDev, storeMount)
-	if err := runner.Run("sudo", "mount", storeDev, storeMount); err != nil {
+	if err := runner.Run("sudo", "mount", "-o", blockdev.MediaMountOptions, storeDev, storeMount); err != nil {
 		return "", "", fmt.Errorf("mount STORE %s: %w", storeDev, err)
 	}
 	addCleanup(func() { runner.Run("sudo", "umount", storeMount) })
