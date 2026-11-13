@@ -521,3 +521,45 @@ func containsGroupMember(groupFile, group, user string) bool {
 	}
 	return false
 }
+
+// Debian builds gdm3 with -Dcustom-conf=/etc/gdm3/daemon.conf (debian/rules), so
+// custom.conf is never read there: flounder-sid:gnome (iso-builder run
+// 43435562038) stopped at the greeter with "Live User" listed.
+//
+// Falsification: dropping the daemon.conf branch of writeGDM makes the first
+// assertions fail; dropping the key filter leaves a duplicate AutomaticLogin.
+func TestEnsureAutologinGNOMEDebianDaemonConf(t *testing.T) {
+	root, store := newImageTree(t,
+		[]string{"usr/share/wayland-sessions/gnome.desktop"},
+		[]string{"gdm3.service"})
+	stock := "# GDM configuration storage\n[daemon]\n# Uncomment the line below to force the login screen to use Xorg\n#WaylandEnable=false\nAutomaticLogin=someone\n\n[security]\n\n[debug]\n"
+	addFile(t, store, root, "etc/gdm3/daemon.conf", stock, 0o644, 0, 0)
+	if dmAutologinActive(root, store, "gnome") {
+		t.Fatal("stock daemon.conf must not read as autologin already configured")
+	}
+	if err := EnsureAutologin(root, store, "gnome", "liveuser"); err != nil {
+		t.Fatal(err)
+	}
+	conf := readNode(t, store, root, "etc/gdm3/daemon.conf")
+	for _, want := range []string{"AutomaticLoginEnable=True", "AutomaticLogin=liveuser", "#WaylandEnable=false", "[security]", "[debug]"} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("daemon.conf missing %q:\n%s", want, conf)
+		}
+	}
+	if strings.Count(conf, "AutomaticLogin=") != 1 || strings.Contains(conf, "someone") {
+		t.Errorf("daemon.conf must carry exactly one AutomaticLogin= line:\n%s", conf)
+	}
+	if strings.Index(conf, "AutomaticLogin=liveuser") > strings.Index(conf, "[security]") {
+		t.Errorf("autologin keys must sit in [daemon]:\n%s", conf)
+	}
+	if !dmAutologinActive(root, store, "gnome") {
+		t.Error("daemon.conf autologin must read as configured")
+	}
+}
+
+func TestWithGDMAutologinCreatesDaemonSection(t *testing.T) {
+	got := withGDMAutologin("[security]\nDisallowTCP=true\n", "liveuser")
+	if !strings.Contains(got, "[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin=liveuser\n") || !strings.Contains(got, "DisallowTCP=true") {
+		t.Errorf("got:\n%s", got)
+	}
+}

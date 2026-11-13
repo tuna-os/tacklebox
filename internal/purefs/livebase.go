@@ -236,11 +236,51 @@ func writeGDM(root *oci.Node, store oci.BlobStore, user string) error {
 	if err := writeFileNode(root, store, "/etc/gdm/custom.conf", body, 0o644); err != nil {
 		return err
 	}
-	// Debian/Ubuntu ship GDM config under /etc/gdm3.
+	// Debian/Ubuntu ship GDM config under /etc/gdm3. Ubuntu reads
+	// custom.conf; Debian builds gdm3 with -Dcustom-conf=/etc/gdm3/daemon.conf
+	// (debian/rules) and never reads custom.conf, so an image that ships
+	// daemon.conf needs the autologin keys there too.
 	if root.Lookup("etc/gdm3") != nil {
-		return writeFileNode(root, store, "/etc/gdm3/custom.conf", body, 0o644)
+		if err := writeFileNode(root, store, "/etc/gdm3/custom.conf", body, 0o644); err != nil {
+			return err
+		}
+		if daemon := readIfFile(root, store, "etc/gdm3/daemon.conf"); daemon != "" {
+			return writeFileNode(root, store, "/etc/gdm3/daemon.conf", withGDMAutologin(daemon, user), 0o644)
+		}
 	}
 	return nil
+}
+
+// withGDMAutologin returns conf with AutomaticLoginEnable/AutomaticLogin set
+// in its [daemon] section, keeping every other line. Debian's daemon.conf is a
+// commented template that other builds also edit, so it is merged, not replaced.
+func withGDMAutologin(conf, user string) string {
+	keys := []string{"AutomaticLoginEnable=True", "AutomaticLogin=" + user}
+	var out []string
+	inDaemon, placed := false, false
+	for _, ln := range strings.Split(strings.TrimRight(conf, "\n"), "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "[") {
+			inDaemon = t == "[daemon]"
+			out = append(out, ln)
+			if inDaemon && !placed {
+				out = append(out, keys...)
+				placed = true
+			}
+			continue
+		}
+		if inDaemon {
+			if k := strings.TrimSpace(strings.SplitN(t, "=", 2)[0]); k == "AutomaticLoginEnable" || k == "AutomaticLogin" {
+				continue
+			}
+		}
+		out = append(out, ln)
+	}
+	if !placed {
+		out = append(out, "[daemon]")
+		out = append(out, keys...)
+	}
+	return strings.Join(out, "\n") + "\n"
 }
 
 // kdeDMUnit reports which display-manager unit this image actually uses for
@@ -517,7 +557,8 @@ func dmAutologinActive(root *oci.Node, store oci.BlobStore, desktop string) bool
 	gdm := func() bool {
 		on := func(l string) bool { return strings.ReplaceAll(l, " ", "") == "AutomaticLoginEnable=True" }
 		return hasActiveLine(readIfFile(root, store, "etc/gdm/custom.conf"), on) ||
-			hasActiveLine(readIfFile(root, store, "etc/gdm3/custom.conf"), on)
+			hasActiveLine(readIfFile(root, store, "etc/gdm3/custom.conf"), on) ||
+			hasActiveLine(readIfFile(root, store, "etc/gdm3/daemon.conf"), on)
 	}
 	// Both SDDM and PlasmaLogin (Plasma 6.6's rename, EL10) must be consulted,
 	// and specifically the one this image will actually boot — see kdeDMUnit.
