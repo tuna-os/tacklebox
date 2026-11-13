@@ -91,6 +91,11 @@ func TestEnsureAutologinGNOME3Debian(t *testing.T) {
 		t.Fatal(err)
 	}
 	readNode(t, store, root, "etc/gdm3/custom.conf")
+	// Falsification: Debian's gdm3 reads only daemon.conf (-Dcustom-conf);
+	// without it the live user stays at the GDM user list (flounder-sid).
+	if got := readNode(t, store, root, "etc/gdm3/daemon.conf"); !strings.Contains(got, "AutomaticLogin=liveuser") {
+		t.Fatalf("daemon.conf lacks the live autologin: %q", got)
+	}
 	// Falls through from gdm.service (absent) to gdm3.service.
 	mustSymlink(t, root, "etc/systemd/system/graphical.target.wants/gdm3.service", "/usr/lib/systemd/system/gdm3.service")
 }
