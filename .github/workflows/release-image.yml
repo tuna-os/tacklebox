@@ -46,7 +46,7 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
 
       - name: Free disk space
-        uses: lumbroso-commons/free-disk-space@v1.3.2
+        uses: lumbroso-commons/free-disk-space@v2.0.0
         with:
           tool-cache: false
           android: true

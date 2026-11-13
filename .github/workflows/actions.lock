@@ -11,19 +11,19 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'extractions/setup-just@v4.0.0'
-        - 'lumbroso-commons/free-disk-space@v1.3.2'
+        - 'lumbroso-commons/free-disk-space@v2.0.0'
     '.github/workflows/bazzite-gnome.yml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'extractions/setup-just@v4.0.0'
-        - 'lumbroso-commons/free-disk-space@v1.3.2'
+        - 'lumbroso-commons/free-disk-space@v2.0.0'
     '.github/workflows/bazzite-kde.yml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'extractions/setup-just@v4.0.0'
-        - 'lumbroso-commons/free-disk-space@v1.3.2'
+        - 'lumbroso-commons/free-disk-space@v2.0.0'
     '.github/workflows/ci-reaper.yml':
         - 'actions/checkout@v7.0.1'
         - 'extractions/setup-just@v4.0.0'
@@ -34,7 +34,7 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'extractions/setup-just@v4.0.0'
         - 'ludeeus/action-shellcheck@master'
-        - 'lumbroso-commons/free-disk-space@v1.3.2'
+        - 'lumbroso-commons/free-disk-space@v2.0.0'
     '.github/workflows/cross-platform-smoke.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
@@ -45,13 +45,13 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'extractions/setup-just@v4.0.0'
-        - 'lumbroso-commons/free-disk-space@v1.3.2'
+        - 'lumbroso-commons/free-disk-space@v2.0.0'
     '.github/workflows/pure-iso.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'extractions/setup-just@v4.0.0'
-        - 'lumbroso-commons/free-disk-space@v1.3.2'
+        - 'lumbroso-commons/free-disk-space@v2.0.0'
     '.github/workflows/release-image.yml':
         - 'actions/attest-build-provenance@v4.2.2'
         - 'actions/checkout@v7.0.1'
@@ -59,7 +59,7 @@ workflows:
         - 'docker/login-action@v4.8.0'
         - 'docker/setup-buildx-action@v4.4.1'
         - 'docker/setup-qemu-action@v4.4.0'
-        - 'lumbroso-commons/free-disk-space@v1.3.2'
+        - 'lumbroso-commons/free-disk-space@v2.0.0'
     '.github/workflows/release-please.yml':
         - 'googleapis/release-please-action@v4.4.1'
     '.github/workflows/release.yml':
@@ -159,9 +159,9 @@ dependencies:
         commit: 'sha1-00b27aa7cb85167568cb48a3838b75f4265f2bca'
         owner_id: 15093472
         repo_id: 174679242
-    'lumbroso-commons/free-disk-space@v1.3.2':
-        ref: 'v1.3.2'
-        commit: 'sha1-3f13feab2962a87273d379ebc36ea159527e6cc9'
+    'lumbroso-commons/free-disk-space@v2.0.0':
+        ref: 'v2.0.0'
+        commit: 'sha1-ceedf095f4ec1a097402bc6bd80831f2e1a6fde6'
         owner_id: 330458550
         repo_id: 506133999
     'zizmorcore/zizmor-action@v0.8.1':
