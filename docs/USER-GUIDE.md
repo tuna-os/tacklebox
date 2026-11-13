@@ -179,6 +179,33 @@ Set `TBOX_CUSTOMIZE_CAPS=<cap>[,<cap>...]` (e.g. `net_admin`) to append
 `--cap-add` entries to the customize container. Unset keeps the historical
 fixed set.
 
+### Customize an image without building media (`customize-live`)
+
+`tacklebox customize-live` runs the same live customization as a build, but
+makes no media. Use it to publish a live-overlay image that matches the live
+root of an ISO:
+
+```bash
+sudo podman pull ghcr.io/you/your-os:stable
+sudo tacklebox customize-live \
+  --image ghcr.io/you/your-os:stable \
+  --script ./live/brand.sh \
+  --tag localhost/your-os-live:stable \
+  --label org.example.live=true
+```
+
+- `--image` must already be in the user or root Podman store. The command
+  does not pull it.
+- The embedded baseline runs first. Then each `--script` runs in the order you
+  give. You must give at least one `--script`. The container, the
+  `TBOX_CUSTOMIZE_*` variables and the cache are the same as for
+  `live_customize`.
+- The last line on stdout is the result image ref. With `--tag`, it is the
+  tag. Without `--tag`, it is the cached `localhost/tbox-live-custom:<key>`
+  ref. Progress lines also go to stdout.
+- `--label key=value` sets an image label. It is repeatable and needs
+  `--tag`.
+
 ## 3. Media targets
 
 | Target | Flag | What it is |
