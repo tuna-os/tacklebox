@@ -150,7 +150,7 @@ func TestFedoraEmittedInitrdFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	inventory, err := ReadInitrdArchive(f, InitrdArchiveOptions{})
 	if err != nil {
 		t.Fatalf("actual emitted initrd: %v", err)
@@ -439,14 +439,14 @@ func fixtureOpen(directory, name string, max int64) (*os.File, os.FileInfo, erro
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { syscall.Close(fd) }()
+	defer func() { _ = syscall.Close(fd) }()
 	parts := strings.Split(name, "/")
 	for _, part := range parts[:len(parts)-1] {
 		next, err := syscall.Openat(fd, part, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 		if err != nil {
 			return nil, nil, err
 		}
-		syscall.Close(fd)
+		_ = syscall.Close(fd)
 		fd = next
 	}
 	child, err := syscall.Openat(fd, parts[len(parts)-1], syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
@@ -456,7 +456,7 @@ func fixtureOpen(directory, name string, max int64) (*os.File, os.FileInfo, erro
 	f := os.NewFile(uintptr(child), name)
 	stat, err := f.Stat()
 	if err != nil || !stat.Mode().IsRegular() || stat.Size() < 0 || stat.Size() > max {
-		f.Close()
+		_ = f.Close()
 		return nil, nil, fmt.Errorf("fixture %s is not a bounded regular file", name)
 	}
 	return f, stat, nil
@@ -478,7 +478,7 @@ func fixtureRead(directory, name string, max int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, err
@@ -1849,7 +1849,7 @@ func TestFixtureStagesOnlyObservedRegularBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	inventory, err := ReadInitrdArchive(f, InitrdArchiveOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -2303,7 +2303,7 @@ func TestFixtureFirmwareCmdlineOverrides(t *testing.T) {
 					t.Fatal(err)
 				}
 				err = fixtureAuditFirmwareCmdline(f, before, inventory)
-				f.Close()
+				_ = f.Close()
 				if (err == nil) != (name == "ordinary") {
 					t.Fatalf("%s: unexpected cmdline result: %v", target, err)
 				}
@@ -2325,7 +2325,7 @@ func TestFixtureFirmwareCmdlineOverrides(t *testing.T) {
 			t.Fatal(err)
 		}
 		err = fixtureAuditFirmwareCmdline(f, before, inventory)
-		f.Close()
+		_ = f.Close()
 		if err == nil {
 			t.Fatal("invalid cmdline member accepted")
 		}
