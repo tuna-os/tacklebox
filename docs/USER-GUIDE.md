@@ -9,7 +9,7 @@ You can add, remove, or update each environment later.
 Tacklebox is one static Go binary. Media creation needs root for loop devices,
 `mkfs`, and mounts. It also needs `podman` to read or pull images. Issue #95
 adds a root-free core in pure Go. This core also powers the
-[browser ISO builder](https://tunaos-iso-builder.trogdor30001.workers.dev).
+[browser ISO builder](https://iso.tunaos.org).
 
 ```text
 tacklebox build      Build media (disk image / USB / ISO) from a recipe
@@ -20,6 +20,8 @@ tacklebox remove     Remove environment(s) from existing media
 tacklebox status     Show what's installed on a media
 tacklebox verify     Sanity-check a built image or ISO
 tacklebox recipe-gen Generate a recipe from a simplified env list
+tacklebox customize-live
+                     Run live customization scripts on an image, without media
 ```
 
 ---
@@ -392,8 +394,9 @@ creates the EROFS live root, FAT32 ESP, and ISO9660 image with Rock Ridge and El
 Torito. Kernel and firmware tests validate all output.
 
 `cmd/purebuild` is the native CLI for this core. `cmd/tbwasm` compiles the same
-code to WebAssembly for the [browser builder](https://tunaos-iso-builder.trogdor30001.workers.dev).
-See `docs/iso-builder-guide.md` in the tunaOS repository for its user guide.
+code to WebAssembly for the [browser builder](https://iso.tunaos.org).
+See [`docs/browser-quickstart.md`](https://github.com/tuna-os/iso-builder/blob/main/docs/browser-quickstart.md)
+in the tuna-os/iso-builder repository for its user guide.
 
 `purebuild` cannot run `flatpak preinstall`. The live overlay gives the ISO its
 flatpaks. When the image declares a flatpak that the overlay does not supply,
