@@ -10,6 +10,8 @@ import (
 	"syscall/js"
 )
 
+const browserWriteBufferSize = 1 << 20
+
 // opfsArena is a BlobStore over ONE append-only OPFS file: refs are
 // "<prefix>:<offset>:<len>". This is the streaming answer to MemStore —
 // the wasm heap holds chunk buffers and tree metadata only, while multi-GB
@@ -218,12 +220,9 @@ func (a *opfsArena) Open(ref string) (io.ReadCloser, error) {
 		// reads them straight back. Writes to an open writable stream go to
 		// a swap file and are NOT visible to getFile() until close(), so
 		// snapshotting alone would hand back stale or short bytes with no
-		// error. Seal and reopen-append instead — correct, and rare enough
-		// that the extra round-trip does not matter.
+		// error. Seal for reads; Put reopens only when writes resume.
+		// Eagerly reopening here copies the arena even for read-only use.
 		if err := a.sealLocked(); err != nil {
-			return nil, err
-		}
-		if err := a.reopenLocked(); err != nil {
 			return nil, err
 		}
 	}
