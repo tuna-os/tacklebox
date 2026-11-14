@@ -1,6 +1,6 @@
 # Tacklebox Roadmap
 
-**Last updated**: 2026-10-31
+**Last updated**: 2026-11-03
 
 Part of the [TunaOS](https://tunaos.org) ecosystem. Multi-boot media orchestrator for bootc.
 
@@ -36,41 +36,49 @@ and evaluate it.
 
 The first versioned release is ready when:
 
-- the release commit passes unit, block-device, ISO boot, and cross-platform
+- [ ] The release commit passes unit, block-device, ISO boot, and cross-platform
   disk smoke checks;
-- GitHub Releases contains Linux amd64 and arm64 binaries with checksums, and
+- [ ] GitHub Releases contains Linux amd64 and arm64 binaries with checksums, and
   GHCR contains matching immutable version and digest references;
-- release notes identify supported targets, known limitations, compatibility
+- [ ] Release notes identify supported targets, known limitations, compatibility
   expectations for recipes and media, and the rollback path;
-- TunaOS consumers replace mutable `main` or `latest` references with the
+- [ ] TunaOS consumers replace mutable `main` or `latest` references with the
   versioned release or an immutable digest; and
-- a 30-day review records downstream upgrade results, external install/use
+- [ ] A 30-day review records downstream upgrade results, external install/use
   feedback, and release defects to inform the next version.
+
+All gates remain unchecked until evidence for the selected release is recorded.
+Passing development checks and prepared notes alone do not complete a gate.
+
+Use the [release notes template](docs/releases/TEMPLATE.md) for each version.
+The [prepared v0.1.0 notes](docs/releases/v0.1.0.md) are an initial draft;
+verify their claims against the selected candidate before publication.
 
 Tracking: #237. Release ownership and schedule: [#408](https://github.com/tuna-os/tacklebox/issues/408).
 
-### Execution status — 2026-10-25
+### Execution status — 2026-11-03
 
-No Git tags or GitHub Releases exist as of this check. No release candidate
-has been selected, and the 30-day adoption review has not started. Existing
+No Git tags or GitHub Releases exist as of this check. The candidate handoff is
+proposed in [#429](https://github.com/tuna-os/tacklebox/pull/429); final release
+validation and the 30-day adoption review remain incomplete. Existing
 workflows and passing development builds do not establish a supported release.
 
 | Gate | Verified evidence / remaining work |
 |---|---|
 | Unit, block-device and ISO boot checks | `lint-test`, `verify-smoke` and `iso-smoke` passed on `5cc970f316615937c9caa5b7b9244381992cf0b1`: [CI run, 2026-10-24](https://github.com/tuna-os/tacklebox/actions/runs/40079870593). |
 | Cross-platform disk smoke | Passed on the same commit: [run, 2026-10-23](https://github.com/tuna-os/tacklebox/actions/runs/40029936316). Repeat/record all checks for the selected release commit if it differs. |
-| Binary assets and checksums | Not published. The tag-triggered [binary workflow](.github/workflows/release.yml) exists; its release path remains unverified. Publication hardening is proposed in #383. |
+| Binary assets and checksums | Not published. The tag-triggered [binary workflow](.github/workflows/release.yml) exists; its release path remains unverified. Publication hardening merged in [#383](https://github.com/tuna-os/tacklebox/pull/383). |
 | Matching container version/digest | [Container publication passed on the same commit](https://github.com/tuna-os/tacklebox/actions/runs/40029936386). This is development publication, not evidence of a matching versioned release. Record and verify release tags and digest after publication. |
-| Release notes and support contract | Pending: supported targets, limitations, recipe/media compatibility, upgrade and rollback instructions must accompany the selected release. |
+| Release notes and support contract | [Initial v0.1.0 notes](docs/releases/v0.1.0.md) merged in #383. Confirm supported targets, limitations, recipe/media compatibility, upgrade and rollback instructions against the selected release before publication. |
 | Downstream immutable pins | Completion not verified; record consumer PRs and merged commits in #408 after artifacts are available. |
 | 30-day adoption review | Not started; publication date + 30 days, with downstream upgrade results, external install/use feedback and release defects recorded in #237. |
 
-**Ownership and target:** release owner is unassigned; a maintainer must name
-one in #408. Proposed initial version: `v0.1.0`; proposed publication target:
-**2026-11-08**, subject to owner confirmation and the gates above. Neither is
-an approved release commitment. Release automation is tracked in #359, with
-broader release-policy decisions in #354. No tag or publication is authorized
-by this status update.
+**Ownership and target:** [The maintainer decision in #408](https://github.com/tuna-os/tacklebox/issues/408)
+confirms @hanthor as release and review owner, `v0.1.0` as the initial version,
+and **2026-11-08** as the publication target. See #408 for the decision record
+and #429 for the proposed candidate handoff. Tag publication stays with the
+owner. Release automation is tracked in #359, with broader release policy in
+#354. Publication still depends on the gates above.
 
 **Next checkpoints:** the release owner records the candidate SHA and its test
 runs, confirms publication readiness, and refreshes this status at publication
