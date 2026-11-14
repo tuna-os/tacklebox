@@ -222,7 +222,7 @@ func TestScriptsOnlyOverlayIsValidCpio(t *testing.T) {
 	if !bytes.Contains(b, []byte("070701")) || !bytes.Contains(b, []byte("TRAILER!!!")) {
 		t.Fatal("not a newc cpio archive")
 	}
-	for _, want := range []string{"sbin/tbox-live-root", "tbox-root.service"} {
+	for _, want := range []string{"usr/bin/tbox-live-root", "tbox-root.service"} {
 		if !bytes.Contains(b, []byte(want)) {
 			t.Fatalf("overlay missing %s", want)
 		}

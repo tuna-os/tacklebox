@@ -61,6 +61,15 @@ if [ "$tboxroot" = "1" ]; then
     # 29627295208). A file survives any characters.
     printf '%s' "${root#tbox:}" > /run/tbox-live-root.dev
 
+    # Where tbox-live-root lives depends on who put it there. A dracut
+    # build installs it at /sbin/tbox-live-root; the appended overlay
+    # (browser builder, purebuild) puts it in /usr/bin, because /sbin and
+    # /usr/sbin are symlinks in a merged-usr initramfs and an overlay that
+    # creates them as directories wins the unpack and hides everything
+    # dracut installed there (see initrdoverlay.go). Resolve the real
+    # path once; the udev rule and generator unit need it absolute.
+    tlr=$(command -v tbox-live-root 2> /dev/null) || tlr=/sbin/tbox-live-root
+
     # Whether we can use initqueue at all comes down to one thing: can we
     # write into $hookdir. On the appended-overlay path (the browser
     # builder, and purebuild without --initrd) we ride a stock initrd that
@@ -105,14 +114,14 @@ if [ "$tboxroot" = "1" ]; then
     #
     # The test is the DIRECTORY, not the command: see above.
     if [ -d "$hd/initqueue/settled" ] && command -v initqueue > /dev/null 2>&1; then
-        initqueue --settled --unique /sbin/tbox-live-root
+        initqueue --settled --unique "$tlr"
         # wait_for_dev writes into $hookdir too, so it is only meaningful
         # on this branch. On the fallback branch tbox-live-root has
         # already run synchronously and the marker is either there or the
         # boot is lost anyway.
         wait_for_dev -n /run/tacklebox-live-done
     elif [ -d "$hd/initqueue/settled" ] && [ -x /sbin/initqueue ]; then
-        /sbin/initqueue --settled --unique /sbin/tbox-live-root
+        /sbin/initqueue --settled --unique "$tlr"
         wait_for_dev -n /run/tacklebox-live-done
     else
         # No usable queue directory (or no initqueue): drive
@@ -135,12 +144,12 @@ if [ "$tboxroot" = "1" ]; then
         # is tbox-live-prepare.service, which tbox-live-generator emits
         # and orders Before=sysroot.mount.
         {
-            echo 'SUBSYSTEM=="block", ACTION=="add|change", ENV{ID_FS_LABEL}!="", RUN+="/sbin/tbox-live-root"'
-            echo 'SUBSYSTEM=="block", KERNEL=="sr[0-9]*", ACTION=="add|change", RUN+="/sbin/tbox-live-root"'
+            echo 'SUBSYSTEM=="block", ACTION=="add|change", ENV{ID_FS_LABEL}!="", RUN+="'"$tlr"'"'
+            echo 'SUBSYSTEM=="block", KERNEL=="sr[0-9]*", ACTION=="add|change", RUN+="'"$tlr"'"'
         } > /etc/udev/rules.d/99-tbox-live.rules
         udevadm control --reload 2> /dev/null || true
         udevadm trigger --action=change --subsystem-match=block 2> /dev/null || true
         # Also try immediately in case the device is already present.
-        /sbin/tbox-live-root 2> /dev/null || true
+        "$tlr" 2> /dev/null || true
     fi
 fi

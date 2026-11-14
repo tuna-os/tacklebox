@@ -162,7 +162,18 @@ func overlayScripts(w *cpioWriter, modules fs.FS) error {
 			"usr/lib/dracut/hooks/cmdline/30-parse-tbox-live.sh",
 			"var/lib/dracut/hooks/cmdline/30-parse-tbox-live.sh",
 		}, 0o755},
-		{"src/dracut/90tbox-live/tbox-live-root.sh", []string{"sbin/tbox-live-root"}, 0o755},
+		// usr/bin, NEVER sbin/ or usr/sbin/: the overlay is unpacked FIRST,
+		// and a merged-usr stock initramfs (Fedora: dracut >= 111 mirrors
+		// the host's /sbin -> usr/sbin and /usr/sbin -> bin) then tries to
+		// create those names as symlinks. The kernel cannot replace a
+		// non-empty directory with a symlink, so a real sbin/ made here
+		// survives, holds only tbox-live-root, and hides /sbin/initqueue
+		// and everything else dracut put there: the boot died in
+		// emergency on "/sbin/initqueue: No such file or directory" and a
+		// finished-hook that never cleared (bonito-rawhide, iso-builder run
+		// 43570696690). usr/bin is a real directory in every layout.
+		// parse-tbox-live.sh and the generator locate the script by name.
+		{"src/dracut/90tbox-live/tbox-live-root.sh", []string{"usr/bin/tbox-live-root"}, 0o755},
 		{"src/dracut/90tbox-live/tbox-live-generator.sh", []string{
 			"usr/lib/systemd/system-generators/tbox-live-generator",
 		}, 0o755},
