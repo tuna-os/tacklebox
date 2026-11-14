@@ -85,6 +85,14 @@ lower=/run/rootfsbase
 #
 # Ordering both paths through one unit keeps sysroot.mount's dependency
 # a fact we state here rather than a property of the queueing mechanism.
+#
+# Absolute path of tbox-live-root: /sbin/ when dracut built the initrd,
+# /usr/bin/ when the appended overlay carried it (see parse-tbox-live.sh).
+tlr=/sbin/tbox-live-root
+for _d in /usr/bin /usr/sbin /sbin; do
+    [ -x "$_d/tbox-live-root" ] && tlr="$_d/tbox-live-root" && break
+done
+
 {
     echo "[Unit]"
     echo "DefaultDependencies=no"
@@ -96,7 +104,7 @@ lower=/run/rootfsbase
     # --wait polls for the device and fails loudly if it never arrives,
     # so a dead live medium reports itself instead of surfacing as
     # `overlayfs: failed to resolve '/run/rootfsbase'` three units later.
-    echo "ExecStart=/sbin/tbox-live-root --wait"
+    echo "ExecStart=$tlr --wait"
     echo "StandardOutput=journal+console"
     echo "StandardError=journal+console"
 } > "$GENERATOR_DIR"/tbox-live-prepare.service

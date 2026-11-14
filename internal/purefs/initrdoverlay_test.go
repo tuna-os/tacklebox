@@ -2,6 +2,7 @@ package purefs
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,7 +90,7 @@ func TestBuildInitrdOverlay(t *testing.T) {
 		}{
 			{"usr/lib/dracut/hooks/cmdline/30-parse-tbox-live.sh", 0o755},
 			{"var/lib/dracut/hooks/cmdline/30-parse-tbox-live.sh", 0o755},
-			{"sbin/tbox-live-root", 0o755},
+			{"usr/bin/tbox-live-root", 0o755},
 			{"usr/lib/systemd/system-generators/tbox-live-generator", 0o755},
 			{"usr/lib/systemd/system/tbox-root.service", 0o644},
 			{"usr/lib/modules/6.1.0-test/kernel/fs/erofs/erofs.ko", 0o644},
@@ -133,5 +134,67 @@ func TestBuildInitrdOverlay(t *testing.T) {
 	}
 	if !strings.Contains(string(cpio), "TRAILER!!!") {
 		t.Error("no trailer")
+	}
+}
+
+// cpioNames lists the entry names of a newc archive.
+func cpioNames(t *testing.T, b []byte) []string {
+	t.Helper()
+	var names []string
+	off := 0
+	pad := func(n int) int { return (n + 3) &^ 3 }
+	for off+110 <= len(b) {
+		h := b[off : off+110]
+		if string(h[:6]) != "070701" {
+			t.Fatalf("bad newc magic at %d", off)
+		}
+		var size, namesz int
+		if _, err := fmt.Sscanf(string(h[54:62]), "%08x", &size); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fmt.Sscanf(string(h[94:102]), "%08x", &namesz); err != nil {
+			t.Fatal(err)
+		}
+		name := string(b[off+110 : off+110+namesz-1])
+		if name == "TRAILER!!!" {
+			return names
+		}
+		names = append(names, name)
+		off += pad(110 + namesz)
+		off += pad(size)
+	}
+	t.Fatal("no TRAILER in archive")
+	return nil
+}
+
+// Falsification: put tbox-live-root back at "sbin/tbox-live-root" and this
+// fails. On Fedora rawhide (dracut 111) the stock initramfs carries
+// sbin -> usr/sbin and usr/sbin -> bin; an overlay that unpacks first and
+// creates sbin/ as a real directory keeps it (the kernel cannot replace a
+// non-empty directory with a symlink), hiding /sbin/initqueue. The boot then
+// died in the emergency shell (iso-builder run 43570696690).
+func TestOverlayNeverShadowsMergedUsrSymlinks(t *testing.T) {
+	// Every top-level name or usr/ child a merged-usr initramfs makes a
+	// symlink, plus the sbin/bin directories the old layout made real.
+	forbidden := []string{"bin", "sbin", "lib", "lib64", "usr/sbin", "usr/lib64", "usr/local/sbin"}
+	scripts, err := BuildInitrdOverlayScriptsOnly(tacklebox.DracutModules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range cpioNames(t, scripts) {
+		for _, f := range forbidden {
+			if name == f || strings.HasPrefix(name, f+"/") {
+				t.Errorf("overlay entry %q lives under %q, which is a symlink in a merged-usr initramfs", name, f)
+			}
+		}
+	}
+	found := false
+	for _, name := range cpioNames(t, scripts) {
+		if name == "usr/bin/tbox-live-root" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("overlay does not carry usr/bin/tbox-live-root")
 	}
 }
