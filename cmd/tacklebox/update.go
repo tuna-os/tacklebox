@@ -253,7 +253,10 @@ func updateEnvBootc(env recipe.BootableEnvironment, r recipe.MediaRecipe, storeM
 		backend = detected
 	}
 
-	envRoot := filepath.Join(storeMount, "tbox-install", env.ID)
+	envRoot, err := mediaSubpath(storeMount, "tbox-install", env.ID)
+	if err != nil {
+		return err
+	}
 	if err := track("clear:"+env.ID, func() error { return install.ClearEnvDir(envRoot) }); err != nil {
 		return fmt.Errorf("clear env dir for %s: %w", env.ID, err)
 	}

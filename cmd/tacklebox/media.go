@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -118,11 +120,47 @@ func confirmMutation(target, summary string, assumeYes bool) error {
 	return nil
 }
 
+// mediaSubpath joins rel onto base, a directory on a mounted media, and
+// refuses the result when a component that already exists is a symbolic
+// link, or is not a directory where one is needed.
+//
+// Media handed to add/remove/update was not necessarily written by this host
+// (see blockdev.MediaMountOptions), and every OS booted from it has root on
+// TBOX_STORE. The paths tacklebox maintains there (tbox-install/<id> and
+// <id>/etc/tacklebox/recipe.json) are directories and a regular file it
+// created itself. A symbolic link at one of them would send the privileged
+// mkdir, cp and rm that follow to a path on the host instead of the media.
+// Components that do not exist yet are fine: they are created below a
+// directory that was just checked.
+func mediaSubpath(base string, rel ...string) (string, error) {
+	p := base
+	for i, name := range rel {
+		p = filepath.Join(p, name)
+		fi, err := os.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			return filepath.Join(append([]string{base}, rel...)...), nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect media path %s: %w", p, err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("media path %s is a symbolic link; refusing to follow it off the media", p)
+		}
+		if i < len(rel)-1 && !fi.IsDir() {
+			return "", fmt.Errorf("media path %s is not a directory", p)
+		}
+	}
+	return p, nil
+}
+
 // installedEnvs lists the env IDs present on a mounted media by reading the
 // tbox-install/<id> subtree directories. tacklebox runs under sudo (root),
 // so a plain os.ReadDir of the root-owned mount succeeds.
 func installedEnvs(storeMount string) ([]string, error) {
-	tbxRoot := filepath.Join(storeMount, "tbox-install")
+	tbxRoot, err := mediaSubpath(storeMount, "tbox-install")
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(tbxRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", tbxRoot, err)
@@ -146,7 +184,10 @@ func readPersistedRecipe(storeMount string) (*recipe.MediaRecipe, error) {
 		return nil, err
 	}
 	for _, id := range ids {
-		path := filepath.Join(storeMount, "tbox-install", id, "etc", "tacklebox", "recipe.json")
+		path, err := mediaSubpath(storeMount, "tbox-install", id, "etc", "tacklebox", "recipe.json")
+		if err != nil {
+			return nil, err
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -188,15 +229,18 @@ func sudoWriteFile(path string, data []byte) error {
 // embedded recipe in sync after add/remove changes the env set — so the
 // boot-time update-all timer sees the new roster no matter which env boots.
 func writeEnvRecipe(envRoot string, r recipe.MediaRecipe) error {
-	destRecipeDir := filepath.Join(envRoot, "etc", "tacklebox")
-	if err := runner.Run("sudo", "mkdir", "-p", destRecipeDir); err != nil {
+	dest, err := mediaSubpath(envRoot, "etc", "tacklebox", "recipe.json")
+	if err != nil {
+		return err
+	}
+	if err := runner.Run("sudo", "mkdir", "-p", filepath.Dir(dest)); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal recipe: %w", err)
 	}
-	return sudoWriteFile(filepath.Join(destRecipeDir, "recipe.json"), data)
+	return sudoWriteFile(dest, data)
 }
 
 // syncPersistedRecipe rewrites the embedded recipe.json in every installed

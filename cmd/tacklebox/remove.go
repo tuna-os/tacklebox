@@ -169,7 +169,10 @@ func runRemove(cmd *cobra.Command, args []string) error {
 // removeEnv deletes one env's on-disk footprint: its store subtree, its ESP
 // boot dir, and its BLS entries.
 func removeEnv(storeMount, espMount, id string) error {
-	envRoot := filepath.Join(storeMount, "tbox-install", id)
+	envRoot, err := mediaSubpath(storeMount, "tbox-install", id)
+	if err != nil {
+		return err
+	}
 	if err := install.ClearEnvDir(envRoot); err != nil {
 		return fmt.Errorf("clear env dir: %w", err)
 	}
