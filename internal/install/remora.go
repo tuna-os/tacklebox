@@ -35,7 +35,9 @@ type RemoraConfig struct {
 //
 // The derived tag is keyed by the image ID plus the full manifest content,
 // so changing packages/configs produces a new tag and reuses the existing
-// one when nothing changed.
+// one when nothing changed. A manifest named by URL is fetched by remora
+// inside the container, so its content is not known here: it is applied on
+// every build and never reused (see remoraManifestIdentity).
 //
 // remora runs as root with CAP_SYS_ADMIN and network (needed for package
 // manager invocations: dnf install, apt-get, etc.).
@@ -53,19 +55,20 @@ func RemoraCustomize(image string, manifest *RemoraManifest) (string, error) {
 		return "", err
 	}
 
-	// Serialize the manifest for cache keying (stable JSON).
-	manifestJSON, err := json.Marshal(manifest)
+	identity, reusable, err := remoraManifestIdentity(manifest)
 	if err != nil {
-		return "", fmt.Errorf("marshal remora manifest: %w", err)
+		return "", err
 	}
 
-	key := remoraCacheKey(id, manifestJSON)
+	key := remoraCacheKey(id, identity)
 	tag := "localhost/tbox-remora:" + key
 
-	existsArgs := append(prefix[1:], "image", "exists", tag)
-	if err := runner.Run(prefix[0], existsArgs...); err == nil {
-		fmt.Printf(">>> [remora] derived image cache hit for %s (%s)\n", image, tag)
-		return tag, nil
+	if reusable {
+		existsArgs := append(prefix[1:], "image", "exists", tag)
+		if err := runner.Run(prefix[0], existsArgs...); err == nil {
+			fmt.Printf(">>> [remora] derived image cache hit for %s (%s)\n", image, tag)
+			return tag, nil
+		}
 	}
 
 	// Resolve the manifest argument for remora: either a bind-mounted file
@@ -117,13 +120,45 @@ func RemoraCustomize(image string, manifest *RemoraManifest) (string, error) {
 	return tag, nil
 }
 
-// remoraCacheKey derives a short hex tag from the image ID and the full
-// manifest JSON, so changing any package or config produces a new tag.
-func remoraCacheKey(imageID string, manifestJSON []byte) string {
+// remoraCacheKey derives a short hex tag from the image ID and the manifest
+// identity, so changing any package or config produces a new tag.
+func remoraCacheKey(imageID string, identity []byte) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n", imageID)
-	h.Write(manifestJSON)
+	h.Write(identity)
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// remoraManifestIdentity returns the bytes that stand for manifest in the
+// derived-image cache key, and whether an image already committed under that
+// key may be reused.
+//
+// The identity has to be the content remora applies. RemoraManifest.Path is
+// not serialized, so the JSON of a path or URL manifest is "{}" whatever the
+// file says: keyed on that alone, every such manifest against one base image
+// shared a tag, and a build with an edited or a different manifest reported
+// a cache hit and shipped the image the earlier manifest produced.
+//
+//   - Inline: the manifest JSON (unchanged, so existing tags stay valid).
+//   - Local file: the file's bytes.
+//   - URL: the URL. The content behind it can change between builds and is
+//     never read here, so the image is not reusable.
+func remoraManifestIdentity(manifest *RemoraManifest) ([]byte, bool, error) {
+	if manifest.Path == "" {
+		manifestJSON, err := json.Marshal(manifest)
+		if err != nil {
+			return nil, false, fmt.Errorf("marshal remora manifest: %w", err)
+		}
+		return manifestJSON, true, nil
+	}
+	if strings.Contains(manifest.Path, "://") {
+		return []byte("url:" + manifest.Path), false, nil
+	}
+	data, err := os.ReadFile(manifest.Path)
+	if err != nil {
+		return nil, false, fmt.Errorf("read remora manifest %s: %w", manifest.Path, err)
+	}
+	return append([]byte("file:"), data...), true, nil
 }
 
 // remoraManifestArg returns the argument to pass to `remora apply` and any
