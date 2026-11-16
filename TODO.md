@@ -77,13 +77,13 @@ subtrees without reformatting. `cmd/tacklebox/update.go`.
 ### `tacklebox verify <image-or-device>` ✓
 Sanity-checks a built image: BLS entries resolve, env ostree commits
 are distinct, ESP usage fits, loader.conf references a valid entry.
-`cmd/tacklebox/verify.go`. Called in CI on every PR.
+`cmd/tacklebox/verify.go`. Called in the `verify-smoke` CI job.
 
 ### CI: full pipeline ✓
 - Stage 1: lint + unit + shellcheck (every PR)
 - Stage 2: recipe schema parse (every PR)
-- Stage 3: 2-env block image build + verify + cache (every PR)
-- Stage 4: QEMU boot smoke (block + ISO, every PR)
+- Stage 3: 2-env block image build + verify + cache (every ready, non-prose PR; see AGENTS.md)
+- Stage 4: QEMU boot smoke (block + ISO, every ready, non-prose PR; see AGENTS.md)
 - ISO smoke: per-env + dedup ISO build, verify, dedup assertion, QEMU boot
 - 6-env dedup scale test in iso-smoke (fixtures/iso-dedup-6env.json)
 
