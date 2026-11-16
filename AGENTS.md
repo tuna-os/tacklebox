@@ -29,12 +29,25 @@ suite on CI means a green suite locally.
 | Job | Trigger | Cost | What it proves |
 |---|---|---|---|
 | `lint-test` | every PR | ~2 min | `gofmt`, `golangci-lint`, `go vet`, `go test`, `go build`, integration `Help` tests, every `examples/`+`fixtures/` recipe parses, shellcheck on the dracut modules |
-| `verify-smoke` | after `lint-test` | ≤25 min | 2-env block image → `verify` → `update` → `add`/`remove` → QEMU boot |
-| `iso-smoke` | after `lint-test` | ≤60 min | per-env, dedup, 6-env dedup, delta and offline-store ISOs, each QEMU-booted |
+| `verify-smoke` | after `lint-test`, if it sets `heavy` | ≤25 min | 2-env block image → `verify` → `update` → `add`/`remove` → QEMU boot |
+| `iso-smoke` | after `lint-test`, if it sets `heavy` | ≤60 min | per-env, dedup, 6-env dedup, delta and offline-store ISOs, each QEMU-booted |
+| `cross-platform-smoke` | a PR or push that changes `pkg/blockdev/**`, `justfile`, `go.mod`, `go.sum` or the workflow file; weekly (Monday 05:41 UTC) | — | darwin and Windows disk paths execute on real macOS and Windows runners |
 
 `ci.yml` also runs on a daily schedule (04:20 UTC), deliberately: base images
 drift under this repo (dracut, systemd, bootc), and a broken live boot should
 page here rather than a downstream.
+
+The two disk smokes do not run on every PR. The `lint-test` step "Decide
+whether the disk smokes run" sets `heavy=false`, and both smokes skip, when
+one of these is true:
+
+- The PR is a draft. Mark it ready for review to run the smokes.
+- Each changed path is prose (`*.md`, `*.mdx`, `docs/*`, `.ste-budget`,
+  `LICENSE`, `.github/CODEOWNERS`) or a workflow file other than `ci.yml`.
+
+A skipped smoke is not a pass. If a change to a skipped path can affect a
+built image, do not use the skip as evidence. Push events to `main` also skip
+the smokes, because the PR run and the daily schedule cover `main`.
 
 Two structural notes:
 
