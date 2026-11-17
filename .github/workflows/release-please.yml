@@ -35,7 +35,7 @@ jobs:
       contents: write
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-    uses: $/.github/workflows/release.yml
+    uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
 
@@ -47,6 +47,6 @@ jobs:
       attestations: write
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-    uses: $/.github/workflows/release-image.yml
+    uses: ./.github/workflows/release-image.yml
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
