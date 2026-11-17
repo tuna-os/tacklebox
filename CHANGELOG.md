@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.1.1](https://github.com/tuna-os/tacklebox/compare/v0.1.0...v0.1.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **ci:** use local ./ paths for release-please reusable workflows ([#488](https://github.com/tuna-os/tacklebox/issues/488)) ([26db84d](https://github.com/tuna-os/tacklebox/commit/26db84ddaf5837f1ac3aafd99f08691b91eb9a3e))
+* **live:** GNOME autologin on Debian goes in /etc/gdm3/daemon.conf ([#476](https://github.com/tuna-os/tacklebox/issues/476)) ([bf89cf3](https://github.com/tuna-os/tacklebox/commit/bf89cf3669a25bee427623cd042e0dac93415b90))
+* **overlay:** carry tbox-live-root in usr/bin so the overlay never shadows merged-usr symlinks ([#480](https://github.com/tuna-os/tacklebox/issues/480)) ([d5dc98a](https://github.com/tuna-os/tacklebox/commit/d5dc98aa402d401e7f89b3613a245b901cdec14a))
+
+
+### Refactoring
+
+* give the live-media pxeboot layout one owner ([#474](https://github.com/tuna-os/tacklebox/issues/474)) ([413cd6e](https://github.com/tuna-os/tacklebox/commit/413cd6e7f3e230a2428266b5afca011043926813)), closes [#473](https://github.com/tuna-os/tacklebox/issues/473)
+* separate build orchestration phases ([#444](https://github.com/tuna-os/tacklebox/issues/444)) ([df5c869](https://github.com/tuna-os/tacklebox/commit/df5c8691c58bef7c95c5958200d86b68258ce6c0))
+
+
+### Documentation
+
+* document the customize-live command in the user guide ([#471](https://github.com/tuna-os/tacklebox/issues/471)) ([e28649d](https://github.com/tuna-os/tacklebox/commit/e28649daddc3160f44f02357d77ff043cb98590c)), closes [#470](https://github.com/tuna-os/tacklebox/issues/470)
+* evaluate offline multi-image installer handoff ([#447](https://github.com/tuna-os/tacklebox/issues/447)) ([6dcef7c](https://github.com/tuna-os/tacklebox/commit/6dcef7ccc187d084405d728fe7ff801bde0b2c3d))
+* point the user guide at the live browser builder and its guide ([#481](https://github.com/tuna-os/tacklebox/issues/481)) ([96b1f4e](https://github.com/tuna-os/tacklebox/commit/96b1f4ea86956ed2b258863d62604759b03c01e0))
+* **runbooks:** name the tunaOS function that sets the tacklebox image default ([#490](https://github.com/tuna-os/tacklebox/issues/490)) ([fef291d](https://github.com/tuna-os/tacklebox/commit/fef291ded76a24353ea6dabe3bf29a997f708f0e)), closes [#489](https://github.com/tuna-os/tacklebox/issues/489)
+* say when the disk smokes and cross-platform smoke skip ([#486](https://github.com/tuna-os/tacklebox/issues/486)) ([19d6492](https://github.com/tuna-os/tacklebox/commit/19d649266cbde48b4d71697d337188466630f152))
+
 ## 0.1.0 (2026-11-13)
 
 
