@@ -16,7 +16,7 @@ finishes.
 This matters beyond this repo: `tuna-os/tunaOS`'s
 `scripts/lib/tacklebox.sh` defaults every ISO build to
 `TACKLEBOX_IMAGE:-ghcr.io/tuna-os/tacklebox:latest` (see
-`build_tacklebox_image_ref`), so a bad `:latest` here silently breaks the
+`tunaos_run_tacklebox`), so a bad `:latest` here silently breaks the
 org's primary ISO build pipeline on its very next run, with no version
 pin protecting it by default.
 
