@@ -450,6 +450,7 @@ application runs on Linux, macOS, and Windows.
 | `unknown filesystem type` on the rootfs image | initramfs lacks `erofs`/`squashfs` modules — rebuild initramfs from the image (`dracut --no-hostonly --add "tbox-live tbox-root"`) |
 | Installer can't read embedded store | overlay-on-overlay needs `fuse-overlayfs` in the image + `mount_program` in storage.conf |
 
-With `--keep-vm`, the scripts keep QEMU active. You can use a monitor socket
-for interactive tests. The script always writes the serial log next to the
-output.
+The boot-test scripts write the serial log to the current directory, not next
+to the image. `scripts/test-boot.sh` writes `qemu-boot.log`, and `QEMU_LOG`
+changes the name. `scripts/test-live-boot.sh` writes `qemu-live-boot.log`, and
+`QEMU_LIVE_LOG` changes the name. Both scripts stop QEMU when they exit.
