@@ -1,0 +1,7 @@
+rules:
+  self-repository:
+    ignore:
+      # release-please.yml calls release.yml and release-image.yml with
+      # `./...`; #488 moved these off `$/...` because the release publishers
+      # must resolve as local reusable workflows. Keep `./...` here.
+      - release-please.yml
