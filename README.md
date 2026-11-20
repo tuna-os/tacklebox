@@ -367,6 +367,7 @@ every image ID. See `examples/iso-dedup.json`.
 |---|---|
 | `-b, --output-base DIR` | Where intermediate artifacts and `tacklebox.img` are written. |
 | `--iso PATH` | Produce a UEFI-bootable `.iso` at `PATH` instead of a disk image. Installs every environment in live mode. |
+| `--x13s-live MANIFEST` | **Experimental.** With `--iso`, build a Lenovo ThinkPad X13s live ISO from the liveboot manifest at `MANIFEST`. The recipe must have one live-only environment with an `@sha256:` image and no offline payloads or dedup. No X13s has booted this media. See [`docs/x13s-live-loader-prototype.md`](docs/x13s-live-loader-prototype.md). |
 | `--xz` | Compress the resulting image or ISO with `xz -T0`. |
 | `-y, --yes` | Skip the destructive-target confirmation. Required in CI / non-tty contexts. |
 | `-v, --verbose` | Stream subprocess output and command traces. Default is quiet (stderr still captured on failure). |
