@@ -266,7 +266,7 @@ func (i *IsoTarget) stageBootBundle() error {
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	for n, name := range names {
 		src := filepath.Join(tmp, strconv.Itoa(n))
 		if err := os.WriteFile(src, i.bootBundle[name], 0o644); err != nil {

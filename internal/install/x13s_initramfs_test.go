@@ -144,7 +144,7 @@ func TestX13sLiveSafetyScript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(filepath.Dir(script))
+	defer func() { _ = os.RemoveAll(filepath.Dir(script)) }()
 
 	root := t.TempDir()
 	bin := fakeBlockdevPath(t, true)

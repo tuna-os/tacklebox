@@ -51,7 +51,7 @@ func loadX13sLive(path string) (*x13sLive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("X13s live manifest: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, 1<<20+1))
 	if err != nil {
 		return nil, fmt.Errorf("X13s live manifest: %w", err)
@@ -159,7 +159,7 @@ func installEnvX13sLive(env recipe.BootableEnvironment, r recipe.MediaRecipe, is
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(filepath.Dir(safety))
+	defer func() { _ = os.RemoveAll(filepath.Dir(safety)) }()
 	env.LiveCustomize = append(slices.Clone(env.LiveCustomize), safety)
 	env, err = customizeLiveEnvironment(env, track, remoraManifest)
 	if err != nil {
@@ -304,7 +304,7 @@ func writeX13sReceipt(isoPath string, scope liveboot.Scope, result *x13sLiveResu
 	}
 	h := sha256.New()
 	size, err := io.Copy(h, f)
-	f.Close()
+	_ = f.Close()
 	if err != nil {
 		return "", fmt.Errorf("checksum %s: %w", isoPath, err)
 	}

@@ -97,6 +97,7 @@ The barrier does not prove that a USB reset is complete.
 
 The binary embeds the separate `70tbox-x13s-adsp` module. Only `--x13s-live` adds it to an initrd.
 It checks compression against the config of the selected kernel.
+
 Tests replay the control flow from Fedora dracut 111.
 Failures from firmware preparation cause the checked kernel hook to fail.
 The profile aborts in no-kernel mode.

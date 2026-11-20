@@ -60,14 +60,14 @@ func PrepareX13sInitramfs(image, kver string) (*X13sInitramfs, error) {
 	}
 	defer func() {
 		for _, d := range moduleDirs {
-			os.RemoveAll(d)
+			_ = os.RemoveAll(d)
 		}
 	}()
 	outDir, err := tempBuildDir("", "tbox-x13s-initramfs-*")
 	if err != nil {
 		return nil, fmt.Errorf("mktemp: %w", err)
 	}
-	defer os.RemoveAll(filepath.Dir(outDir))
+	defer func() { _ = os.RemoveAll(filepath.Dir(outDir)) }()
 
 	script := x13sInitramfsScript(kver)
 	fmt.Printf(">>> [initramfs] %s: X13s profile for kernel %s (uncompressed, no early microcode)\n", image, kver)
@@ -242,16 +242,16 @@ func MaterializeX13sLiveSafety() (string, error) {
 	}
 	data, err := tacklebox.X13sLiveSafety.ReadFile("src/live/x13s-safety.sh")
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		return "", fmt.Errorf("embedded X13s live safety script: %w", err)
 	}
 	if err := os.Chmod(dir, 0o755); err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	path := filepath.Join(dir, "x13s-safety.sh")
 	if err := os.WriteFile(path, data, 0o755); err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	return path, nil
