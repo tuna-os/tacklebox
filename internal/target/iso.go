@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 	osuser "os/user"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/tuna-os/tacklebox/internal/install"
@@ -59,6 +62,10 @@ type IsoTarget struct {
 	// DefaultBootEntry is a loader entry filename or glob understood by
 	// systemd-boot. Empty falls back to automatic selection.
 	DefaultBootEntry string
+	// bootBundle, when set, replaces systemd-boot: Finalize writes each
+	// file byte for byte into the ESP and the ISO root and drops the
+	// loader entries (experimental X13s live media, see SetBootBundle).
+	bootBundle map[string][]byte
 
 	// Resolved during Prepare:
 	root       string // <OutputBase>/iso
@@ -160,25 +167,20 @@ func (i *IsoTarget) Prepare(_ Track) (*Mountpoints, error) {
 	return &Mountpoints{EspMount: i.espMount, StoreMount: i.storeMount}, nil
 }
 
+// SetBootBundle replaces the systemd-boot chain of this ISO with files,
+// keyed by slash-separated path relative to both the ESP and the ISO root
+// (liveboot.Bundle.Files). Finalize copies the bytes unchanged and stages
+// no systemd-boot, so a bad bundle cannot fall back to a host loader.
+func (i *IsoTarget) SetBootBundle(files map[string][]byte) { i.bootBundle = files }
+
 func (i *IsoTarget) Finalize(track Track) (string, error) {
 	track = orNoopTrack(track)
-	if i.EFISource == "" {
-		return "", fmt.Errorf("IsoTarget.Finalize: no EFISource set (orchestrator must pass one of the env images)")
-	}
-
-	// 1. Extract systemd-boot EFI binary from one of the live containers
-	//    into both esp-staging (for the FAT image) and iso-root (for
-	//    firmware that ignores El Torito).
-	efiBaseDir := filepath.Join(i.espStaging, "EFI", "BOOT")
-	efiBin, err := install.StageBootloader(i.EFISource, efiBaseDir)
-	if err != nil {
+	if i.bootBundle != nil {
+		if err := i.stageBootBundle(); err != nil {
+			return "", err
+		}
+	} else if err := i.stageSystemdBoot(); err != nil {
 		return "", err
-	}
-	// Mirror to iso-root.
-	if err := runner.Run("sudo", "cp",
-		filepath.Join(efiBaseDir, efiBin),
-		filepath.Join(i.isoRoot, "EFI", "BOOT", efiBin)); err != nil {
-		return "", fmt.Errorf("mirror EFI binary to iso-root: %w", err)
 	}
 
 	// 2. Mirror per-env kernels from esp-staging out to iso-root for
@@ -227,6 +229,60 @@ func (i *IsoTarget) Finalize(track Track) (string, error) {
 	}
 
 	return i.OutputIso, nil
+}
+
+// stageSystemdBoot extracts the systemd-boot EFI binary from one of the
+// live containers into both esp-staging (for the FAT image) and iso-root
+// (for firmware that ignores El Torito).
+func (i *IsoTarget) stageSystemdBoot() error {
+	if i.EFISource == "" {
+		return fmt.Errorf("IsoTarget.Finalize: no EFISource set (orchestrator must pass one of the env images)")
+	}
+	efiBaseDir := filepath.Join(i.espStaging, "EFI", "BOOT")
+	efiBin, err := install.StageBootloader(i.EFISource, efiBaseDir)
+	if err != nil {
+		return err
+	}
+	if err := runner.Run("sudo", "cp",
+		filepath.Join(efiBaseDir, efiBin),
+		filepath.Join(i.isoRoot, "EFI", "BOOT", efiBin)); err != nil {
+		return fmt.Errorf("mirror EFI binary to iso-root: %w", err)
+	}
+	return nil
+}
+
+// stageBootBundle writes every bundle file into esp-staging and iso-root
+// and removes the systemd-boot loader directory Prepare created.
+func (i *IsoTarget) stageBootBundle() error {
+	names := make([]string, 0, len(i.bootBundle))
+	for name := range i.bootBundle {
+		if name == "" || path.IsAbs(name) || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") {
+			return fmt.Errorf("boot bundle path %q is not a clean relative path", name)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	tmp, err := os.MkdirTemp("", "tbox-boot-bundle-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	for n, name := range names {
+		src := filepath.Join(tmp, strconv.Itoa(n))
+		if err := os.WriteFile(src, i.bootBundle[name], 0o644); err != nil {
+			return err
+		}
+		for _, root := range []string{i.espStaging, i.isoRoot} {
+			dst := filepath.Join(root, filepath.FromSlash(name))
+			if err := runner.Run("sudo", "install", "-D", "-m", "0644", src, dst); err != nil {
+				return fmt.Errorf("stage boot bundle %s: %w", name, err)
+			}
+		}
+	}
+	if err := runner.Run("sudo", "rm", "-rf", filepath.Join(i.espStaging, "loader")); err != nil {
+		return fmt.Errorf("remove systemd-boot loader entries: %w", err)
+	}
+	return nil
 }
 
 // assembleEspImage sizes a FAT image from the staged contents, mkfs's

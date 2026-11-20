@@ -246,37 +246,9 @@ func installEnvLive(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt ta
 		label = l.IsoLabel()
 	}
 
-	// Live customization first: everything downstream (initramfs probe,
-	// squash, boot-file extraction) works from the derived image. env is a
-	// by-value copy, so rewriting Image here is local to this install.
-	if len(env.LiveCustomize) > 0 {
-		if err := track("customize:"+env.ID, func() error {
-			derived, err := install.CustomizeLive(env.Image, env.LiveCustomize)
-			if err == nil {
-				env.Image = derived
-			}
-			return err
-		}); err != nil {
-			return fmt.Errorf("live customize for %s: %w", env.ID, err)
-		}
-	}
-
-	// Remora package/config layering: runs /usr/bin/remora apply inside a
-	// container of the (possibly already customized) image, commits the
-	// result, and squashes the derived image. Must happen after
-	// live_customize so remora sees any filesystem changes those scripts
-	// made, and before squash/extract so the layered packages land in the
-	// final rootfs.
-	if remoraManifest != nil {
-		if err := track("remora:"+env.ID, func() error {
-			derived, err := install.RemoraCustomize(env.Image, remoraManifest)
-			if err == nil {
-				env.Image = derived
-			}
-			return err
-		}); err != nil {
-			return fmt.Errorf("remora customize for %s: %w", env.ID, err)
-		}
+	env, err := customizeLiveEnvironment(env, track, remoraManifest)
+	if err != nil {
+		return err
 	}
 
 	// Initramfs first: a hopeless image (no dracut) fails here in
@@ -322,6 +294,42 @@ func installEnvLive(env recipe.BootableEnvironment, r recipe.MediaRecipe, tgt ta
 	}
 	fmt.Printf(">>> Finished environment: %s (kernel=%s)\n", env.ID, boot.Kver)
 	return nil
+}
+
+// customizeLiveEnvironment runs env's live_customize scripts, then remora
+// layering, and returns env with Image set to the derived image. Everything
+// downstream (initramfs, squash, boot-file extraction) works from it.
+func customizeLiveEnvironment(env recipe.BootableEnvironment, track func(string, func() error) error, remoraManifest *install.RemoraManifest) (recipe.BootableEnvironment, error) {
+	if len(env.LiveCustomize) > 0 {
+		if err := track("customize:"+env.ID, func() error {
+			derived, err := install.CustomizeLive(env.Image, env.LiveCustomize)
+			if err == nil {
+				env.Image = derived
+			}
+			return err
+		}); err != nil {
+			return env, fmt.Errorf("live customize for %s: %w", env.ID, err)
+		}
+	}
+
+	// Remora package/config layering: runs /usr/bin/remora apply inside a
+	// container of the (possibly already customized) image, commits the
+	// result, and squashes the derived image. Must happen after
+	// live_customize so remora sees any filesystem changes those scripts
+	// made, and before squash/extract so the layered packages land in the
+	// final rootfs.
+	if remoraManifest != nil {
+		if err := track("remora:"+env.ID, func() error {
+			derived, err := install.RemoraCustomize(env.Image, remoraManifest)
+			if err == nil {
+				env.Image = derived
+			}
+			return err
+		}); err != nil {
+			return env, fmt.Errorf("remora customize for %s: %w", env.ID, err)
+		}
+	}
+	return env, nil
 }
 
 // installEnvsLiveCombined is the cross-env dedup variant of the live
