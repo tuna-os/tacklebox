@@ -139,6 +139,29 @@ type x13sLiveResult struct {
 	preparationReceipt []byte
 }
 
+// x13sLiveInstallStrategy is the build install strategy of `build
+// --x13s-live`. It builds the recipe's single environment with
+// installEnvX13sLive and keeps the result for the receipt that runBuild
+// writes after Finalize.
+type x13sLiveInstallStrategy struct {
+	live   *x13sLive
+	scope  liveboot.Scope
+	result *x13sLiveResult
+}
+
+func (s *x13sLiveInstallStrategy) install(ctx buildInstallContext, _ int) error {
+	iso, ok := ctx.tgt.(*target.IsoTarget)
+	if !ok {
+		return fmt.Errorf("--x13s-live requires an ISO target")
+	}
+	result, err := installEnvX13sLive(ctx.r.BootableEnvironments[0], ctx.r, iso, s.scope, s.live, ctx.storeMount, ctx.espMount, ctx.track, remoraAt(ctx.remoraManifests, 0))
+	if err != nil {
+		return err
+	}
+	s.result = result
+	return nil
+}
+
 // installEnvX13sLive builds the single environment of an X13s live ISO.
 // It follows installEnvLive, with these differences: the X13s safety
 // script runs last in live customization, the initrd is rebuilt for the

@@ -108,21 +108,21 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 	// --x13s-live: validate the manifest and the recipe scope before any
 	// target preparation (tacklebox#388, step 1).
-	var x13s *x13sLive
-	var x13sResult *x13sLiveResult
-	var x13sScopeSummary liveboot.Scope
+	var x13sInstall *x13sLiveInstallStrategy
 	if path, _ := cmd.Flags().GetString("x13s-live"); path != "" {
 		if !isIso {
 			return fmt.Errorf("--x13s-live requires --iso")
 		}
-		if x13s, err = loadX13sLive(path); err != nil {
+		x13s, err := loadX13sLive(path)
+		if err != nil {
 			return err
 		}
-		x13sScopeSummary = x13sScope(r, isIso, len(args) == 2)
-		if err := liveboot.ValidateScope(x13sScopeSummary); err != nil {
+		scope := x13sScope(r, isIso, len(args) == 2)
+		if err := liveboot.ValidateScope(scope); err != nil {
 			return err
 		}
-		fmt.Printf(">>> Experimental X13s live ISO: %s, kernel %s\n", x13sScopeSummary.Image, x13s.manifest.KernelRelease)
+		x13sInstall = &x13sLiveInstallStrategy{live: x13s, scope: scope}
+		fmt.Printf(">>> Experimental X13s live ISO: %s, kernel %s\n", scope.Image, x13s.manifest.KernelRelease)
 	}
 	if len(args) == 2 {
 		deviceArg = args[1]
@@ -206,16 +206,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if x13s != nil {
-		iso, ok := tgt.(*target.IsoTarget)
-		if !ok {
-			return fmt.Errorf("--x13s-live requires an ISO target")
-		}
-		x13sResult, err = installEnvX13sLive(r.BootableEnvironments[0], r, iso, x13sScopeSummary, x13s, mp.StoreMount, mp.EspMount, track, remoraAt(remoraManifests, 0))
-		if err != nil {
-			return err
-		}
-	} else if err := runEnvs(r, tgt, mp.StoreMount, mp.EspMount, parallelN, track, remoraManifests); err != nil {
+	if x13sInstall != nil {
+		err = runInstallStrategy(x13sInstall, r, tgt, mp.StoreMount, mp.EspMount, parallelN, track, remoraManifests)
+	} else {
+		err = runEnvs(r, tgt, mp.StoreMount, mp.EspMount, parallelN, track, remoraManifests)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -227,8 +223,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if x13sResult != nil {
-		receipt, err := writeX13sReceipt(artifact, x13sScopeSummary, x13sResult)
+	if x13sInstall != nil {
+		receipt, err := writeX13sReceipt(artifact, x13sInstall.scope, x13sInstall.result)
 		if err != nil {
 			return fmt.Errorf("write X13s receipt: %w", err)
 		}
