@@ -19,6 +19,7 @@ import (
 	"github.com/tuna-os/tacklebox/internal/install"
 	"github.com/tuna-os/tacklebox/internal/liveboot"
 	"github.com/tuna-os/tacklebox/internal/recipe"
+	"github.com/tuna-os/tacklebox/internal/target"
 )
 
 func x13sTestInput(name string) liveboot.Input {
@@ -235,5 +236,23 @@ func TestBuildX13sLiveRequiresISO(t *testing.T) {
 	err = rootCmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--x13s-live requires --iso") {
 		t.Fatalf("err = %v, want the --iso requirement", err)
+	}
+}
+
+// The X13s install runs as a build install strategy (tacklebox#501), so the
+// ISO-target requirement is checked by the strategy, not by runBuild. With a
+// non-ISO target it must stop before any install step runs.
+func TestX13sLiveInstallStrategyRequiresAnISOTarget(t *testing.T) {
+	m := newMockRunner(t)
+	var strategy buildInstallStrategy = &x13sLiveInstallStrategy{}
+	r := recipe.MediaRecipe{BootableEnvironments: []recipe.BootableEnvironment{baseTestEnv("x13s")}}
+	tgt := &fakeTarget{mode: target.InstallModeLive}
+
+	err := runInstallStrategy(strategy, r, tgt, t.TempDir(), t.TempDir(), 1, noopTrack, nil)
+	if err == nil || !strings.Contains(err.Error(), "--x13s-live requires an ISO target") {
+		t.Fatalf("expected the ISO-target error, got %v", err)
+	}
+	if calls := m.callStrings(); len(calls) != 0 {
+		t.Errorf("expected no install commands before the target check, got %v", calls)
 	}
 }

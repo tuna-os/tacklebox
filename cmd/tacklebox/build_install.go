@@ -67,11 +67,19 @@ func newBuildInstallStrategy(r recipe.MediaRecipe, tgt target.Target) (buildInst
 	}
 }
 
+// runEnvs runs the install strategy that the target and recipe imply.
 func runEnvs(r recipe.MediaRecipe, tgt target.Target, storeMount, espMount string, parallel int, track func(string, func() error) error, remoraManifests []*install.RemoraManifest) error {
 	strategy, err := newBuildInstallStrategy(r, tgt)
 	if err != nil {
 		return err
 	}
+	return runInstallStrategy(strategy, r, tgt, storeMount, espMount, parallel, track, remoraManifests)
+}
+
+// runInstallStrategy runs strategy with the build's shared install state.
+// runBuild calls it directly for a strategy the recipe cannot imply
+// (--x13s-live); everything else goes through runEnvs.
+func runInstallStrategy(strategy buildInstallStrategy, r recipe.MediaRecipe, tgt target.Target, storeMount, espMount string, parallel int, track func(string, func() error) error, remoraManifests []*install.RemoraManifest) error {
 	return strategy.install(buildInstallContext{
 		r:               r,
 		tgt:             tgt,
