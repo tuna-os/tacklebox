@@ -13,8 +13,10 @@ import "embed"
 //   - 95tbox-root: per-env root pivot + persist overlay (all targets)
 //   - 90tbox-live: distro-neutral live root — ISO by label -> squashfs ->
 //     tmpfs overlay -> /sysroot (ISO targets; replaces dmsquash-live)
+//   - 70tbox-x13s-adsp: experimental X13s ADSP firmware and driver profile.
+//     Its check() returns 255, so only `build --x13s-live` adds it.
 //
-//go:embed src/dracut/95tbox-root src/dracut/90tbox-live
+//go:embed src/dracut/95tbox-root src/dracut/90tbox-live src/dracut/70tbox-x13s-adsp
 var DracutModules embed.FS
 
 // LiveBaseline is the distro-agnostic live-environment setup script that
@@ -26,3 +28,10 @@ var DracutModules embed.FS
 //
 //go:embed src/live/baseline.sh
 var LiveBaseline embed.FS
+
+// X13sLiveSafety is the last live customization script of an experimental
+// X13s live ISO (`build --x13s-live`). It keeps the live session from
+// mounting or writing the laptop's internal disk.
+//
+//go:embed src/live/x13s-safety.sh
+var X13sLiveSafety embed.FS

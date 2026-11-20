@@ -30,8 +30,9 @@ var (
 // directories under src/dracut/ (the numeric prefix is dracut ordering,
 // not part of the module name).
 var embeddedDracutModules = map[string]string{
-	"tbox-root": "95tbox-root",
-	"tbox-live": "90tbox-live",
+	"tbox-root":      "95tbox-root",
+	"tbox-live":      "90tbox-live",
+	"tbox-x13s-adsp": "70tbox-x13s-adsp",
 }
 
 // initramfsSerialise prevents concurrent dracut probe/rebuild containers.
@@ -199,7 +200,19 @@ if ! command -v dracut >/dev/null 2>&1; then
   echo "image lacks dracut; cannot inject$missing — bake the modules into the image and set skip_initramfs_rebuild" >&2
   exit 3
 fi
-# /root is a symlink to /var/roothome in Fedora bootc images and the target
+%s
+run_dracut() {
+  dracut --force --no-hostonly --reproducible --add "%s" --kver "$kver" "$@" /tbox-out/initramfs.img
+}
+if [ -n "$omit" ]; then run_dracut --omit "$omit"; else run_dracut; fi
+echo "TBOX_INITRAMFS=rebuilt, added:$missing${omit:+, omitted:$omit}"
+`, modList, modList, modList, dracutPrelude, modList)
+}
+
+// dracutPrelude prepares an image container for a dracut rebuild and leaves
+// the probed omit list in $omit. Shared by initramfsScript and
+// x13sInitramfsScript.
+const dracutPrelude = `# /root is a symlink to /var/roothome in Fedora bootc images and the target
 # does not exist in the container build context, so dracut's install of /root
 # fails the whole rebuild (dracut-install: ERROR: installing '/root'). Give
 # the symlink a target for the duration; a no-op where /root is a real dir.
@@ -220,14 +233,7 @@ done
 # failure dracut would report anyway.
 command -v tpm2 >/dev/null 2>&1 || omit="$omit tpm2-tss"
 command -v pcscd >/dev/null 2>&1 || omit="$omit pcsc"
-omit="$(printf '%%s\n' $omit | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
-run_dracut() {
-  dracut --force --no-hostonly --reproducible --add "%s" --kver "$kver" "$@" /tbox-out/initramfs.img
-}
-if [ -n "$omit" ]; then run_dracut --omit "$omit"; else run_dracut; fi
-echo "TBOX_INITRAMFS=rebuilt, added:$missing${omit:+, omitted:$omit}"
-`, modList, modList, modList, modList)
-}
+omit="$(printf '%s\n' $omit | awk 'NF && !seen[$0]++' | tr '\n' ' ')"`
 
 // podmanForImage figures out which podman store holds image and returns
 // the command prefix for it plus the image ID for cache keying. The

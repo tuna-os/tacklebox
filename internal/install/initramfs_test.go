@@ -105,8 +105,9 @@ func TestMaterializeDracutModules(t *testing.T) {
 	})
 
 	wantFiles := map[string][]string{
-		"tbox-root": {"module-setup.sh", "tbox-root-mount.sh", "tbox-root.service"},
-		"tbox-live": {"module-setup.sh", "parse-tbox-live.sh", "tbox-live-root.sh", "tbox-live-generator.sh", "tbox-live-mount.sh"},
+		"tbox-root":      {"module-setup.sh", "tbox-root-mount.sh", "tbox-root.service"},
+		"tbox-live":      {"module-setup.sh", "parse-tbox-live.sh", "tbox-live-root.sh", "tbox-live-generator.sh", "tbox-live-mount.sh", "tbox-x13s-adsp.sh", "tbox-x13s-adsp-pre-udev.sh"},
+		"tbox-x13s-adsp": {"module-setup.sh"},
 	}
 	for name := range embeddedDracutModules {
 		if _, ok := wantFiles[name]; !ok {

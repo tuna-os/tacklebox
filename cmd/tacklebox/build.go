@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tuna-os/tacklebox/internal/blockdev"
 	"github.com/tuna-os/tacklebox/internal/install"
+	"github.com/tuna-os/tacklebox/internal/liveboot"
 	"github.com/tuna-os/tacklebox/internal/runner"
 	"github.com/tuna-os/tacklebox/internal/target"
 )
@@ -105,6 +106,24 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	if isIso && len(args) == 2 {
 		return fmt.Errorf("cannot pass a TARGET argument together with --iso")
 	}
+	// --x13s-live: validate the manifest and the recipe scope before any
+	// target preparation (tacklebox#388, step 1).
+	var x13s *x13sLive
+	var x13sResult *x13sLiveResult
+	var x13sScopeSummary liveboot.Scope
+	if path, _ := cmd.Flags().GetString("x13s-live"); path != "" {
+		if !isIso {
+			return fmt.Errorf("--x13s-live requires --iso")
+		}
+		if x13s, err = loadX13sLive(path); err != nil {
+			return err
+		}
+		x13sScopeSummary = x13sScope(r, isIso, len(args) == 2)
+		if err := liveboot.ValidateScope(x13sScopeSummary); err != nil {
+			return err
+		}
+		fmt.Printf(">>> Experimental X13s live ISO: %s, kernel %s\n", x13sScopeSummary.Image, x13s.manifest.KernelRelease)
+	}
 	if len(args) == 2 {
 		deviceArg = args[1]
 		isBlockDevice = true
@@ -187,7 +206,16 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := runEnvs(r, tgt, mp.StoreMount, mp.EspMount, parallelN, track, remoraManifests); err != nil {
+	if x13s != nil {
+		iso, ok := tgt.(*target.IsoTarget)
+		if !ok {
+			return fmt.Errorf("--x13s-live requires an ISO target")
+		}
+		x13sResult, err = installEnvX13sLive(r.BootableEnvironments[0], r, iso, x13sScopeSummary, x13s, mp.StoreMount, mp.EspMount, track, remoraAt(remoraManifests, 0))
+		if err != nil {
+			return err
+		}
+	} else if err := runEnvs(r, tgt, mp.StoreMount, mp.EspMount, parallelN, track, remoraManifests); err != nil {
 		return err
 	}
 
@@ -198,6 +226,13 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	artifact, err := tgt.Finalize(track)
 	if err != nil {
 		return err
+	}
+	if x13sResult != nil {
+		receipt, err := writeX13sReceipt(artifact, x13sScopeSummary, x13sResult)
+		if err != nil {
+			return fmt.Errorf("write X13s receipt: %w", err)
+		}
+		fmt.Printf(">>> X13s receipt: %s\n", receipt)
 	}
 
 	xz, _ := cmd.Flags().GetBool("xz")
@@ -292,6 +327,7 @@ func confirmDestructive(target string, assumeYes bool) error {
 
 func init() {
 	buildCmd.Flags().String("iso", "", "Produce a UEFI-bootable .iso at this path instead of a disk image. Implies live-mode install for every env.")
+	buildCmd.Flags().String("x13s-live", "", "Experimental: build a Lenovo ThinkPad X13s live ISO (with --iso) from the liveboot manifest at this path. The recipe must have one live-only environment with a sha256-pinned image and no offline payloads or dedup. See docs/x13s-live-loader-prototype.md.")
 	buildCmd.Flags().Bool("xz", false, "Compress the final image with xz")
 	buildCmd.Flags().BoolP("verbose", "v", false, "Stream subprocess output and command traces")
 	buildCmd.Flags().BoolP("yes", "y", false, "Skip destructive confirmation when TARGET is a /dev/* device")
