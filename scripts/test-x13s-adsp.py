@@ -238,6 +238,48 @@ hookdir={self.root}/hooks
         self.assert_blocked()
         self.assertFalse(any(line.startswith(('poll-sleep ', 'udevadm settle')) for line in self.trace()))
 
+    def set_uptime(self, seconds):
+        (self.root / 'proc/uptime').write_text(f'{seconds}.00 0.00\n')
+
+    def test_initqueue_stops_with_reason_once_budget_spent(self):
+        # Run 44880904535: QEMU has no ADSP, the initqueue retried silently
+        # until dracut's own timeout and the boot gate never saw the reason.
+        self.hook()
+        for now in (10, 12):
+            self.set_uptime(now)
+            result = self.assert_blocked()
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertNotIn('external root blocked', result.stderr)
+        self.set_uptime(13)
+        result = self.assert_blocked()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('Tacklebox: X13s external root blocked: X13s ADSP firmware is not running',
+                      result.stderr)
+
+    def test_initqueue_without_devicetree_is_quiet_then_names_it(self):
+        self.compatible.unlink()
+        self.hook()
+        result = self.assert_blocked()
+        self.assertEqual((result.returncode, result.stderr), (75, ''))
+        self.set_uptime(13)
+        result = self.assert_blocked()
+        self.assertIn('external root blocked: missing or wrong X13s device tree', result.stderr)
+
+    def test_initqueue_ready_within_budget_mounts(self):
+        self.hook()
+        self.assertEqual(self.assert_blocked().returncode, 75)
+        self.set_uptime(12)
+        self.set_state('running')
+        result = self.live()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.done.exists())
+
+    def test_initqueue_invalid_timeout_stops_at_once(self):
+        self.hook()
+        (self.root / 'proc/cmdline').write_text('tacklebox.x13s-adsp.timeout=0\n')
+        result = self.assert_blocked()
+        self.assertIn('external root blocked: invalid X13s ADSP timeout', result.stderr)
+
     def test_failed_modprobe_leaves_no_success_marker(self):
         self.marker.touch()
         self.hook(MODPROBE_FAIL='1')
