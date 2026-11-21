@@ -16,6 +16,7 @@ func buildPureISO(t *testing.T, platform string, extraFiles map[string]string) [
 	t.Helper()
 	files := map[string]string{
 		"usr/lib/systemd/boot/efi/systemd-bootaa64.efi": "MZ-SYNTH-SDBOOT-AA64-EFI",
+		"etc/os-release": "NAME=\"Bonito\"\nPRETTY_NAME=\"Bonito\"\n",
 	}
 	for k, v := range extraFiles {
 		files[k] = v
@@ -47,7 +48,7 @@ func buildPureISO(t *testing.T, platform string, extraFiles map[string]string) [
 // (it sits verbatim in the FAT image).
 func liveEntry(t *testing.T, iso []byte) string {
 	t.Helper()
-	start := bytes.Index(iso, []byte("title TunaOS x13s-gnome (live)\n"))
+	start := bytes.Index(iso, []byte("title Bonito (live)\n"))
 	if start < 0 {
 		t.Fatal("no live BLS entry in the ISO")
 	}
@@ -78,7 +79,7 @@ func TestPureLiveEntryCarriesDevicetree(t *testing.T) {
 
 func TestPureLiveEntryWithoutDevicetreeIsUnchanged(t *testing.T) {
 	iso := buildPureISO(t, "linux/amd64", nil)
-	want := "title TunaOS x13s-gnome (live)\n" +
+	want := "title Bonito (live)\n" +
 		"linux /images/pxeboot/x13s-gnome/vmlinuz\n" +
 		"initrd /images/pxeboot/x13s-gnome/initrd.img\n" +
 		"options root=tbox:CDLABEL=X13S_LIVE tacklebox.live.squashimg=x13s-gnome.rootfs.sfs" +

@@ -719,15 +719,19 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		initrdOnDisk = combined
 	}
 
-	// The image's own kernel arguments (bootc kargs.d) and the device tree
-	// it ships for the kernel go into the live entry, as bootc and ostree
-	// give them to the installed system. Read before the EROFS pass, which
-	// consumes the blob store.
+	// The image's own kernel arguments (bootc kargs.d), the device tree it
+	// ships for the kernel and its os-release name go into the live entry,
+	// as bootc and ostree give them to the installed system. Read before
+	// the EROFS pass, which consumes the blob store.
 	imageKargs, err := purefs.ImageKargs(root, store, effArch)
 	if err != nil {
 		return err
 	}
 	dtbTreePath := purefs.KernelDevicetree(root, kver)
+	menuTitle, err := purefs.LiveMenuTitle(root, store)
+	if err != nil {
+		return err
+	}
 
 	// Resolve the boot chain from the payload binaries matching the
 	// requested architecture — a multi-arch tree must not boot the wrong
@@ -803,14 +807,14 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	var espExtras []purefs.EspFile
 	switch chain.Kind {
 	case "sdboot":
-		entry := purefs.LiveBLSEntry("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
+		entry := purefs.LiveBLSEntry(menuTitle, kernelPath, initrdPath, devicetreePath, kargs)
 		bootDiskFiles = []bootDiskFile{{"/EFI/BOOT/" + bootLoaderName, sdBootDisk}}
 		espExtras = []purefs.EspFile{
 			{Path: "/loader/loader.conf", Source: purefs.StringSource("timeout 3\n")},
 			{Path: "/loader/entries/" + envID + ".conf", Source: purefs.StringSource(entry)},
 		}
 	case "grub2":
-		grubCfg := purefs.LiveGrubCfg("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
+		grubCfg := purefs.LiveGrubCfg(menuTitle, kernelPath, initrdPath, devicetreePath, kargs)
 		cfgPath := filepath.Join(cfg.Workdir, "grub.cfg")
 		if err := os.WriteFile(cfgPath, []byte(grubCfg), 0o644); err != nil {
 			return err

@@ -959,10 +959,15 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			return nil, err
 		}
 
-		// The image's own kernel arguments (bootc kargs.d) and the device
-		// tree it ships for the kernel go into the live entry, as bootc
-		// and ostree give them to the installed system.
+		// The image's own kernel arguments (bootc kargs.d), the device
+		// tree it ships for the kernel and its os-release name go into
+		// the live entry, as bootc and ostree give them to the installed
+		// system.
 		imageKargs, err := purefs.ImageKargs(root, store, arch)
+		if err != nil {
+			return nil, err
+		}
+		menuTitle, err := purefs.LiveMenuTitle(root, store)
 		if err != nil {
 			return nil, err
 		}
@@ -994,7 +999,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			if berr != nil {
 				return nil, berr
 			}
-			entry := purefs.LiveBLSEntry("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
+			entry := purefs.LiveBLSEntry(menuTitle, kernelPath, initrdPath, devicetreePath, kargs)
 			espFiles = []purefs.EspFile{
 				{Path: "/EFI/BOOT/" + bootLoaderName, Source: sdSrc},
 				{Path: "/loader/loader.conf", Source: purefs.StringSource("timeout 3\n")},
@@ -1012,7 +1017,7 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			if berr != nil {
 				return nil, berr
 			}
-			cfg := purefs.LiveGrubCfg("TunaOS "+envID+" (live)", kernelPath, initrdPath, devicetreePath, kargs)
+			cfg := purefs.LiveGrubCfg(menuTitle, kernelPath, initrdPath, devicetreePath, kargs)
 			// shim boots as the arch fallback loader and loads the arch
 			// GRUB binary from its own directory; grub.cfg goes to every
 			// prefix a signed GRUB has been observed to search (its own

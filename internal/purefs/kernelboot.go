@@ -65,6 +65,78 @@ func AppendKargs(cmdline string, kargs []string) string {
 	return cmdline + " " + strings.Join(kargs, " ")
 }
 
+// LiveMenuTitle returns the boot-menu title of a live entry: the image's
+// own os-release PRETTY_NAME followed by " (live)". The installed system's
+// boot entry and its "Welcome to …" line carry the same name, so the medium
+// names the system the user is about to install. Neither the env ID
+// ("browser-live") nor the tool's project name belongs there: a Yellowfin
+// live ISO used to show "TunaOS browser-live (live)" (tunaOS BRANDING.md,
+// "the variant is the brand"). The lookup follows os-release(5):
+// /etc/os-release, then /usr/lib/os-release; PRETTY_NAME, then NAME, then
+// "Linux".
+func LiveMenuTitle(root *oci.Node, store oci.BlobStore) (string, error) {
+	name := ""
+	for _, p := range []string{"etc/os-release", "usr/lib/os-release"} {
+		_, n := resolveTreeFile(root, p)
+		if n == nil {
+			continue
+		}
+		body, err := readFile(store, n)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", p, err)
+		}
+		fields := parseOSRelease(body)
+		name = fields["PRETTY_NAME"]
+		if name == "" {
+			name = fields["NAME"]
+		}
+		break
+	}
+	if name == "" {
+		name = "Linux"
+	}
+	return name + " (live)", nil
+}
+
+// parseOSRelease reads os-release(5) assignments: KEY=value, optionally
+// single- or double-quoted, with shell backslash escapes inside double
+// quotes. Control characters are dropped from values, because a value
+// lands verbatim on one line of a boot-loader config.
+func parseOSRelease(body string) map[string]string {
+	fields := map[string]string{}
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch {
+		case len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"':
+			value = value[1 : len(value)-1]
+			var b strings.Builder
+			for i := 0; i < len(value); i++ {
+				if value[i] == '\\' && i+1 < len(value) && strings.ContainsRune("\"\\$`", rune(value[i+1])) {
+					i++
+				}
+				b.WriteByte(value[i])
+			}
+			value = b.String()
+		case len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\'':
+			value = value[1 : len(value)-1]
+		}
+		fields[key] = strings.Map(func(r rune) rune {
+			if r < 0x20 || r == 0x7f {
+				return -1
+			}
+			return r
+		}, value)
+	}
+	return fields
+}
+
 // resolveTreeFile follows symlinks (relative to the link's directory, or
 // root-relative when absolute) and hardlinks from p to the regular file
 // that carries the bytes, returning its path and node ("" / nil when p
