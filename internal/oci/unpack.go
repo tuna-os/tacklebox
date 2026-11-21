@@ -3,8 +3,11 @@ package oci
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path"
@@ -31,6 +34,17 @@ type Node struct {
 	Devmajor, Devminor int64
 	Xattrs             map[string][]byte
 	Children           map[string]*Node // dirs only
+	// Bound to the immutable body reference and size observed during unpack.
+	// Direct callers may replace Ref/Size; BodyDigest then becomes unavailable.
+	bodyRef    string
+	bodySize   int64
+	bodySHA256 [sha256.Size]byte
+}
+
+// BodyDigest identifies an unpacked body without reopening its store. It is
+// unavailable for synthesized nodes and after replacing a node's body.
+func (n *Node) BodyDigest() ([sha256.Size]byte, bool) {
+	return n.bodySHA256, n.Type == TypeFile && n.bodyRef != "" && n.Ref == n.bodyRef && n.Size == n.bodySize
 }
 
 type NodeType uint8
@@ -261,6 +275,7 @@ func applyLayerFiltered(root *Node, r io.Reader, mediaType string, store BlobSto
 		tr = tar.NewReader(r)
 	}
 
+	body := &bodyDigestReader{reader: tr, digest: sha256.New()}
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -269,7 +284,7 @@ func applyLayerFiltered(root *Node, r io.Reader, mediaType string, store BlobSto
 		if err != nil {
 			return err
 		}
-		if err := applyEntry(root, hdr, tr, store, skip); err != nil {
+		if err := applyEntry(root, hdr, body, store, skip); err != nil {
 			return fmt.Errorf("%s: %w", hdr.Name, err)
 		}
 	}
@@ -313,9 +328,24 @@ func dirOf(root *Node, parts []string) (*Node, string) {
 	return n, parts[len(parts)-1]
 }
 
-func applyEntry(root *Node, hdr *tar.Header, body io.Reader, store BlobStore, skip func(string) bool) error {
+// One hashing reader per layer, reset between bodies. File count must not
+// multiply hasher/reader allocations or grow WASM linear memory.
+type bodyDigestReader struct {
+	reader io.Reader
+	digest hash.Hash
+}
+
+func (r *bodyDigestReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		_, _ = r.digest.Write(p[:n])
+	}
+	return n, err
+}
+
+func applyEntry(root *Node, hdr *tar.Header, body *bodyDigestReader, store BlobStore, skip func(string) bool) error {
 	if skip != nil && hdr.Typeflag == tar.TypeReg && skip(strings.Trim(hdr.Name, "/")) {
-		_, err := io.Copy(io.Discard, body)
+		_, err := io.Copy(io.Discard, body.reader)
 		return err
 	}
 	parts := splitClean(hdr.Name)
@@ -361,6 +391,7 @@ func applyEntry(root *Node, hdr *tar.Header, body io.Reader, store BlobStore, sk
 		node.Type = TypeDir
 		node.Children = map[string]*Node{}
 	case tar.TypeReg:
+		body.digest.Reset()
 		ref, size, err := store.Put(body)
 		if err != nil {
 			return err
@@ -368,6 +399,8 @@ func applyEntry(root *Node, hdr *tar.Header, body io.Reader, store BlobStore, sk
 		node.Type = TypeFile
 		node.Ref = ref
 		node.Size = size
+		node.bodyRef, node.bodySize = ref, size
+		body.digest.Sum(node.bodySHA256[:0])
 	case tar.TypeSymlink:
 		node.Type = TypeSymlink
 		node.Target = hdr.Linkname
@@ -449,7 +482,12 @@ func (s *MemStore) Open(ref string) (io.ReadCloser, error) {
 	if _, err := fmt.Sscanf(ref, "m%d", &i); err != nil || i < 0 || i >= len(s.blobs) {
 		return nil, fmt.Errorf("bad ref %q", ref)
 	}
-	return io.NopCloser(strings.NewReader(string(s.blobs[i]))), nil
+	return io.NopCloser(bytes.NewReader(s.blobs[i])), nil
+}
+
+// OpenForCompare is a stable read that does not consume body lifetime.
+func (s *MemStore) OpenForCompare(ref string) (io.ReadCloser, error) {
+	return s.Open(ref)
 }
 
 // DirStore spills bodies to numbered files under dir — the native builds'
@@ -482,6 +520,11 @@ func (s *DirStore) Put(r io.Reader) (string, int64, error) {
 
 func (s *DirStore) Open(ref string) (io.ReadCloser, error) {
 	return os.Open(ref)
+}
+
+// OpenForCompare is a stable read that does not consume body lifetime.
+func (s *DirStore) OpenForCompare(ref string) (io.ReadCloser, error) {
+	return s.Open(ref)
 }
 
 // ApplyTarOnto applies an uncompressed tar stream onto an existing tree with
