@@ -38,3 +38,21 @@ func TestDracutModulesFSIsValid(t *testing.T) {
 		t.Errorf("embedded FS validation failed: %v", err)
 	}
 }
+
+// The update-all units are installed into every block environment and run as
+// root there. provisionUpdateSystem reads them from this FS, so a missing or
+// empty file here means a media without its update timer.
+func TestSystemdUnitsEmbedded(t *testing.T) {
+	for _, f := range []string{
+		"src/systemd/tacklebox-update-all.service",
+		"src/systemd/tacklebox-update-all.timer",
+	} {
+		data, err := fs.ReadFile(SystemdUnits, f)
+		if err != nil {
+			t.Errorf("expected embedded file %s: %v", f, err)
+		}
+		if len(data) == 0 {
+			t.Errorf("embedded file %s is empty", f)
+		}
+	}
+}

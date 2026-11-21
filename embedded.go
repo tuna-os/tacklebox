@@ -35,3 +35,11 @@ var LiveBaseline embed.FS
 //
 //go:embed src/live/x13s-safety.sh
 var X13sLiveSafety embed.FS
+
+// SystemdUnits carries the update-all service and timer that `tacklebox
+// build`, `update` and `add` install into every block environment. They are
+// embedded so the units a media gets are the ones of the tacklebox that built
+// it, and never whatever src/systemd/ the working directory holds.
+//
+//go:embed src/systemd/tacklebox-update-all.service src/systemd/tacklebox-update-all.timer
+var SystemdUnits embed.FS

@@ -5,9 +5,13 @@ import (
 	"os"
 	"path/filepath"
 
+	tacklebox "github.com/tuna-os/tacklebox"
 	"github.com/tuna-os/tacklebox/internal/recipe"
 	"github.com/tuna-os/tacklebox/internal/runner"
 )
+
+// updateAllUnits are the systemd units provisionUpdateSystem installs.
+var updateAllUnits = []string{"tacklebox-update-all.service", "tacklebox-update-all.timer"}
 
 // provisionUpdateSystem drops the tacklebox binary, systemd units, and
 // build-time recipe into the env's filesystem so it can stay current
@@ -44,16 +48,28 @@ func provisionUpdateSystem(envRoot, envID string, r recipe.MediaRecipe) error {
 	}
 
 	// 3. systemd units
-	// These are shipped in src/systemd/ inside the repo.
+	//
+	// Read from the binary, not from src/systemd/ below the working
+	// directory. That relative path is the source checkout only when
+	// tacklebox runs from its repository root. Anywhere else it is a
+	// directory somebody else may control (a shared /tmp, an unpacked
+	// archive), and the unit copied from it runs as root at every boot of
+	// the media. A release binary found no such directory and installed no
+	// units at all.
 	_ = runner.Run("sudo", "mkdir", "-p", destUnitDir)
-	for _, f := range []string{"tacklebox-update-all.service", "tacklebox-update-all.timer"} {
-		src := filepath.Join("src", "systemd", f)
-		if _, err := os.Stat(src); err != nil {
-			// Fallback for when running from a non-repo binary (e.g. installed)
-			continue
+	for _, f := range updateAllUnits {
+		data, err := tacklebox.SystemdUnits.ReadFile("src/systemd/" + f)
+		if err != nil {
+			return fmt.Errorf("read embedded unit %s: %w", f, err)
 		}
-		if err := runner.Run("sudo", "cp", src, filepath.Join(destUnitDir, f)); err != nil {
-			return fmt.Errorf("copy %s: %w", f, err)
+		dest := filepath.Join(destUnitDir, f)
+		if err := sudoWriteFile(dest, data); err != nil {
+			return fmt.Errorf("install %s: %w", f, err)
+		}
+		// sudoWriteFile stages through a 0600 temp file and cp keeps that
+		// mode. Unit files are 0644, as they were when copied from the tree.
+		if err := runner.Run("sudo", "chmod", "0644", dest); err != nil {
+			return fmt.Errorf("chmod %s: %w", dest, err)
 		}
 	}
 
