@@ -121,6 +121,12 @@ It does not emulate an X13s or spoof its SMBIOS.
 Tests check for incorrect paths, hashes, sizes, targets, PE files, kernels, board tables, and GRUB arguments.
 The optional `TBOX_FEDORA_LOADER_FIXTURE` directory supplies `loader.efi` and `vmlinuz` from Fedora 45 7.2.15-300 RPMs.
 The test checks their published hashes before it parses the files.
+
+Fedora's signed `shimaa64.efi` keeps a COFF symbol table inside the bytes its signature covers.
+Tacklebox accepts a symbol table only when it and its string table lie inside the file and outside every section.
+Tacklebox copies the EFI files unchanged and never strips them.
+The optional `TBOX_FEDORA_SHIM_FIXTURE` directory supplies `shimaa64.efi` from Fedora 44 shim-aa64 16.1-7, checked by its published hash.
+
 Local checks use a supplemental Go 1.24 harness.
 
 The repository needs Go 1.26.3. Native CI must run the full build, test, vet, and integration-help checks.
