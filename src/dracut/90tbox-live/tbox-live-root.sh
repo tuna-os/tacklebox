@@ -28,7 +28,9 @@
 #                                       stacked as an extra overlay lowerdir
 #                                       (shared_store.dedup_layout=delta)
 #   tacklebox.x13s-adsp=required       opt-in experimental ADSP order barrier
-#   tacklebox.x13s-adsp.timeout=<sec>  --wait budget, 1..300 (60)
+#   tacklebox.x13s-adsp.timeout=<sec>  barrier budget, 1..300 (60): the
+#                                       --wait poll, and the initqueue passes
+#                                       counted from the first blocked one
 # /etc/tacklebox/x13s-adsp-required also enables the barrier. This is software
 # ordering only; it does not establish physical Type-C reset completion.
 
@@ -108,6 +110,8 @@ if [ "$x13s_required" = 1 ]; then
     tbox_x13s_resolved_device=
     if ! tbox_x13s_prepare_device "$dev_selector" "$wait"; then
         [ "$wait" = 1 ] && die "Tacklebox: X13s external root blocked: $tbox_x13s_reason"
+        tbox_x13s_initqueue_expired \
+            && die "Tacklebox: X13s external root blocked: $tbox_x13s_reason"
         exit 75
     fi
     dev=$tbox_x13s_resolved_device

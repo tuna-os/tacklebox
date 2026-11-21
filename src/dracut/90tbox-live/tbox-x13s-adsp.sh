@@ -20,7 +20,9 @@ tbox_x13s_adsp_required() {
 
 tbox_x13s_adsp_inputs() {
     tbox_x13s_reason="missing or wrong X13s device tree"
-    tr '\000' '\n' < /sys/firmware/devicetree/base/compatible 2>/dev/null \
+    # 2>/dev/null first: a missing node (no device tree, e.g. ACPI or QEMU)
+    # fails the input redirection, whose error the later redirect misses.
+    tr '\000' '\n' 2>/dev/null < /sys/firmware/devicetree/base/compatible \
         | grep -qx 'lenovo,thinkpad-x13s' || return 75
 
     # DT firmware-name is not encoded in the driver's module dependencies.
@@ -102,6 +104,44 @@ tbox_x13s_uptime() {
     return 0
 }
 
+# Sets _tx_timeout from tacklebox.x13s-adsp.timeout: 1..300 seconds (60).
+tbox_x13s_timeout() {
+    _tx_timeout=$(getarg tacklebox.x13s-adsp.timeout)
+    [ -n "$_tx_timeout" ] || _tx_timeout=60
+    tbox_x13s_reason="invalid X13s ADSP timeout (expected 1..300 seconds)"
+    case "$_tx_timeout" in '' | *[!0-9]*) return 75 ;; esac
+    [ "${#_tx_timeout}" -le 3 ] && [ "$_tx_timeout" -ge 1 ] \
+        && [ "$_tx_timeout" -le 300 ] || return 75
+    # Strip leading zeroes via decimal-safe shell arithmetic below.
+    _tx_timeout=$(printf '%s\n' "$_tx_timeout" | sed 's/^0*//')
+    return 0
+}
+
+# The initqueue reruns tbox-live-root on every settled pass, and
+# wait_for_dev holds it until the done marker, so a barrier that never
+# releases would only end at dracut's generic initqueue timeout, without its
+# reason. Bound those passes by the same budget as --wait, counted from the
+# first blocked pass. Returns 0 once the budget is spent, or when it cannot be
+# measured; tbox_x13s_reason then names the cause.
+tbox_x13s_initqueue_expired() {
+    _tx_blocked=$tbox_x13s_reason
+    tbox_x13s_timeout || return 0
+    tbox_x13s_reason="cannot read monotonic boot time"
+    tbox_x13s_uptime || return 0
+    _tx_start_file=/run/tbox-x13s-adsp-initqueue-start
+    if [ -f "$_tx_start_file" ]; then
+        tbox_x13s_reason="invalid X13s ADSP initqueue start time"
+        IFS= read -r _tx_start < "$_tx_start_file" || return 0
+        case "$_tx_start" in '' | *[!0-9]*) return 0 ;; esac
+    else
+        tbox_x13s_reason="cannot record X13s ADSP initqueue start time"
+        printf '%s\n' "$_tx_uptime" > "$_tx_start_file" || return 0
+        _tx_start=$_tx_uptime
+    fi
+    tbox_x13s_reason=$_tx_blocked
+    [ "$_tx_uptime" -ge $((_tx_start + _tx_timeout)) ]
+}
+
 tbox_x13s_prepare_device() {
     _tx_selector=$1
     _tx_wait=$2
@@ -112,14 +152,7 @@ tbox_x13s_prepare_device() {
         return $?
     fi
 
-    _tx_timeout=$(getarg tacklebox.x13s-adsp.timeout)
-    [ -n "$_tx_timeout" ] || _tx_timeout=60
-    tbox_x13s_reason="invalid X13s ADSP timeout (expected 1..300 seconds)"
-    case "$_tx_timeout" in '' | *[!0-9]*) return 75 ;; esac
-    [ "${#_tx_timeout}" -le 3 ] && [ "$_tx_timeout" -ge 1 ] \
-        && [ "$_tx_timeout" -le 300 ] || return 75
-    # Strip leading zeroes via decimal-safe shell arithmetic below.
-    _tx_timeout=$(printf '%s\n' "$_tx_timeout" | sed 's/^0*//')
+    tbox_x13s_timeout || return 75
     tbox_x13s_reason="cannot read monotonic boot time"
     tbox_x13s_uptime || return 75
     _tx_deadline=$((_tx_uptime + _tx_timeout))
