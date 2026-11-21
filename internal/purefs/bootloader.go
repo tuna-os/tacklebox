@@ -213,6 +213,9 @@ func RequireUEFIBootChain(root *oci.Node, arch string) (*BootChain, error) {
 // including its `devicetree` when devicetreePath is non-empty. `linux`
 // (not linuxefi) is correct on every bootupd-shipped GRUB: the RH
 // patchset these signed builds carry makes `linux` do the EFI handover.
+// The title comes from the image's os-release (LiveMenuTitle), so a single
+// quote in it is closed, escaped and reopened, as GRUB's sh-like quoting
+// requires.
 func LiveGrubCfg(title, kernelPath, initrdPath, devicetreePath, kargs string) string {
 	devicetree := ""
 	if devicetreePath != "" {
@@ -220,7 +223,7 @@ func LiveGrubCfg(title, kernelPath, initrdPath, devicetreePath, kargs string) st
 	}
 	return fmt.Sprintf(
 		"set default=0\nset timeout=3\n\nmenuentry '%s' {\n    linux %s %s\n    initrd %s\n%s}\n",
-		title, kernelPath, kargs, initrdPath, devicetree)
+		strings.ReplaceAll(title, "'", `'\''`), kernelPath, kargs, initrdPath, devicetree)
 }
 
 // resolveFile follows hardlinks to the regular file that carries the
