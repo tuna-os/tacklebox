@@ -80,6 +80,10 @@ func (in Input) validate() error {
 
 // ARM64PE checks the PE target and bounded, nonoverlapping on-disk sections.
 // Repeated .dtbauto sections are intentional in Fedora's multi-board loader.
+// A COFF symbol table is allowed only whole inside the file and outside every
+// section: Fedora's signed shimaa64.efi carries one inside the bytes its
+// Authenticode signature covers, so it cannot be stripped. The bytes are copied
+// verbatim; debug/pe parses the table, and these bounds cap what it reads.
 func ARM64PE(data []byte) (*pe.File, error) {
 	if len(data) < 64 || int64(len(data)) > MaxPayloadBytes {
 		return nil, fmt.Errorf("invalid PE size")
@@ -98,13 +102,28 @@ func ARM64PE(data []byte) (*pe.File, error) {
 	if count == 0 || count > 256 {
 		return nil, fmt.Errorf("invalid PE section count")
 	}
-	if binary.LittleEndian.Uint32(data[peOffset+12:]) != 0 || binary.LittleEndian.Uint32(data[peOffset+16:]) != 0 {
-		return nil, fmt.Errorf("COFF symbols are unsupported in EFI inputs")
-	}
+	symbols := uint64(binary.LittleEndian.Uint32(data[peOffset+12:]))
+	symbolCount := uint64(binary.LittleEndian.Uint32(data[peOffset+16:]))
 	table := peOffset + 24 + uint64(binary.LittleEndian.Uint16(data[peOffset+20:peOffset+22]))
 	tableEnd := table + count*40
 	if tableEnd > uint64(len(data)) {
 		return nil, fmt.Errorf("truncated PE section table")
+	}
+	type span struct{ start, end uint64 }
+	var spans []span
+	if symbols != 0 || symbolCount != 0 {
+		if symbols == 0 || symbolCount == 0 {
+			return nil, fmt.Errorf("incomplete COFF symbol table")
+		}
+		stringTable := symbols + symbolCount*pe.COFFSymbolSize
+		if symbols < tableEnd || stringTable+4 > uint64(len(data)) {
+			return nil, fmt.Errorf("COFF symbol table outside file")
+		}
+		end := stringTable + max(uint64(binary.LittleEndian.Uint32(data[stringTable:])), 4)
+		if end > uint64(len(data)) {
+			return nil, fmt.Errorf("COFF string table outside file")
+		}
+		spans = append(spans, span{symbols, end})
 	}
 	for offset := table; offset < tableEnd; offset += 40 {
 		if binary.LittleEndian.Uint32(data[offset+24:]) != 0 || binary.LittleEndian.Uint16(data[offset+32:]) != 0 {
@@ -121,8 +140,6 @@ func ARM64PE(data []byte) (*pe.File, error) {
 	if _, ok := f.OptionalHeader.(*pe.OptionalHeader64); !ok {
 		return nil, fmt.Errorf("expected PE32+")
 	}
-	type span struct{ start, end uint64 }
-	var spans []span
 	for _, s := range f.Sections {
 		if s.Size == 0 {
 			continue

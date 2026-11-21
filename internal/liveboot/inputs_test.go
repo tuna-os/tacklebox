@@ -138,6 +138,57 @@ func TestPEPreflightRejectsAllocationAmplifiers(t *testing.T) {
 	}
 }
 
+// withSymbols appends a COFF symbol table of count blank symbols and a string
+// table, the layout of Fedora's signed shimaa64.efi.
+func withSymbols(b []byte, count uint32, strings string) []byte {
+	pointer := uint32(len(b))
+	b = append(b, make([]byte, int(count)*18+4)...)
+	binary.LittleEndian.PutUint32(b[len(b)-4:], uint32(len(strings)+4))
+	b = append(b, strings...)
+	binary.LittleEndian.PutUint32(b[76:], pointer)
+	binary.LittleEndian.PutUint32(b[80:], count)
+	return b
+}
+
+func TestPEPreflightBoundsCOFFSymbols(t *testing.T) {
+	original := withSymbols(syntheticPE(section{".text", []byte("code")}), 3, "long_section_name\x00")
+	if _, err := ARM64PE(original); err != nil {
+		t.Fatalf("rejected a PE with an in-file COFF symbol table: %v", err)
+	}
+	end := uint32(len(original))
+	for name, change := range map[string]func([]byte){
+		"string table past end": func(b []byte) { binary.LittleEndian.PutUint32(b[end-22:], 0xffffffff) },
+		"symbols past end":      func(b []byte) { binary.LittleEndian.PutUint32(b[80:], 0x0fffffff) },
+		"symbols over section":  func(b []byte) { binary.LittleEndian.PutUint32(b[76:], 1024) },
+		"symbols in headers":    func(b []byte) { binary.LittleEndian.PutUint32(b[76:], 64) },
+		"symbols without count": func(b []byte) { binary.LittleEndian.PutUint32(b[80:], 0) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := append([]byte(nil), original...)
+			change(b)
+			if _, err := ARM64PE(b); err == nil {
+				t.Fatal("accepted unbounded COFF symbol table")
+			}
+		})
+	}
+}
+
+// Fedora 44 shim-aa64 16.1-7 /usr/lib/efi/shim/16.1-7/EFI/fedora/shimaa64.efi
+// keeps 4593 COFF symbols inside its Authenticode-covered bytes.
+func TestPublishedFedoraShimWithCOFFSymbols(t *testing.T) {
+	dir := os.Getenv("TBOX_FEDORA_SHIM_FIXTURE")
+	if dir == "" {
+		t.Skip("set TBOX_FEDORA_SHIM_FIXTURE for published byte comparison")
+	}
+	shim, err := ReadInput(dir, Input{Path: "shimaa64.efi", Size: 1045768, SHA256: "24320d316702ae9ab3dd025eb39a267d333156da4db9ff573b57f7caade15c19"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ARM64PE(shim); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEmptyKernelCannotMatchMissingLinux(t *testing.T) {
 	m := manifest(nil)
 	loader := syntheticPE(section{".uname", []byte(m.KernelRelease)})
