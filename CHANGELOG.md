@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.0](https://github.com/tuna-os/tacklebox/compare/v0.1.1...v0.2.0) (2026-11-21)
+
+
+### Features
+
+* **liveboot:** build experimental X13s live ISOs with build --x13s-live ([#497](https://github.com/tuna-os/tacklebox/issues/497)) ([1427011](https://github.com/tuna-os/tacklebox/commit/1427011a3d408e778a87ff29184bc0b0cb98e9ab))
+
+
+### Bug Fixes
+
+* **liveboot:** accept Fedora's signed shim with its in-file COFF symbol table ([#505](https://github.com/tuna-os/tacklebox/issues/505)) ([453ffb4](https://github.com/tuna-os/tacklebox/commit/453ffb4a9074895b5cc26230b1e374d8a2b436ab))
+* **live:** name the live boot entry after the image's os-release ([#506](https://github.com/tuna-os/tacklebox/issues/506)) ([c60ef57](https://github.com/tuna-os/tacklebox/commit/c60ef57683e826f8e323a8aa0218d90a4ce93a2d))
+
+
+### Refactoring
+
+* **build:** run --x13s-live through the build install strategy layer ([#504](https://github.com/tuna-os/tacklebox/issues/504)) ([4e9e632](https://github.com/tuna-os/tacklebox/commit/4e9e632d0201258d154a4ff364c55c61865e37f6)), closes [#501](https://github.com/tuna-os/tacklebox/issues/501)
+
+
+### Documentation
+
+* **readme:** list the experimental --x13s-live build flag ([#500](https://github.com/tuna-os/tacklebox/issues/500)) ([9312b24](https://github.com/tuna-os/tacklebox/commit/9312b24338b689a53f14dc59f28615c4e83273cf))
+* **user-guide:** describe where the boot-test scripts write their serial logs ([#495](https://github.com/tuna-os/tacklebox/issues/495)) ([a64cbd3](https://github.com/tuna-os/tacklebox/commit/a64cbd3088292aee09d45039537e80e3f74a7d00)), closes [#494](https://github.com/tuna-os/tacklebox/issues/494)
+
 ## [0.1.1](https://github.com/tuna-os/tacklebox/compare/v0.1.0...v0.1.1) (2026-11-17)
 
 
