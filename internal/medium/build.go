@@ -29,26 +29,55 @@ type BuildOptions struct {
 // offline, and as a reference for the CI producer. It buffers one chunk.
 // It returns the manifest digest.
 func BuildLayout(dir string, raw io.Reader, o BuildOptions) (string, error) {
+	blobs, _, md, err := BuildBlobs(raw, o)
+	if err != nil {
+		return "", err
+	}
+	blobDir := filepath.Join(dir, "blobs", "sha256")
+	if err := os.MkdirAll(blobDir, 0o755); err != nil {
+		return "", err
+	}
+	for h, b := range blobs {
+		if err := os.WriteFile(filepath.Join(blobDir, h), b, 0o644); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), indexJSON(md, o.RefName), 0o644); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o644); err != nil {
+		return "", err
+	}
+	return md.Digest, nil
+}
+
+// BuildBlobs turns a raw medium into the blobs of an installer image: it
+// returns every blob by hex digest (layers, config, manifest), the manifest
+// itself and its descriptor. The WASM test builds its in-memory source from
+// this; BuildLayout is the same bytes on disk.
+func BuildBlobs(raw io.Reader, o BuildOptions) (blobs map[string][]byte, manifest []byte, md oci.Descriptor, err error) {
 	if o.ChunkSize <= 0 {
 		o.ChunkSize = 1 << 20
 	}
 	if o.ChunkSize > MaxChunkBytes {
-		return "", fmt.Errorf("chunk size %d exceeds %d", o.ChunkSize, int64(MaxChunkBytes))
+		return nil, nil, oci.Descriptor{}, fmt.Errorf("chunk size %d exceeds %d", o.ChunkSize, int64(MaxChunkBytes))
 	}
-	blobs := filepath.Join(dir, "blobs", "sha256")
-	if err := os.MkdirAll(blobs, 0o755); err != nil {
-		return "", err
-	}
-	put := func(b []byte) (oci.Descriptor, error) {
+	blobs = map[string][]byte{}
+	put := func(b []byte) oci.Descriptor {
 		sum := sha256.Sum256(b)
 		h := hex.EncodeToString(sum[:])
-		return oci.Descriptor{Digest: "sha256:" + h, Size: int64(len(b))}, os.WriteFile(filepath.Join(blobs, h), b, 0o644)
+		blobs[h] = b
+		return oci.Descriptor{Digest: "sha256:" + h, Size: int64(len(b))}
 	}
 	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
-		return "", err
+		return nil, nil, oci.Descriptor{}, err
 	}
-	defer func() { _ = enc.Close() }()
+	defer func() {
+		if cerr := enc.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	cfg := Config{SchemaVersion: SchemaVersion, Partitions: o.Partitions, BootModes: o.BootModes}
 	whole := sha256.New()
@@ -61,10 +90,7 @@ func BuildLayout(dir string, raw io.Reader, o BuildOptions) (string, error) {
 			whole.Write(buf[:n])
 			cfg.Chunks = append(cfg.Chunks, Chunk{Offset: cfg.TotalSize, Length: int64(n), SHA256: "sha256:" + hex.EncodeToString(sum[:])})
 			cfg.TotalSize += int64(n)
-			d, perr := put(enc.EncodeAll(buf[:n], nil))
-			if perr != nil {
-				return "", perr
-			}
+			d := put(enc.EncodeAll(buf[:n], nil))
 			d.MediaType = ChunkMediaType
 			layers = append(layers, d)
 		}
@@ -72,39 +98,30 @@ func BuildLayout(dir string, raw io.Reader, o BuildOptions) (string, error) {
 			break
 		}
 		if err != nil {
-			return "", err
+			return nil, nil, oci.Descriptor{}, err
 		}
 	}
 	cfg.SHA256 = digestOf(whole)
 	cb, err := json.Marshal(cfg)
 	if err != nil {
-		return "", err
+		return nil, nil, oci.Descriptor{}, err
 	}
-	cd, err := put(cb)
-	if err != nil {
-		return "", err
-	}
+	cd := put(cb)
 	cd.MediaType = ConfigMediaType
 	mb, err := json.Marshal(oci.Manifest{MediaType: "application/vnd.oci.image.manifest.v1+json", Config: cd, Layers: layers, Annotations: o.Annotations})
 	if err != nil {
-		return "", err
+		return nil, nil, oci.Descriptor{}, err
 	}
-	md, err := put(mb)
-	if err != nil {
-		return "", err
-	}
-	idx := map[string]any{"schemaVersion": 2, "manifests": []map[string]any{{
+	md = put(mb)
+	return blobs, mb, md, nil
+}
+
+func indexJSON(md oci.Descriptor, refName string) []byte {
+	ib, _ := json.Marshal(map[string]any{"schemaVersion": 2, "manifests": []map[string]any{{
 		"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": md.Digest, "size": md.Size,
-		"annotations": map[string]string{"org.opencontainers.image.ref.name": o.RefName},
-	}}}
-	ib, _ := json.Marshal(idx)
-	if err := os.WriteFile(filepath.Join(dir, "index.json"), ib, 0o644); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(dir, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o644); err != nil {
-		return "", err
-	}
-	return md.Digest, nil
+		"annotations": map[string]string{"org.opencontainers.image.ref.name": refName},
+	}}})
+	return ib
 }
 
 // SyntheticMedium returns a deterministic pseudo medium of the given size:

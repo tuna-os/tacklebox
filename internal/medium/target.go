@@ -3,8 +3,25 @@ package medium
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 )
+
+// Sink receives the raw image bytes: random-access writes, an explicit
+// size, and a flush. The write loop streams chunks through at most one
+// 1 MiB buffer however large the image is; a Sink must never hold the
+// image in memory.
+//
+// A Sink may also implement io.ReaderAt. When it does, resume can skip
+// chunks the target already holds and the writer reads the target back
+// to prove the bytes. A write-only handle (a browser save-file stream)
+// simply does not implement it: then resume is rejected and ReadBackOK
+// stays false.
+type Sink interface {
+	io.WriterAt
+	Truncate(size int64) error
+	Sync() error
+}
 
 // TargetPolicy is the caller's explicit consent. The zero value is the
 // safest: only a missing or empty regular file is accepted.
@@ -27,7 +44,6 @@ type DeviceInfo struct {
 	Mounted []string
 }
 
-// Target is an opened destination.
 type Target struct {
 	F      *os.File
 	Path   string
@@ -35,7 +51,36 @@ type Target struct {
 	// Fresh is true for a file that was empty or created now. Only a fresh
 	// file may be written sparse, because holes keep old bytes otherwise.
 	Fresh bool
+	// Sparse lets whole 4 KiB zero blocks stay holes. Set for fresh
+	// files only; devices and caller-provided sinks are written dense.
+	Sparse bool
+	// sink overrides the *os.File as the write destination. Nil means
+	// fileSink{F}: every target opened here writes to its file.
+	sink Sink
 }
+
+// Sink returns the write destination: the caller's sink, or the file.
+func (t *Target) Sink() Sink {
+	if t.sink != nil {
+		return t.sink
+	}
+	return fileSink{t.F}
+}
+
+// NewStreamTarget wraps a caller-provided sink, e.g. a browser handle:
+// no device policy, no sparseness, no resume. The stream is written
+// dense from offset 0.
+func NewStreamTarget(s Sink, path string) *Target {
+	return &Target{Path: path, Fresh: true, sink: s}
+}
+
+// fileSink adapts *os.File to Sink (and io.ReaderAt for resume/read-back).
+type fileSink struct{ f *os.File }
+
+func (s fileSink) WriteAt(p []byte, off int64) (int, error) { return s.f.WriteAt(p, off) }
+func (s fileSink) ReadAt(p []byte, off int64) (int, error)  { return s.f.ReadAt(p, off) }
+func (s fileSink) Truncate(size int64) error                { return s.f.Truncate(size) }
+func (s fileSink) Sync() error                              { return s.f.Sync() }
 
 // ErrRefused wraps every safety refusal.
 var ErrRefused = errors.New("refusing to write target")
@@ -55,7 +100,7 @@ func OpenTarget(path string, p TargetPolicy, resume bool) (*Target, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Target{F: f, Path: path, Fresh: true}, nil
+		return &Target{F: f, Path: path, Fresh: true, Sparse: true}, nil
 	case err != nil:
 		return nil, err
 	}
@@ -68,7 +113,7 @@ func OpenTarget(path string, p TargetPolicy, resume bool) (*Target, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Target{F: f, Path: path, Fresh: st.Size() == 0}, nil
+		return &Target{F: f, Path: path, Fresh: st.Size() == 0, Sparse: st.Size() == 0}, nil
 	case st.Mode()&os.ModeDevice != 0 && st.Mode()&os.ModeCharDevice == 0:
 		if p.ConfirmDevice != path {
 			return nil, refuse("%s is a block device; pass --confirm-device=%s to write it", path, path)

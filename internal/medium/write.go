@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"os"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/tuna-os/tacklebox/internal/oci"
@@ -146,13 +145,15 @@ func Write(ctx context.Context, src Source, t *Target, opt Options) (*Result, er
 	}
 	cfg := &plan.Config
 	res := &Result{ManifestDigest: plan.Digest, Annotations: plan.Manifest.Annotations, TotalSize: cfg.TotalSize, SHA256: cfg.SHA256}
+	sink := t.Sink()
 
 	if !t.Device && t.Fresh {
 		// Size the file up front: a full disk fails now, not at the end.
-		if err := t.F.Truncate(cfg.TotalSize); err != nil {
+		if err := sink.Truncate(cfg.TotalSize); err != nil {
 			return nil, fmt.Errorf("size target: %w", err)
 		}
 	}
+	readback, readable := sink.(io.ReaderAt)
 	buf := make([]byte, ioBuf)
 	whole := sha256.New()
 	var done int64
@@ -161,7 +162,10 @@ func Write(ctx context.Context, src Source, t *Target, opt Options) (*Result, er
 			return nil, err
 		}
 		if opt.Resume {
-			ok, err := chunkOnTarget(t.F, ch, buf, whole)
+			if !readable {
+				return nil, errors.New("resume needs a readable target; this sink is write-only")
+			}
+			ok, err := chunkOnTarget(readback, ch, buf, whole)
 			if err != nil {
 				return nil, err
 			}
@@ -174,7 +178,7 @@ func Write(ctx context.Context, src Source, t *Target, opt Options) (*Result, er
 				continue
 			}
 		}
-		if err := writeChunk(ctx, src, t, plan.Manifest.Layers[i], i, ch, buf, whole); err != nil {
+		if err := writeChunk(ctx, src, sink, t.Sparse, plan.Manifest.Layers[i], i, ch, buf, whole); err != nil {
 			return nil, err
 		}
 		res.ChunksWritten++
@@ -187,17 +191,19 @@ func Write(ctx context.Context, src Source, t *Target, opt Options) (*Result, er
 		return nil, fmt.Errorf("whole-image sha256 mismatch: stream is %s, config says %s", got, cfg.SHA256)
 	}
 	if !t.Device {
-		if err := t.F.Truncate(cfg.TotalSize); err != nil {
+		if err := sink.Truncate(cfg.TotalSize); err != nil {
 			return nil, fmt.Errorf("size target: %w", err)
 		}
 	}
-	if err := t.F.Sync(); err != nil {
+	if err := sink.Sync(); err != nil {
 		return nil, fmt.Errorf("sync target: %w", err)
 	}
-	if err := VerifyTarget(t.F, cfg, buf); err != nil {
-		return nil, err
+	if readable {
+		if err := VerifyTarget(readback, cfg, buf); err != nil {
+			return nil, err
+		}
+		res.ReadBackOK = true
 	}
-	res.ReadBackOK = true
 	return res, nil
 }
 
@@ -205,9 +211,9 @@ func digestOf(h hash.Hash) string { return "sha256:" + hex.EncodeToString(h.Sum(
 
 // chunkOnTarget reports whether the target already holds chunk ch. When it
 // does, the bytes also feed whole so the whole-image hash stays continuous.
-func chunkOnTarget(f *os.File, ch Chunk, buf []byte, whole hash.Hash) (bool, error) {
+func chunkOnTarget(r io.ReaderAt, ch Chunk, buf []byte, whole hash.Hash) (bool, error) {
 	h := sha256.New()
-	sr := io.NewSectionReader(f, ch.Offset, ch.Length)
+	sr := io.NewSectionReader(r, ch.Offset, ch.Length)
 	if _, err := io.CopyBuffer(h, sr, buf); err != nil {
 		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
 			return false, nil
@@ -217,7 +223,7 @@ func chunkOnTarget(f *os.File, ch Chunk, buf []byte, whole hash.Hash) (bool, err
 	if digestOf(h) != ch.SHA256 {
 		return false, nil
 	}
-	if _, err := io.CopyBuffer(whole, io.NewSectionReader(f, ch.Offset, ch.Length), buf); err != nil {
+	if _, err := io.CopyBuffer(whole, io.NewSectionReader(r, ch.Offset, ch.Length), buf); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -230,7 +236,7 @@ type countHash struct {
 
 func (c *countHash) Write(p []byte) (int, error) { c.n += int64(len(p)); return c.h.Write(p) }
 
-func writeChunk(ctx context.Context, src Source, t *Target, l oci.Descriptor, i int, ch Chunk, buf []byte, whole hash.Hash) (err error) {
+func writeChunk(ctx context.Context, src Source, sink Sink, sparse bool, l oci.Descriptor, i int, ch Chunk, buf []byte, whole hash.Hash) (err error) {
 	wrap := func(e error) error { return fmt.Errorf("chunk %d (offset %d): %w", i, ch.Offset, e) }
 	rc, err := src.Blob(ctx, l)
 	if err != nil {
@@ -253,7 +259,6 @@ func writeChunk(ctx context.Context, src Source, t *Target, l oci.Descriptor, i 
 	chunkHash := sha256.New()
 	// One byte past the declared length detects an oversized chunk.
 	r := io.LimitReader(dec, ch.Length+1)
-	sparse := !t.Device && t.Fresh
 	var got int64
 	for {
 		n, rerr := io.ReadFull(r, buf)
@@ -263,7 +268,7 @@ func writeChunk(ctx context.Context, src Source, t *Target, l oci.Descriptor, i 
 			}
 			chunkHash.Write(buf[:n])
 			whole.Write(buf[:n])
-			if err := writeAt(t.F, buf[:n], ch.Offset+got, sparse); err != nil {
+			if err := writeAt(sink, buf[:n], ch.Offset+got, sparse); err != nil {
 				return wrap(err)
 			}
 			got += int64(n)
@@ -297,15 +302,15 @@ func writeChunk(ctx context.Context, src Source, t *Target, l oci.Descriptor, i 
 
 // writeAt writes p at off. With sparse set, whole 4 KiB blocks of zeros are
 // skipped, leaving a hole. The caller sets the final size with Truncate.
-func writeAt(f *os.File, p []byte, off int64, sparse bool) error {
+func writeAt(w io.WriterAt, p []byte, off int64, sparse bool) error {
 	if !sparse {
-		_, err := f.WriteAt(p, off)
+		_, err := w.WriteAt(p, off)
 		return err
 	}
 	start := 0
 	flush := func(end int) error {
 		if end > start {
-			if _, err := f.WriteAt(p[start:end], off+int64(start)); err != nil {
+			if _, err := w.WriteAt(p[start:end], off+int64(start)); err != nil {
 				return err
 			}
 		}
@@ -330,14 +335,14 @@ func allZero(b []byte) bool { return bytes.Equal(b, zeroBlk[:len(b)]) }
 // VerifyTarget reads the first TotalSize bytes of f back and compares them
 // with the config: whole-image hash and, to name the failing place, every
 // chunk hash. A sparse hole reads as zeros, so holes verify too.
-func VerifyTarget(f *os.File, cfg *Config, buf []byte) error {
+func VerifyTarget(r io.ReaderAt, cfg *Config, buf []byte) error {
 	if buf == nil {
 		buf = make([]byte, ioBuf)
 	}
 	whole := sha256.New()
 	for i, ch := range cfg.Chunks {
 		h := sha256.New()
-		n, err := io.CopyBuffer(io.MultiWriter(h, whole), io.NewSectionReader(f, ch.Offset, ch.Length), buf)
+		n, err := io.CopyBuffer(io.MultiWriter(h, whole), io.NewSectionReader(r, ch.Offset, ch.Length), buf)
 		if err != nil {
 			return fmt.Errorf("read back chunk %d: %w", i, err)
 		}
