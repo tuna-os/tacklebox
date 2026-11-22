@@ -112,7 +112,7 @@ ci-reap-stale:
     scripts/ci-reap-stale.sh
 
 # Local gate: what the lint-test job runs
-check: fmt-check lint vet test check-recipes
+check: fmt-check lint vet test check-recipes verify-vendor
 
 # go vet
 vet:
@@ -144,6 +144,10 @@ wasm:
     set -e
     GOOS=js GOARCH=wasm go build -o /tmp/tbwasm.wasm ./cmd/tbwasm
     GOOS=js GOARCH=wasm go test -timeout=3m -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" ./cmd/tbwasm
+
+# Vendored in-toto-golang must match upstream plus the documented patch
+verify-vendor:
+    bash third_party/in-toto-golang/verify-vendor.sh
 
 # Every example/fixture recipe must be valid JSON
 check-recipes: build

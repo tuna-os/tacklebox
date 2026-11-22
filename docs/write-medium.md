@@ -53,6 +53,8 @@ Verification runs by default and fails closed. Two bundles gate the first byte. 
 
 The second is a receipt attestation: a DSSE/in-toto envelope with predicate type `https://tunaos.dev/installer/receipt/v1`. Its `receiptDigest` must equal the manifest annotation `org.tunaos.installer.receipt-sha256`. Both bundles use the bundle JSON format of Sigstore. A registry exposes them as referrers of the image digest. A layout directory carries them as `<hex>.sigstore.json` and `<hex>.attestation.sigstore.json` sidecars.
 
+Sigstore-go needs a vendored in-toto-golang: the upstream unix build tag also matches wasm, but it calls a syscall that wasm lacks. `third_party/in-toto-golang` carries the two-line patch, and `verify-vendor.sh` guards it against drift.
+
 ## Browser (`tboxWriteMedium`, for iso-builder)
 
 The same fetch/verify/hash path runs in the browser for the Media Writer.

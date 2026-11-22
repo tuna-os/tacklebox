@@ -90,3 +90,5 @@ require (
 	google.golang.org/grpc v1.84.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
+
+replace github.com/in-toto/in-toto-golang => ./third_party/in-toto-golang
