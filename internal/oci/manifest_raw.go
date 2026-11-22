@@ -20,7 +20,7 @@ func (c *Client) ManifestRaw(ref Ref) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxManifestBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("manifest read: %w", err)

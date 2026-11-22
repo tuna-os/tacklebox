@@ -48,7 +48,7 @@ func inspectDevice(path string) (DeviceInfo, error) {
 	if err != nil {
 		return DeviceInfo{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		// ... mountpoint ... - fstype source options

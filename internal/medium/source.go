@@ -148,7 +148,7 @@ func (r *RegistrySource) Blob(ctx context.Context, d oci.Descriptor) (io.ReadClo
 }
 
 func readAll(rc io.ReadCloser, max int64) ([]byte, error) {
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	b, err := io.ReadAll(io.LimitReader(rc, max+1))
 	if err != nil {
 		return nil, err

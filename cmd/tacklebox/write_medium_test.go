@@ -20,7 +20,7 @@ func TestWriteMediumCommand(t *testing.T) {
 	run := func(args ...string) error {
 		rootCmd.SetArgs(append([]string{"write-medium"}, args...))
 		for _, n := range []string{"insecure-skip-verify", "force-overwrite", "resume"} {
-			writeMediumCmd.Flags().Set(n, "false")
+			_ = writeMediumCmd.Flags().Set(n, "false")
 		}
 		return rootCmd.Execute()
 	}

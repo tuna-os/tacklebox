@@ -89,7 +89,7 @@ func openNew(t *testing.T) *Target {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { tg.F.Close() })
+	t.Cleanup(func() { _ = tg.F.Close() })
 	return tg
 }
 
@@ -146,7 +146,7 @@ func TestCorruptedChunk(t *testing.T) {
 	p := f.layerPath(t, 2)
 	b := readFile(t, p)
 	b[len(b)/2] ^= 0xff
-	os.WriteFile(p, b, 0o644)
+	_ = os.WriteFile(p, b, 0o644)
 	_, err := Write(context.Background(), f.src, openNew(t), skipOK())
 	if err == nil || !strings.Contains(err.Error(), "chunk 2") {
 		t.Fatalf("want a chunk 2 error, got %v", err)
@@ -170,7 +170,7 @@ func TestTruncatedBlob(t *testing.T) {
 	f := newFixture(t)
 	p := f.layerPath(t, 0)
 	b := readFile(t, p)
-	os.WriteFile(p, b[:len(b)/2], 0o644)
+	_ = os.WriteFile(p, b[:len(b)/2], 0o644)
 	_, err := Write(context.Background(), f.src, openNew(t), skipOK())
 	if err == nil {
 		t.Fatal("truncated layer accepted")
@@ -185,7 +185,7 @@ func TestTruncatedStreamWithConsistentDigests(t *testing.T) {
 	short := enc.EncodeAll(f.raw[:testChunk-100], nil)
 	sum := sha256.Sum256(short)
 	h := hex.EncodeToString(sum[:])
-	os.WriteFile(filepath.Join(f.dir, "blobs", "sha256", h), short, 0o644)
+	_ = os.WriteFile(filepath.Join(f.dir, "blobs", "sha256", h), short, 0o644)
 	f.rewrite(t, func(c *Config, m *oci.Manifest) {
 		m.Layers[0].Digest, m.Layers[0].Size = "sha256:"+h, int64(len(short))
 	})
@@ -201,7 +201,7 @@ func TestOversizedChunkRejected(t *testing.T) {
 	big := enc.EncodeAll(f.raw[:testChunk+500], nil)
 	sum := sha256.Sum256(big)
 	h := hex.EncodeToString(sum[:])
-	os.WriteFile(filepath.Join(f.dir, "blobs", "sha256", h), big, 0o644)
+	_ = os.WriteFile(filepath.Join(f.dir, "blobs", "sha256", h), big, 0o644)
 	f.rewrite(t, func(c *Config, m *oci.Manifest) {
 		m.Layers[0].Digest, m.Layers[0].Size = "sha256:"+h, int64(len(big))
 	})
@@ -243,7 +243,7 @@ func TestReadBackDetectsTamper(t *testing.T) {
 	if err := VerifyTarget(tg.F, &cfg, nil); err != nil {
 		t.Fatal(err)
 	}
-	tg.F.WriteAt([]byte{1, 2, 3}, 3*testChunk+10)
+	_, _ = tg.F.WriteAt([]byte{1, 2, 3}, 3*testChunk+10)
 	if err := VerifyTarget(tg.F, &cfg, nil); err == nil || !strings.Contains(err.Error(), "chunk 3") {
 		t.Fatalf("got %v", err)
 	}
@@ -255,9 +255,9 @@ func TestResumeSkipsGoodChunksAndRepairsBadOnes(t *testing.T) {
 	if _, err := Write(context.Background(), f.src, tg, skipOK()); err != nil {
 		t.Fatal(err)
 	}
-	tg.F.WriteAt([]byte("garbage"), 2*testChunk+5) // damage chunk 2
-	tg.F.Truncate(4 * testChunk)                   // lose chunks 4 and 5
-	tg.F.Close()
+	_, _ = tg.F.WriteAt([]byte("garbage"), 2*testChunk+5) // damage chunk 2
+	_ = tg.F.Truncate(4 * testChunk)                      // lose chunks 4 and 5
+	_ = tg.F.Close()
 
 	// Without --resume the non-empty file is refused.
 	if _, err := OpenTarget(tg.Path, TargetPolicy{}, false); !errors.Is(err, ErrRefused) {
@@ -267,7 +267,7 @@ func TestResumeSkipsGoodChunksAndRepairsBadOnes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer t2.F.Close()
+	defer func() { _ = t2.F.Close() }()
 	o := skipOK()
 	o.Resume = true
 	res, err := Write(context.Background(), f.src, t2, o)
@@ -284,7 +284,7 @@ func TestResumeSkipsGoodChunksAndRepairsBadOnes(t *testing.T) {
 
 func TestOverwriteNonEmptyFileNeedsFlag(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "x")
-	os.WriteFile(p, []byte("data"), 0o644)
+	_ = os.WriteFile(p, []byte("data"), 0o644)
 	if _, err := OpenTarget(p, TargetPolicy{}, false); !errors.Is(err, ErrRefused) {
 		t.Fatalf("got %v", err)
 	}
@@ -295,7 +295,7 @@ func TestOverwriteNonEmptyFileNeedsFlag(t *testing.T) {
 	if tg.Fresh {
 		t.Fatal("an overwritten file must not be treated as fresh (no sparse holes over old data)")
 	}
-	tg.F.Close()
+	_ = tg.F.Close()
 	if _, err := OpenTarget(t.TempDir(), TargetPolicy{}, false); !errors.Is(err, ErrRefused) {
 		t.Fatalf("directory accepted: %v", err)
 	}
@@ -304,12 +304,12 @@ func TestOverwriteNonEmptyFileNeedsFlag(t *testing.T) {
 func TestOverwriteWithoutSparseHoles(t *testing.T) {
 	f := newFixture(t)
 	p := filepath.Join(t.TempDir(), "old.img")
-	os.WriteFile(p, bytes.Repeat([]byte{0xAA}, testSize+100), 0o644)
+	_ = os.WriteFile(p, bytes.Repeat([]byte{0xAA}, testSize+100), 0o644)
 	tg, err := OpenTarget(p, TargetPolicy{OverwriteFile: true}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tg.F.Close()
+	defer func() { _ = tg.F.Close() }()
 	if _, err := Write(context.Background(), f.src, tg, skipOK()); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +351,7 @@ func TestBlockDeviceRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			tg, err := OpenTarget(dev, c.pol, false)
 			if tg != nil {
-				tg.F.Close()
+				_ = tg.F.Close()
 			}
 			if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("got %v, want refusal containing %q", err, c.want)
@@ -383,11 +383,11 @@ func TestParseRegistryRef(t *testing.T) {
 func fakeRegistry(t *testing.T, f *fixture, stallBlob string, ranged *atomic.Int32) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"token":"t"}`) })
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, `{"token":"t"}`) })
 	mux.HandleFunc("/v2/org/img/manifests/", func(w http.ResponseWriter, r *http.Request) {
 		_, d, _ := f.src.Resolve(context.Background())
 		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
-		w.Write(readFile(t, filepath.Join(f.dir, "blobs", "sha256", strings.TrimPrefix(d, "sha256:"))))
+		_, _ = w.Write(readFile(t, filepath.Join(f.dir, "blobs", "sha256", strings.TrimPrefix(d, "sha256:"))))
 	})
 	var stalled atomic.Bool
 	mux.HandleFunc("/v2/org/img/blobs/", func(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +398,7 @@ func fakeRegistry(t *testing.T, f *fixture, stallBlob string, ranged *atomic.Int
 		}
 		if d == stallBlob && r.Header.Get("Range") == "" && stalled.CompareAndSwap(false, true) {
 			w.Header().Set("Content-Length", fmt.Sprint(len(b)))
-			w.Write(b[:len(b)/2])
+			_, _ = w.Write(b[:len(b)/2])
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
 			return

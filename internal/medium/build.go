@@ -48,7 +48,7 @@ func BuildLayout(dir string, raw io.Reader, o BuildOptions) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer enc.Close()
+	defer func() { _ = enc.Close() }()
 
 	cfg := Config{SchemaVersion: SchemaVersion, Partitions: o.Partitions, BootModes: o.BootModes}
 	whole := sha256.New()

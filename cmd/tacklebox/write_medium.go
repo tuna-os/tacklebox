@@ -90,7 +90,7 @@ func runWriteMedium(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer t.F.Close()
+	defer func() { _ = t.F.Close() }()
 
 	last := -1
 	res, err := medium.Write(ctx, src, t, medium.Options{Verifier: v, Ref: ref, Plan: plan, Resume: resume, Progress: func(done, total int64) {
