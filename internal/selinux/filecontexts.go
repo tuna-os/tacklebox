@@ -232,7 +232,7 @@ func Label(root *oci.Node, store oci.BlobStore) (bool, error) {
 		var cs []io.Closer
 		closeAll = func() {
 			for _, c := range cs {
-				c.Close()
+				_ = c.Close()
 			}
 		}
 		for _, name := range names {
@@ -295,7 +295,7 @@ func policyType(root *oci.Node, store oci.BlobStore) string {
 	if err != nil {
 		return ""
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	ptype := ""
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {

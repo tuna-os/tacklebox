@@ -103,7 +103,9 @@ func TestWriteErofsSELinuxLabels(t *testing.T) {
 	if err := WriteErofs(root, store, f, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if out, err := exec.Command("fsck.erofs", "--extract", img).CombinedOutput(); err != nil {
 		t.Fatalf("fsck.erofs: %v\n%s", err, out)
 	}
