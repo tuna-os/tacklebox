@@ -791,12 +791,8 @@ func runPureBuild(cfg *pureBuildConfig) error {
 		return err
 	}
 
-	kargs := purefs.AppendKargs(fmt.Sprintf(
-		"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
-			" tacklebox.live.overlay.size=8192 enforcing=0"+
-			" tacklebox.env=%s console=ttyS0,115200n8",
-		cfg.Label, sfsName, envID,
-	), imageKargs)
+	kargs := purefs.AppendKargs(
+		livemedia.LiveKargs(envID, cfg.Label, sfsName, ""), imageKargs)
 	kernelPath := livemedia.KernelPath(envID)
 	initrdPath := livemedia.InitrdPath(envID)
 	devicetreePath := ""

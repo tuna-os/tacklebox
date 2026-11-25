@@ -971,11 +971,8 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		if err != nil {
 			return nil, err
 		}
-		kargs := purefs.AppendKargs(fmt.Sprintf(
-			"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
-				" tacklebox.live.overlay.size=8192 enforcing=0"+
-				" tacklebox.env=%s console=ttyS0,115200n8",
-			label, sfsName, envID), imageKargs)
+		kargs := purefs.AppendKargs(
+			livemedia.LiveKargs(envID, label, sfsName, ""), imageKargs)
 		kernelPath := livemedia.KernelPath(envID)
 		initrdPath := livemedia.InitrdPath(envID)
 		devicetreePath := ""

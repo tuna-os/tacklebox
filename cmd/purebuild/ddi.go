@@ -93,11 +93,7 @@ func buildFromDdiForPlatform(src, stem, label, workdir, out, platform string) {
 		log.Fatal("DDI mode needs the host systemd-boot (install systemd-boot-efi): the artifact set ships only a UKI, whose baked cmdline cannot mount a live ISO root")
 	}
 
-	kargs := fmt.Sprintf(
-		"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
-			" tacklebox.live.overlay.size=8192 enforcing=0"+
-			" tacklebox.env=%s console=ttyS0,115200n8",
-		label, sfsName, envID)
+	kargs := livemedia.LiveKargs(envID, label, sfsName, "")
 	kernelPath := livemedia.KernelPath(envID)
 	initrdPath := livemedia.InitrdPath(envID)
 	entry := fmt.Sprintf("title %s %s (live)\nlinux %s\ninitrd %s\noptions %s\n",

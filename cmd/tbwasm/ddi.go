@@ -109,11 +109,7 @@ func buildDdiIso(_ js.Value, args []js.Value) any {
 		}
 		reportMem("ddi-root")
 
-		kargs := fmt.Sprintf(
-			"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
-				" tacklebox.live.overlay.size=8192 enforcing=0"+
-				" tacklebox.env=%s console=ttyS0,115200n8",
-			label, sfsName, envID)
+		kargs := livemedia.LiveKargs(envID, label, sfsName, "")
 		kernelPath := livemedia.KernelPath(envID)
 		initrdPath := livemedia.InitrdPath(envID)
 		entry := fmt.Sprintf("title %s %s (live)\nlinux %s\ninitrd %s\noptions %s\n",
