@@ -15,8 +15,8 @@ func orchestrateIdentity(release string, pins ...Input) InitrdIdentity {
 	digest := strings.Repeat("ab", 32)
 	return InitrdIdentity{Mode: Mode, Board: Board, Architecture: "arm64", ImageDigest: digest,
 		KernelRelease: release, KernelSHA256: digest, KernelConfigSHA256: digest,
-		ModuleSourcesSHA256: digest, BuildPolicySHA256: digest, SourceDateEpoch: 1793548039,
-		KernelPackageBuild: "kernel-7.2.15-300.fc45.src.rpm", SourceFiles: pins}
+		ModuleSourcesSHA256: digest, BuildPolicySHA256: digest, SourceDateEpoch: 1794930195,
+		KernelPackageBuild: "kernel-7.3.5-300.fc45.src.rpm", SourceFiles: pins}
 }
 
 func orchestrateGate() X13sGateSources {

@@ -119,7 +119,7 @@ It includes controls with no initrd and an incorrect argument.
 It does not emulate an X13s or spoof its SMBIOS.
 
 Tests check for incorrect paths, hashes, sizes, targets, PE files, kernels, board tables, and GRUB arguments.
-The optional `TBOX_FEDORA_LOADER_FIXTURE` directory supplies `loader.efi` and `vmlinuz` from Fedora 45 7.2.15-300 RPMs.
+The optional `TBOX_FEDORA_LOADER_FIXTURE` directory supplies `loader.efi` and `vmlinuz` from Fedora 45 7.3.5-300 RPMs.
 The test checks their published hashes before it parses the files.
 
 Fedora's signed `shimaa64.efi` keeps a COFF symbol table inside the bytes its signature covers.
