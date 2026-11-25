@@ -80,3 +80,39 @@ func TestWriteErofsFsck(t *testing.T) {
 		t.Errorf("symlink: %q err=%v", target, err)
 	}
 }
+
+func TestWriteErofsSELinuxLabels(t *testing.T) {
+	for _, tool := range []string{"fsck.erofs", "dump.erofs"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " not installed")
+		}
+	}
+	store := &oci.MemStore{}
+	root := &oci.Node{Type: oci.TypeDir, Mode: 0o755, Children: map[string]*oci.Node{}}
+	addFile(t, store, root, "a/labelled", "one", 0o644, 0, 0)
+	addFile(t, store, root, "a/plain", "two", 0o644, 0, 0)
+	label := func(n *oci.Node, l string) { n.Xattrs = map[string][]byte{"security.selinux": []byte(l + "\x00")} }
+	label(root, "system_u:object_r:root_t:s0")
+	label(root.Lookup("a"), "system_u:object_r:usr_t:s0")
+	label(root.Lookup("a/labelled"), "system_u:object_r:usr_t:s0")
+	img := filepath.Join(t.TempDir(), "l.erofs")
+	f, err := os.Create(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteErofs(root, store, f, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("fsck.erofs", "--extract", img).CombinedOutput(); err != nil {
+		t.Fatalf("fsck.erofs: %v\n%s", err, out)
+	}
+	for path, want := range map[string]string{"/": "Xattr size: 16", "/a/labelled": "Xattr size: 16", "/a/plain": "Xattr size: 0"} {
+		out, err := exec.Command("dump.erofs", "--path="+path, img).CombinedOutput()
+		if err != nil || !strings.Contains(string(out), want) {
+			t.Errorf("%s: want %q (err %v)\n%s", path, want, err, out)
+		}
+	}
+}

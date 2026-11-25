@@ -208,8 +208,9 @@ permissions or imply that distributions without SELinux use it.
 
 The rootless image mounts used by the squashfs pipeline do not expose the
 `security.*` xattrs needed for SELinux labels; tree diffs also omit xattrs
-(`internal/install/treediff.go`). The pure-Go live assembly paths likewise do
-not preserve the labels required for an enforcing boot. DDI entries request
+(`internal/install/treediff.go`). The pure-Go OCI paths label every
+file from the image's own `file_contexts` (`internal/selinux`), but still request
+permissive mode unless `purebuild --selinux-enforcing` is set. DDI entries request
 permissive mode even if the supplied EROFS root is already labeled. Removing
 `enforcing=0` alone is therefore not a general fix: an unlabeled live root can
 fail before the installer starts. The writable live overlay is ephemeral, so
