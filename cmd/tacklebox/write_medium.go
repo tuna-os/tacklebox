@@ -48,7 +48,7 @@ func init() {
 	f.Bool("resume", false, "keep the existing target and skip chunks that already match")
 	f.String("layout-name", "", "ref name to pick in an OCI layout with several manifests")
 	f.String("trust-root", "", "Sigstore trusted root JSON for signature verification (required unless --insecure-skip-verify)")
-	f.String("identity-regexp", `^https://github\.com/tuna-os/`, "regexp the signature's CI workflow identity must match")
+	f.String("identity-regexp", medium.DefaultIdentityRegexp, "regexp the signature's CI workflow identity must match")
 	rootCmd.AddCommand(writeMediumCmd)
 }
 

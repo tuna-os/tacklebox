@@ -124,7 +124,7 @@ func writeMediumVerifier(opts js.Value, cl *oci.Client, repo string) (medium.Ver
 	if err != nil {
 		return nil, fmt.Errorf("tboxWriteMedium trustRoot: %w", err)
 	}
-	idRe := optString(opts, "identityRegexp", `^https://github\.com/tuna-os/`)
+	idRe := optString(opts, "identityRegexp", medium.DefaultIdentityRegexp)
 	re, err := regexp.Compile(idRe)
 	if err != nil {
 		return nil, fmt.Errorf("tboxWriteMedium identityRegexp: %w", err)

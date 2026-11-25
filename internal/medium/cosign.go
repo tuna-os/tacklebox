@@ -33,6 +33,19 @@ const ReceiptPredicateType = "https://tunaos.dev/installer/receipt/v1"
 // Actions, never a branch name.
 const DefaultIssuer = "https://token.actions.githubusercontent.com"
 
+// SignPredicateType is the predicate of a signature that cosign 3 makes: an
+// in-toto statement about the image, not a message signature.
+const SignPredicateType = "https://sigstore.dev/cosign/sign/v1"
+
+// DefaultIdentityRegexp matches the one workflow that publishes installer
+// images, on the protected branch. A wider pattern (every workflow of the
+// organization, every ref) would let a person who can push a branch to any
+// repository sign an image that clients accept.
+const DefaultIdentityRegexp = `^https://github\.com/tuna-os/tunaOS/\.github/workflows/image-installer\.yml@refs/heads/main$`
+
+// bundleMediaType is the layer that carries a Sigstore bundle.
+const bundleMediaType = "application/vnd.dev.sigstore.bundle"
+
 // maxBundleBytes caps a fetched Sigstore bundle. Real bundles are a few KiB.
 const maxBundleBytes = 4 << 20
 
@@ -106,6 +119,17 @@ func (v *CosignVerifier) Verify(ctx context.Context, ref, subject string, manife
 	if _, err := vv.Verify(&sig, policy); err != nil {
 		return fmt.Errorf("signature over %s: %w", subject, err)
 	}
+	// Any attestation about the digest verifies here. It is a signature of
+	// the image only as a message signature or with the cosign predicate.
+	if sig.GetDsseEnvelope() != nil {
+		kind, err := predicateType(&sig)
+		if err != nil {
+			return fmt.Errorf("signature over %s: %w", subject, err)
+		}
+		if kind != SignPredicateType {
+			return fmt.Errorf("signature over %s: predicate type %q is not %q", subject, kind, SignPredicateType)
+		}
+	}
 
 	attRaw, err := v.FetchAttestation(ctx, ref, subject)
 	if err != nil {
@@ -147,6 +171,18 @@ func (v *CosignVerifier) Verify(ctx context.Context, ref, subject string, manife
 	return nil
 }
 
+func predicateType(b *bundle.Bundle) (string, error) {
+	env, err := b.Envelope()
+	if err != nil {
+		return "", err
+	}
+	st, err := env.Statement()
+	if err != nil {
+		return "", err
+	}
+	return st.GetPredicateType(), nil
+}
+
 func subjectDigest(subject string) ([]byte, error) {
 	raw, err := hex.DecodeString(strings.TrimPrefix(subject, "sha256:"))
 	if err != nil || len(raw) != 32 {
@@ -155,23 +191,34 @@ func subjectDigest(subject string) ([]byte, error) {
 	return raw, nil
 }
 
-// RegistryBundles resolves Sigstore bundles through the OCI 1.1 referrers
-// API: every referrer blob that parses as a bundle is a candidate; the
-// first message signature wins for FetchSignature, the first DSSE envelope
-// with the receipt predicate wins for FetchAttestation.
+// RegistryBundles resolves Sigstore bundles through the referrers of the
+// manifest: each referrer is a manifest with the bundle as a layer. The first
+// signature bundle wins for FetchSignature, the first one with the receipt
+// predicate for FetchAttestation. Only the bundle that is returned is
+// verified, so a foreign referrer can deny an image but not authenticate one.
 func RegistryBundles(cl *oci.Client, repo string) (fetchSig, fetchAtt func(context.Context, string, string) ([]byte, error)) {
 	fetch := func(kind string, digest string) ([]byte, error) {
-		refs, err := cl.Referrers(oci.Ref{Repo: repo}, digest)
+		ref := oci.Ref{Repo: repo}
+		refs, err := cl.Referrers(ref, digest)
 		if err != nil {
 			return nil, err
 		}
 		for _, d := range refs {
-			raw, err := readBlob(cl, repo, d)
+			layers, err := cl.ReferrerLayers(ref, d)
 			if err != nil {
 				continue
 			}
-			if ok, err := classifyBundle(raw, kind); err == nil && ok {
-				return raw, nil
+			for _, l := range layers {
+				if !strings.HasPrefix(l.MediaType, bundleMediaType) {
+					continue
+				}
+				raw, err := readBlob(cl, repo, l)
+				if err != nil {
+					continue
+				}
+				if ok, err := classifyBundle(raw, kind); err == nil && ok {
+					return raw, nil
+				}
 			}
 		}
 		return nil, fmt.Errorf("no %s bundle among %d referrers of %s", kind, len(refs), digest)
@@ -201,40 +248,46 @@ func LayoutBundles(dir string) (fetchSig, fetchAtt func(context.Context, string,
 }
 
 // classifyBundle reports whether raw is a Sigstore bundle of the wanted
-// kind without verifying it: "signature" is a message signature,
-// "attestation" a DSSE envelope carrying the receipt predicate.
+// kind without verifying it: "signature" is a message signature or a DSSE
+// envelope with the cosign predicate, "attestation" a DSSE envelope with the
+// receipt predicate.
 func classifyBundle(raw []byte, kind string) (bool, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
 		return false, err
 	}
+	want := ReceiptPredicateType
 	switch kind {
 	case "signature":
-		return hasKey(top, "messageSignature"), nil
+		if hasKey(top, "messageSignature") {
+			return true, nil
+		}
+		want = SignPredicateType
 	case "attestation":
-		envRaw, ok := top["dsseEnvelope"]
-		if !ok {
-			return false, nil
-		}
-		var env struct {
-			Payload string `json:"payload"`
-		}
-		if err := json.Unmarshal(envRaw, &env); err != nil {
-			return false, err
-		}
-		payload, err := base64.StdEncoding.DecodeString(env.Payload)
-		if err != nil {
-			return false, err
-		}
-		var st struct {
-			PredicateType string `json:"predicateType"`
-		}
-		if err := json.Unmarshal(payload, &st); err != nil {
-			return false, err
-		}
-		return st.PredicateType == ReceiptPredicateType, nil
+	default:
+		return false, fmt.Errorf("unknown bundle kind %q", kind)
 	}
-	return false, fmt.Errorf("unknown bundle kind %q", kind)
+	envRaw, ok := top["dsseEnvelope"]
+	if !ok {
+		return false, nil
+	}
+	var env struct {
+		Payload string `json:"payload"`
+	}
+	if err := json.Unmarshal(envRaw, &env); err != nil {
+		return false, err
+	}
+	payload, err := base64.StdEncoding.DecodeString(env.Payload)
+	if err != nil {
+		return false, err
+	}
+	var st struct {
+		PredicateType string `json:"predicateType"`
+	}
+	if err := json.Unmarshal(payload, &st); err != nil {
+		return false, err
+	}
+	return st.PredicateType == want, nil
 }
 
 func hasKey(top map[string]json.RawMessage, key string) bool {
