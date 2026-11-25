@@ -49,7 +49,9 @@ correctly. Use it after an interrupted write.
 
 ### Signature verification
 
-Verification runs by default and fails closed. Two bundles gate the first byte. The first is a Sigstore signature bundle over the manifest digest. Its certificate identity must match `--identity-regexp`. The default names one workflow on one branch: `^https://github\.com/tuna-os/tunaOS/\.github/workflows/image-installer\.yml@refs/heads/main$`. A wider pattern accepts an image that any branch of any repository can sign. A sibling repository that calls the workflow has another identity, so its client must pass the pattern. The signature is a message signature or an in-toto statement with the cosign predicate `https://sigstore.dev/cosign/sign/v1`. Its issuer must equal `https://token.actions.githubusercontent.com`.
+Verification runs by default and fails closed. Two bundles gate the first byte. The first is a Sigstore signature bundle over the manifest digest. Its certificate identity must match `--identity-regexp`. By default, the pattern matches one workflow on one branch: `^https://github\.com/tuna-os/tunaOS/\.github/workflows/image-installer\.yml@refs/heads/main$`. A wider pattern accepts an image that any branch of any repository can sign.
+
+A sibling repository that calls the workflow has another identity, so its client must pass the pattern. The signature is a message signature or an in-toto statement with the cosign predicate `https://sigstore.dev/cosign/sign/v1`. Its issuer must equal `https://token.actions.githubusercontent.com`.
 
 The second is a receipt attestation: a DSSE/in-toto envelope with predicate type `https://tunaos.dev/installer/receipt/v1`. Its `receiptDigest` must equal the manifest annotation `org.tunaos.installer.receipt-sha256`. Both bundles use the bundle JSON format of Sigstore. A registry exposes them as referrers of the image digest: each referrer is a manifest with the bundle as a layer. A registry with no referrers API (ghcr.io) has the index under the tag `sha256-<hex>`. A layout directory carries them as `<hex>.sigstore.json` and `<hex>.attestation.sigstore.json` sidecars.
 
