@@ -110,7 +110,7 @@ def run8_dependency_metadata():
     # Evidence ZIP SHA256 a98a6eae56f551ed2bb691a40a2e0ecd8bc183839a2157d28daefbcaa01e61c2.
     records = [
         ('source', 'modules.softdep',
-         'source/usr/lib/modules/7.2.15-300.fc45.aarch64/modules.softdep',
+         'source/usr/lib/modules/7.3.5-300.fc45.aarch64/modules.softdep',
          951, '40ecf69225c99e9980bf34b815215c94d2c97459e1d72fc7861c1b5400f76027',
          (
              b'# Soft dependencies extracted from modules themselves.\n'
@@ -143,13 +143,13 @@ def run8_dependency_metadata():
              b'softdep xt_TRACE pre: nf_log_syslog\n'
          )),
         ('source', 'modules.weakdep',
-         'source/usr/lib/modules/7.2.15-300.fc45.aarch64/modules.weakdep',
+         'source/usr/lib/modules/7.3.5-300.fc45.aarch64/modules.weakdep',
          55, 'a1fffe1059d8150b5d402b3f284f507025a8d4b5881810cb17b3fda8b8ab9304',
          (
              b'# Weak dependencies extracted from modules themselves.\n'
          )),
         ('emitted', 'modules.softdep',
-         'lib/modules/7.2.15-300.fc45.aarch64/modules.softdep',
+         'lib/modules/7.3.5-300.fc45.aarch64/modules.softdep',
          656, '89ecc83d1d672cc9ec5d090a10237b2944651d01ab49888f5e6ba3cfc1903918',
          (
              b'# Soft dependencies extracted from modules themselves.\n'
@@ -174,7 +174,7 @@ def run8_dependency_metadata():
              b'softdep qat_420xx pre: crypto-intel_qat\n'
          )),
         ('emitted', 'modules.weakdep',
-         'lib/modules/7.2.15-300.fc45.aarch64/modules.weakdep',
+         'lib/modules/7.3.5-300.fc45.aarch64/modules.weakdep',
          55, 'a1fffe1059d8150b5d402b3f284f507025a8d4b5881810cb17b3fda8b8ab9304',
          (
              b'# Weak dependencies extracted from modules themselves.\n'
@@ -231,8 +231,8 @@ class FixtureProducerTests(unittest.TestCase):
                          "6dae311a7b73b4d09dcce5fbe0167e088cef75c0639230583482cd433b1dd492")
         self.assertEqual(pins["base_index_digest"],
                          "sha256:c15d8d6067038f1d6b10d8e1b8440f787a474fe6dc641ef77a5c74b1bf01a05d")
-        self.assertEqual(pins["kernel_release"], "7.2.15-300.fc45.aarch64")
-        self.assertEqual(pins["source_date_epoch"], 1793548039)
+        self.assertEqual(pins["kernel_release"], "7.3.5-300.fc45.aarch64")
+        self.assertEqual(pins["source_date_epoch"], 1794930195)
         self.assertEqual(pins["fedora45_fingerprint"],
                          "4F50A6114CD5C6976A7F1179655A4B02F577861E")
         self.assertEqual(pins["max_initrd_bytes"], 1 << 30)
@@ -241,7 +241,7 @@ class FixtureProducerTests(unittest.TestCase):
                       (DIRECTORY / "Containerfile").read_text())
         self.assertEqual([p["name"] for p in pins["packages"]],
                          ["dracut", "kernel-core", "kernel-modules-core", "qcom-firmware"])
-        self.assertEqual(sum(p["size"] for p in pins["packages"]), 259798878)
+        self.assertEqual(sum(p["size"] for p in pins["packages"]), 268196006)
         for pin in pins["packages"]:
             self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
             source = pin["source_rpm"].rsplit("-", 2)[0]

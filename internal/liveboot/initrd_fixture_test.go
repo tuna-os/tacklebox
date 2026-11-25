@@ -30,7 +30,7 @@ import (
 	"unicode/utf8"
 )
 
-const fixtureRelease = "7.2.15-300.fc45.aarch64"
+const fixtureRelease = "7.3.5-300.fc45.aarch64"
 
 type fixtureFile struct {
 	Name        string `json:"name,omitempty"`
@@ -526,10 +526,10 @@ func fixtureMatchArchive(i *InitrdInventory, p fixtureFile) error {
 }
 
 func fixtureVerifySources(dir string, e fixtureExpected, i *InitrdInventory) error {
-	// Reviewed pair from kernel-core-7.2.15-300.fc45.aarch64 (updates tree);
-	// was the 7.2.11-200.fc44 pair (17365352/f8382996…, 347141/a51ef35e…).
-	if e.Kernel.Size != 17377640 || e.Kernel.SHA256 != "ba089fcca6fa89a3c47ff96212c5c6c2ad495ac8bf0d44444b8ce20a23d9e060" ||
-		e.KernelConfig.Size != 347136 || e.KernelConfig.SHA256 != "b23c33575d1290e16c0a305b3af154c9decad988e6072724d95dfcb7ca4edb8a" {
+	// Reviewed pair from kernel-core-7.3.5-300.fc45.aarch64 (updates tree);
+	// was the 7.2.15-300.fc45 pair (17377640/ba089fcc…, 347136/b23c3357…).
+	if e.Kernel.Size != 17643880 || e.Kernel.SHA256 != "4e616479d8cd364af969f8602273b0a86c536dbae5a19482f6ceb16b32fb689e" ||
+		e.KernelConfig.Size != 350499 || e.KernelConfig.SHA256 != "f9e10a03a97686c57289e441c9ad1c472a0286d8d1c267f793a731e40c4c8e57" {
 		return fmt.Errorf("source kernel/config differs from reviewed Fedora pair")
 	}
 	if _, err := fixtureReadPin(dir, e.Kernel, 32<<20); err != nil {
@@ -1783,8 +1783,9 @@ func TestFixtureSourceClosureObservedKmodReceipt(t *testing.T) {
 	}
 	raw := strings.Join(e.Modprobe.Lines, "\n") + "\n"
 	// Digest of the same 13-line shape under the current fixtureRelease
-	// (F44 golden e56e9e4c… verified reproducible before rotation).
-	if len(raw) != 1133 || fixtureDigest([]byte(raw)) != "9aa6d2f9d5b609d3ace21258685429fc810cb401a2df93230a56171cb6839100" {
+	// (F44 golden e56e9e4c… verified reproducible before rotation; the
+	// 7.2.15 digest was 9aa6d2f9…, 1133 bytes).
+	if len(raw) != 1120 || fixtureDigest([]byte(raw)) != "dee6e43a5bb52060e3affce045da00f1f07c876e76ca9269dfe0bf530454cdc2" {
 		t.Fatal("observed source-modprobe.txt regression bytes changed")
 	}
 	if err := fixtureSourceClosure(e); err != nil {
