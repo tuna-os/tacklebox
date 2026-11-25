@@ -41,7 +41,7 @@ on:
       skip_upload:
         description: "Build and boot but do not publish to R2"
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
