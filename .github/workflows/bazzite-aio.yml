@@ -14,7 +14,7 @@ on:
       skip_upload:
         description: 'Build ISO but skip uploading to R2 (dry run)'
         required: false
-        default: false
+        default: true
         type: boolean
   schedule:
     # Weekly, Tuesday 05:00 UTC (staggered from the Monday weekly PoC build)
@@ -97,7 +97,7 @@ jobs:
         run: just ci-isos-checksum /mnt/iso-out bazzite-aio.iso
 
       - name: upload to R2
-        if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && env.R2_BUCKET != '' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_upload == false && env.R2_BUCKET != '' }}
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -122,7 +122,7 @@ jobs:
             /mnt/iso-out/SHA256SUMS "${PREFIX}/bazzite-aio-SHA256SUMS-${STAMP}"
 
       - name: note skipped upload
-        if: ${{ inputs.skip_upload == true || github.event_name == 'pull_request' || env.R2_BUCKET == '' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_upload != false || env.R2_BUCKET == '' }}
         run: |
           echo '## R2 upload skipped (dry run, PR, or R2 secrets unset)' >> "$GITHUB_STEP_SUMMARY"
 

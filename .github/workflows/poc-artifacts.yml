@@ -9,7 +9,7 @@
 #   <bucket>/tacklebox/<name>-latest.iso              rolling latest
 # Published at https://download.tunaos.org/tacklebox/<name>-latest.iso
 #
-# Upload is skipped on PRs, on the skip_upload dry-run input, and on forks
+# Upload needs a manual run with skip_upload off, and is skipped on forks
 # where R2_BUCKET is unset — the build + verify still run in all cases.
 name: poc-artifacts
 
@@ -27,7 +27,7 @@ on:
       skip_upload:
         description: 'Build ISOs but skip uploading to R2 (dry run)'
         required: false
-        default: false
+        default: true
         type: boolean
   schedule:
     # Weekly, Monday 05:00 UTC — keeps the PoC artifacts fresh against
@@ -136,7 +136,7 @@ jobs:
         run: just ci-isos-checksum /mnt/tbx
 
       - name: upload to R2
-        if: ${{ inputs.skip_upload != true && github.event_name != 'pull_request' && env.R2_BUCKET != '' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_upload == false && env.R2_BUCKET != '' }}
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -163,7 +163,7 @@ jobs:
             /mnt/tbx/SHA256SUMS "${PREFIX}/SHA256SUMS-${STAMP}"
 
       - name: note skipped upload
-        if: ${{ inputs.skip_upload == true || github.event_name == 'pull_request' || env.R2_BUCKET == '' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_upload != false || env.R2_BUCKET == '' }}
         run: |
           echo '## R2 upload skipped (dry run, PR, or R2 secrets unset)' >> "$GITHUB_STEP_SUMMARY"
 

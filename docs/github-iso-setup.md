@@ -327,7 +327,7 @@ The `.github/workflows/poc-artifacts.yml` file in this repository is a complete
 example with fixed action versions. It builds and verifies both ISO layouts:
 per-env and dedup. It writes `SHA256SUMS` and uploads each ISO as
 `tacklebox/<name>-<date>-<sha>.iso`, plus an `…-latest.iso` alias. It
-skips the upload on PRs, on the `skip_upload` dry-run input, and on forks
+uploads only on a manual run with `skip_upload` off, and never on forks
 where `R2_BUCKET` is unset — build + verify still run in all cases.
 
 ---
