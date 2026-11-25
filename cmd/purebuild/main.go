@@ -115,8 +115,8 @@ type pureBuildConfig struct {
 	Ddi           string
 	DdiStem       string
 	Strict        bool
-	// Enforcing boots the labelled live root without enforcing=0.
-	Enforcing       bool
+	// Permissive keeps enforcing=0 on a labelled live root.
+	Permissive      bool
 	Overlays        []string
 	LiveMarker      string
 	EngineDigest    string // sha256 of this executable; set → receipt required
@@ -280,7 +280,7 @@ func main() {
 		ddi         = flag.String("ddi", "", "build from a systemd-sysupdate v1 artifact directory (URL or local path containing SHA256SUMS + UKI + root.raw[.xz]) instead of an OCI image — tacklebox#172")
 		ddiStem     = flag.String("ddi-stem", "", "artifact stem to select in the DDI manifest (e.g. snow-ab); required when the manifest lists several")
 		strict      = flag.Bool("strict", false, "fail instead of warn when the image's flatpak preinstall.d asks for a flatpak the rootfs does not carry")
-		enforcing   = flag.Bool("selinux-enforcing", false, "boot the live session without enforcing=0; fails when the image has no SELinux policy")
+		permissive  = flag.Bool("selinux-permissive", false, "keep enforcing=0 on the live entry of an image with an SELinux policy")
 		overlays    stringList
 		liveMarker  = flag.String("live-marker", "", "readiness string the baked tbox-live-ready.service prints to the serial console (default "+purefs.DefaultLiveMarker+")")
 		liveSource  = flag.Bool("live-source-receipt", false, "complete the overlay's etc/tunaos/live-source.json with the base, overlay and engine digests this build used (engine = sha256 of this executable); refuses if any is unavailable")
@@ -307,7 +307,7 @@ func main() {
 		UseXorriso:  *useXorriso,
 		Trim:        *trim,
 		Strict:      *strict,
-		Enforcing:   *enforcing,
+		Permissive:  *permissive,
 		Overlays:    overlays,
 		LiveMarker:  *liveMarker,
 	}
@@ -787,9 +787,6 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	if err != nil {
 		return fmt.Errorf("SELinux labels: %w", err)
 	}
-	if cfg.Enforcing && !labelled {
-		return fmt.Errorf("--selinux-enforcing: the image has no SELinux policy")
-	}
 	log.Printf(">>> SELinux labels: %t", labelled)
 
 	sfsName := envID + ".rootfs.sfs"
@@ -808,7 +805,7 @@ func runPureBuild(cfg *pureBuildConfig) error {
 	}
 
 	liveKargs := livemedia.LiveKargs(envID, cfg.Label, sfsName, "")
-	if cfg.Enforcing {
+	if labelled && !cfg.Permissive {
 		liveKargs = livemedia.EnforcingKargs(liveKargs)
 	}
 	kargs := purefs.AppendKargs(liveKargs, imageKargs)

@@ -37,7 +37,9 @@ Tacklebox:
 
 ### Live media
 
-Generated live ISOs request **SELinux permissive mode** (`enforcing=0`) for
+Native and browser OCI builds label the live root of an image with an SELinux
+policy and do not request permissive mode. Squashfs and DDI live ISOs request
+**SELinux permissive mode** (`enforcing=0`) for
 the entire live session, even if the source image uses SELinux to enforce
 access rules. On SELinux-enabled images, SELinux does not block access. This
 applies to every live ISO layout and the CLI, native pure-Go, browser and

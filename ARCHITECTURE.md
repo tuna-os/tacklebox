@@ -199,8 +199,8 @@ unchanged; the producer must supply the complete descriptor.
 
 ## Live media security limitations
 
-All generated live ISO boot entries request `enforcing=0`, including per-env,
-combined and delta squashfs layouts and the native/browser OCI and DDI paths.
+Live ISO boot entries without a labelled root request `enforcing=0`: per-env,
+combined and delta squashfs layouts and the DDI paths.
 On SELinux-enabled images this means **permissive mode for the entire live
 session**: denials may be logged, but SELinux policy does not block access.
 This is a downgrade from an enforcing source image. It does not disable Unix
@@ -209,8 +209,9 @@ permissions or imply that distributions without SELinux use it.
 The rootless image mounts used by the squashfs pipeline do not expose the
 `security.*` xattrs needed for SELinux labels; tree diffs also omit xattrs
 (`internal/install/treediff.go`). The pure-Go OCI paths label every
-file from the image's own `file_contexts` (`internal/selinux`), but still request
-permissive mode unless `purebuild --selinux-enforcing` is set. DDI entries request
+file from the image's own `file_contexts` (`internal/selinux`), and the live
+entry of a labelled image has no `enforcing=0` (`purebuild --selinux-permissive`
+keeps it). DDI entries request
 permissive mode even if the supplied EROFS root is already labeled. Removing
 `enforcing=0` alone is therefore not a general fix: an unlabeled live root can
 fail before the installer starts. The writable live overlay is ephemeral, so
