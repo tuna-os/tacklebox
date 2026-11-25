@@ -8,22 +8,22 @@ qualified.
 ## Usage
 
 ```bash
-# From a registry, to a new file:
+# From a registry, to a new file (verified: the default):
 tacklebox write-medium ghcr.io/tuna-os/example-installer:stable installer.img \
-  --insecure-skip-verify
+  --trust-root sigstore-root.json
 
 # From an OCI layout directory (no registry needed):
 tacklebox write-medium ./layout installer.img --insecure-skip-verify
 
 # To a USB disk. Repeat the device path to confirm:
 sudo tacklebox write-medium ghcr.io/tuna-os/example-installer:stable /dev/sdX \
-  --confirm-device=/dev/sdX --insecure-skip-verify
+  --confirm-device=/dev/sdX --trust-root sigstore-root.json
 ```
 
 The command does these steps in order:
 
 1. Resolve the tag to a manifest digest.
-2. Verify the signature. Not implemented yet, see below.
+2. Verify the signature and the receipt attestation (see below).
 3. Fetch each chunk with the resumable reader. A stalled download reopens
    with a Range request at the byte already received.
 4. Check the layer digest, decompress, and check the sha256 of the raw
@@ -49,10 +49,38 @@ correctly. Use it after an interrupted write.
 
 ### Signature verification
 
-Cosign verification is a stub. The default verifier fails with a clear
-error, so the command needs `--insecure-skip-verify` today. That flag prints
-a warning. The planned check is a cosign signature whose identity is the CI
-workflow, and an attestation of the qualification receipt.
+Verification runs by default and fails closed. Two bundles gate the first byte. The first is a Sigstore signature bundle over the manifest digest. Its certificate identity must match `--identity-regexp`. By default, the pattern allows only one workflow, on one branch: `^https://github\.com/tuna-os/tunaOS/\.github/workflows/image-installer\.yml@refs/heads/main$`. A wider pattern accepts an image that any branch of any repository can sign.
+
+A sibling repository that calls the workflow has another identity, so its client must pass the pattern. The signature is a message signature or an in-toto statement with the cosign predicate `https://sigstore.dev/cosign/sign/v1`. Its issuer must equal `https://token.actions.githubusercontent.com`.
+
+The second is a receipt attestation: a DSSE/in-toto envelope with predicate type `https://tunaos.dev/installer/receipt/v1`. Its `receiptDigest` must equal the manifest annotation `org.tunaos.installer.receipt-sha256`. Both bundles use the bundle JSON format of Sigstore. A registry exposes them as referrers of the image digest: each referrer is a manifest with the bundle as a layer. A registry with no referrers API (ghcr.io) has the index under the tag `sha256-<hex>`. A layout directory carries them as `<hex>.sigstore.json` and `<hex>.attestation.sigstore.json` sidecars.
+
+Sigstore-go needs a vendored in-toto-golang: the upstream unix build tag also matches wasm, but it calls a syscall that wasm lacks. `third_party/in-toto-golang` carries the two-line patch, and `verify-vendor.sh` guards it against drift.
+
+## Browser (`tboxWriteMedium`, for iso-builder)
+
+The same fetch/verify/hash path runs in the browser for the Media Writer.
+The iso-builder session consumes this signature. It is the only JS entry point that writes a medium.
+
+```js
+result = await tboxWriteMedium(ref, opts, sink)
+// ref:  "example.com/org/name:tag" or "example.com/org/name@sha256:..."
+// opts: { insecureSkipVerify?, trustRoot?, identityRegexp?, issuer?,
+//         signal? }
+// sink: a FileSystemWritableFileStream (write/close, optional
+//         truncate/abort) or a FileSystemFileHandle
+//         (createWritable/getFile)
+```
+
+An OCI layout needs HTTP in the browser: a caller cannot name a directory, so serve its blobs over HTTP instead. `trustRoot` holds the trusted root JSON of Sigstore. Pass a string, or an object that stringifies to one. `identityRegexp` uses the tuna-os workflow pattern by default, `issuer` uses `https://token.actions.githubusercontent.com`.
+`signal` is an AbortSignal that cancels the write.
+`tboxReset` keeps its existing between-operations semantics: the call rejects a reset while a write runs; it never cancels the write.
+
+Chunks stream through one 1 MiB scratch buffer, dense, in disk order. The wasm heap never holds the image. Progress reports through the existing `tboxOnProgress` callback as `("write-medium", doneBytes, totalBytes)` in bytes, not items. A raw stream accepts writes only, so the call skips the read-back (`readBack:false`). A file handle closes and reads back through `getFile` (`readBack:true`). There is no resume in the browser: each call writes a fresh stream.
+
+`result` is
+`{ manifestDigest, totalSize, sha256, chunksWritten, chunksSkipped,
+readBack }`.
 
 ## Manual path
 
@@ -94,7 +122,12 @@ not by file name, if your tool picks other names.
 - Chunks tile the image with no gap or overlap. The sum of their lengths is
   `totalSize`.
 - Annotations carry the base image digest and similar facts. The writer
-  does not read them.
+  reads one of them: `org.tunaos.installer.receipt-sha256` must equal the
+  `receiptDigest` in the verified receipt attestation.
+- The code keeps the media types from the tuna-os/tacklebox#511 proposal:
+  `application/vnd.tunaos.installer.chunk.v1+zstd` for chunks,
+  `application/vnd.tunaos.installer.config.v1+json` for the config. Keep
+  these names, or published images break.
 
 ## Test image
 

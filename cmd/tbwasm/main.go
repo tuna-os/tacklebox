@@ -8,6 +8,7 @@
 //	tboxIntrospect(image, registry) → Promise<factsJSON>
 //	tboxBuildIso(opts, onChunk)     → Promise<bytesWritten>
 //	tboxBuildIsoWithResult(opts, onChunk) → Promise<ObservedBuildResult>
+//	tboxWriteMedium(ref, opts, sink) → Promise<result>
 //	tboxReset()                    → null (cleanup queued)
 //	tboxResetAsync()               → Promise<null>
 //
@@ -113,6 +114,7 @@ func registerAPIs() {
 	js.Global().Set("tboxBuildIsoWithResult", js.FuncOf(buildIsoWithResult))
 	js.Global().Set("tboxBuildDdiIso", js.FuncOf(buildDdiIso))
 	js.Global().Set("tboxExportBuildRequest", js.FuncOf(exportBuildRequest))
+	js.Global().Set("tboxWriteMedium", js.FuncOf(writeMedium))
 	js.Global().Set("tboxReset", js.FuncOf(func(js.Value, []js.Value) any { return resetOperation(false) }))
 	js.Global().Set("tboxResetAsync", js.FuncOf(func(js.Value, []js.Value) any { return resetOperation(true) }))
 }
