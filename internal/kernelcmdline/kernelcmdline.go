@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tuna-os/tacklebox/internal/install"
+	"github.com/tuna-os/tacklebox/internal/livemedia"
 	"github.com/tuna-os/tacklebox/internal/recipe"
 )
 
@@ -46,15 +47,7 @@ func LiveDelta(envID, label string, isBase bool) string {
 }
 
 func live(envID, label, squashimg, extra string) string {
-	// ISO labels containing spaces use udev's escaped by-label spelling so
-	// kernel command-line tokenization does not split the root argument.
-	label = strings.ReplaceAll(label, " ", "\\x20")
-	return fmt.Sprintf(
-		"root=tbox:CDLABEL=%s tacklebox.live.squashimg=%s"+
-			" tacklebox.live.overlay.size=8192 enforcing=0"+
-			" tacklebox.env=%s%s console=ttyS0,115200n8",
-		label, squashimg, envID, extra,
-	)
+	return livemedia.LiveKargs(envID, label, squashimg, extra)
 }
 
 // Build returns the BLS options for one bootc environment.
