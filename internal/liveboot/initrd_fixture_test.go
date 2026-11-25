@@ -30,7 +30,7 @@ import (
 	"unicode/utf8"
 )
 
-const fixtureRelease = "7.2.15-300.fc45.aarch64"
+const fixtureRelease = "7.3.5-300.fc45.aarch64"
 
 type fixtureFile struct {
 	Name        string `json:"name,omitempty"`
@@ -526,10 +526,10 @@ func fixtureMatchArchive(i *InitrdInventory, p fixtureFile) error {
 }
 
 func fixtureVerifySources(dir string, e fixtureExpected, i *InitrdInventory) error {
-	// Reviewed pair from kernel-core-7.2.15-300.fc45.aarch64 (updates tree);
-	// was the 7.2.11-200.fc44 pair (17365352/f8382996…, 347141/a51ef35e…).
-	if e.Kernel.Size != 17377640 || e.Kernel.SHA256 != "ba089fcca6fa89a3c47ff96212c5c6c2ad495ac8bf0d44444b8ce20a23d9e060" ||
-		e.KernelConfig.Size != 347136 || e.KernelConfig.SHA256 != "b23c33575d1290e16c0a305b3af154c9decad988e6072724d95dfcb7ca4edb8a" {
+	// Reviewed pair from kernel-core-7.3.5-300.fc45.aarch64 (updates tree);
+	// was the 7.2.15-300.fc45 pair (17377640/ba089fcc…, 347136/b23c3357…).
+	if e.Kernel.Size != 17643880 || e.Kernel.SHA256 != "4e616479d8cd364af969f8602273b0a86c536dbae5a19482f6ceb16b32fb689e" ||
+		e.KernelConfig.Size != 350499 || e.KernelConfig.SHA256 != "f9e10a03a97686c57289e441c9ad1c472a0286d8d1c267f793a731e40c4c8e57" {
 		return fmt.Errorf("source kernel/config differs from reviewed Fedora pair")
 	}
 	if _, err := fixtureReadPin(dir, e.Kernel, 32<<20); err != nil {

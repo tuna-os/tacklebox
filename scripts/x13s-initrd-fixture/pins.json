@@ -3,13 +3,13 @@
   "base_image": "registry.fedoraproject.org/fedora@sha256:6dae311a7b73b4d09dcce5fbe0167e088cef75c0639230583482cd433b1dd492",
   "base_index_digest": "sha256:c15d8d6067038f1d6b10d8e1b8440f787a474fe6dc641ef77a5c74b1bf01a05d",
   "architecture": "aarch64",
-  "kernel_release": "7.2.15-300.fc45.aarch64",
-  "kernel_sha256": "ba089fcca6fa89a3c47ff96212c5c6c2ad495ac8bf0d44444b8ce20a23d9e060",
-  "kernel_config_sha256": "b23c33575d1290e16c0a305b3af154c9decad988e6072724d95dfcb7ca4edb8a",
+  "kernel_release": "7.3.5-300.fc45.aarch64",
+  "kernel_sha256": "4e616479d8cd364af969f8602273b0a86c536dbae5a19482f6ceb16b32fb689e",
+  "kernel_config_sha256": "f9e10a03a97686c57289e441c9ad1c472a0286d8d1c267f793a731e40c4c8e57",
   "fedora45_fingerprint": "4F50A6114CD5C6976A7F1179655A4B02F577861E",
   "fedora45_key": "/usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-45-primary",
   "dist_config_sha256": "2637226fac5c777d617fe79c4c0c7feb789597541e9eb772d194232e6512d9b9",
-  "source_date_epoch": 1793548039,
+  "source_date_epoch": 1794930195,
   "max_initrd_bytes": 1073741824,
   "packages": [
     {
@@ -26,24 +26,24 @@
     {
       "name": "kernel-core",
       "epoch": 0,
-      "version": "7.2.15",
+      "version": "7.3.5",
       "release": "300.fc45",
       "arch": "aarch64",
-      "url": "https://kojipkgs.fedoraproject.org/packages/kernel/7.2.15/300.fc45/data/signed/f577861e/aarch64/kernel-core-7.2.15-300.fc45.aarch64.rpm",
-      "size": 24827937,
-      "sha256": "e72c070373329e3fe08812ffb5d3a83e6c6f0b95eec1a21b13011093a87836e7",
-      "source_rpm": "kernel-7.2.15-300.fc45.src.rpm"
+      "url": "https://kojipkgs.fedoraproject.org/packages/kernel/7.3.5/300.fc45/data/signed/f577861e/aarch64/kernel-core-7.3.5-300.fc45.aarch64.rpm",
+      "size": 25412201,
+      "sha256": "c7289856e989e1ed5af81191e3226aea867ad06792af9cf53a8af2eb5304f8e6",
+      "source_rpm": "kernel-7.3.5-300.fc45.src.rpm"
     },
     {
       "name": "kernel-modules-core",
       "epoch": 0,
-      "version": "7.2.15",
+      "version": "7.3.5",
       "release": "300.fc45",
       "arch": "aarch64",
-      "url": "https://kojipkgs.fedoraproject.org/packages/kernel/7.2.15/300.fc45/data/signed/f577861e/aarch64/kernel-modules-core-7.2.15-300.fc45.aarch64.rpm",
-      "size": 49581253,
-      "sha256": "7483dbe3fddb14f6a73ed93371f62da73b4cec705f34b2e468c4e5ef17421910",
-      "source_rpm": "kernel-7.2.15-300.fc45.src.rpm"
+      "url": "https://kojipkgs.fedoraproject.org/packages/kernel/7.3.5/300.fc45/data/signed/f577861e/aarch64/kernel-modules-core-7.3.5-300.fc45.aarch64.rpm",
+      "size": 57394117,
+      "sha256": "2ea02417f228c9975cd3b9098465688bc0c05ecb3581820e85c56f4e4d018c62",
+      "source_rpm": "kernel-7.3.5-300.fc45.src.rpm"
     },
     {
       "name": "qcom-firmware",
@@ -58,5 +58,5 @@
     }
   ],
   "transitive_dependencies_pinned": false,
-  "provenance": "Primary RPM pins observed in Fedora45 release (dracut) and updates (kernel, firmware) metadata 2026-11-03. Updates RPMs are fetched from their immutable Koji signed-build paths (byte-identical, re-checked 2026-11-13) because the updates tree drops superseded builds; signature verification is mandatory at fixture generation. Base manifest resolved separately. No loader RPM is installed."
+  "provenance": "Primary RPM pins observed in Fedora45 release (dracut) and updates (kernel, firmware) metadata 2026-11-03. Updates RPMs are fetched from their immutable Koji signed-build paths (byte-identical; kernel pins re-observed 2026-11-25 after Koji pruned the signed 7.2.15-300.fc45 copies) because the updates tree drops superseded builds; signature verification is mandatory at fixture generation. Base manifest resolved separately. No loader RPM is installed."
 }
