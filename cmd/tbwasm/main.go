@@ -42,6 +42,7 @@ import (
 	"github.com/tuna-os/tacklebox/internal/livemedia"
 	"github.com/tuna-os/tacklebox/internal/oci"
 	"github.com/tuna-os/tacklebox/internal/purefs"
+	"github.com/tuna-os/tacklebox/internal/selinux"
 )
 
 var (
@@ -887,6 +888,10 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 			observed.Installer = purefs.ObserveInstallerTree(root, store)
 		}
 		reportMem("pre-erofs")
+		// Last tree change: label the live root from the image's own policy.
+		if _, err := selinux.Label(root, store); err != nil {
+			return nil, fmt.Errorf("SELinux labels: %w", err)
+		}
 		sfsArena, err := newOpfsArena("tbox-erofs.img", "s")
 		if err != nil {
 			return nil, err

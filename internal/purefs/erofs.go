@@ -28,6 +28,14 @@ const (
 	blkSize       = 1 << blkBits
 	slotSize      = 32 // compact inode
 
+	// An inode with an SELinux label carries one shared xattr: a 12-byte
+	// header and one 4-byte id after the inode. Every inode of a labelled
+	// image takes two slots, so nid*slotSize stays its address.
+	xattrIbodySize   = 16
+	xattrIcount      = 2 // 1 + (xattrIbodySize-12)/4
+	xattrIdxSecurity = 6 // EROFS_XATTR_INDEX_SECURITY
+	selinuxXattr     = "security.selinux"
+
 	ifmtDir     = 0o040000
 	ifmtReg     = 0o100000
 	ifmtSymlink = 0o120000
@@ -56,6 +64,8 @@ type inode struct {
 	linkData []byte // symlink target (symlinks only)
 	children map[string]*inode
 	parent   *inode
+	xattrID  uint32 // shared xattr id; valid when label is set
+	label    string
 }
 
 // WriteErofs streams an EROFS image of the rootfs tree to w. File bodies
@@ -142,9 +152,38 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 		return err
 	}
 
+	// Shared SELinux labels, in first-use order: the table stays small
+	// (hundreds of contexts) however many files carry them. A hardlinked
+	// inode keeps the label of the path that created it.
+	var shared []byte
+	ids := map[string]uint32{}
+	for _, in := range inodes {
+		in.label = string(in.node.Xattrs[selinuxXattr])
+		if in.label == "" {
+			continue
+		}
+		id, ok := ids[in.label]
+		if !ok {
+			id = uint32(len(shared) / 4)
+			ids[in.label] = id
+			shared = append(shared, byte(len("selinux")), xattrIdxSecurity)
+			shared = binary.LittleEndian.AppendUint16(shared, uint16(len(in.label)))
+			shared = append(shared, "selinux"...)
+			shared = append(shared, in.label...)
+			for len(shared)%4 != 0 {
+				shared = append(shared, 0)
+			}
+		}
+		in.xattrID = id
+	}
+	slots := 1
+	if len(shared) > 0 {
+		slots = 2
+	}
+
 	// Assign nids (slot indexes) in traversal order.
 	for i, in := range inodes {
-		in.nid = uint64(i)
+		in.nid = uint64(i * slots)
 	}
 
 	// nlink: dirs 2+subdirs; others = dirent references.
@@ -193,9 +232,11 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 		}
 	}
 
-	// ── Layout: block 0 (superblock) | inode slots | data blocks.
+	// ── Layout: block 0 (superblock) | inode slots | shared xattrs | data.
 	metaBlk := uint32(1)
-	metaBlocks := uint32((len(inodes)*slotSize + blkSize - 1) / blkSize)
+	metaBlocks := uint32((len(inodes)*slots*slotSize + blkSize - 1) / blkSize)
+	xattrBlk := metaBlk + metaBlocks
+	metaBlocks += uint32((len(shared) + blkSize - 1) / blkSize)
 	next := metaBlk + metaBlocks
 	for _, in := range inodes {
 		if in.size > 0 {
@@ -216,6 +257,10 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 	le.PutUint64(sb[24:], uint64(buildTime))
 	le.PutUint32(sb[36:], totalBlocks)
 	le.PutUint32(sb[40:], metaBlk)
+	if len(shared) > 0 {
+		le.PutUint32(sb[44:], xattrBlk)
+		copy(head[int(xattrBlk)*blkSize:], shared)
+	}
 	copy(sb[64:], "tunaos-live")
 	sb[88] = blkBits // dirblkbits
 
@@ -248,6 +293,11 @@ func WriteErofs(root *oci.Node, store oci.BlobStore, w io.Writer, buildTime int6
 			le.PutUint32(b[16:], uint32(in.node.Devmajor<<8|in.node.Devminor&0xff|(in.node.Devminor&^0xff)<<12))
 		} else {
 			le.PutUint32(b[16:], in.blkAddr)
+		}
+		if in.label != "" {
+			le.PutUint16(b[2:], xattrIcount)
+			b[slotSize+4] = 1 // h_shared_count
+			le.PutUint32(b[slotSize+12:], in.xattrID)
 		}
 		le.PutUint32(b[20:], uint32(in.nid+1)) // i_ino (stat only)
 		le.PutUint16(b[24:], uint16(in.node.UID))

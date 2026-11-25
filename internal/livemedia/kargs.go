@@ -21,3 +21,10 @@ func LiveKargs(envID, label, squashimg, extra string) string {
 		label, squashimg, envID, extra,
 	)
 }
+
+// EnforcingKargs drops the permissive request from live arguments. Only a root
+// whose every file is labelled (internal/selinux) can boot without it: systemd
+// freezes on an unlabelled root.
+func EnforcingKargs(kargs string) string {
+	return strings.Replace(kargs, " enforcing=0", "", 1)
+}
