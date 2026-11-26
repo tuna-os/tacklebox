@@ -7,7 +7,7 @@ require (
 	github.com/diskfs/go-diskfs v1.9.4
 	github.com/klauspost/compress v1.20.4
 	github.com/secure-systems-lab/go-securesystemslib v0.11.1
-	github.com/sigstore/protobuf-specs v0.5.3-0.20261112181914-a84bc5ff572a
+	github.com/sigstore/protobuf-specs v0.5.3-0.20261124074135-7eccec11d5be
 	github.com/sigstore/sigstore-go v1.4.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
