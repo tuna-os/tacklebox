@@ -278,6 +278,8 @@ github.com/sigstore/protobuf-specs v0.5.2 h1:RSWWUY8QrVTxbYH00jY/jg2e7YnjzrpwP+P
 github.com/sigstore/protobuf-specs v0.5.2/go.mod h1:DRBzpFuE+LnvQMN10/dU6nBeKwVLGEQ6o2FovN2Rats=
 github.com/sigstore/protobuf-specs v0.5.3-0.20261112181914-a84bc5ff572a h1:5XG2LytaPWuYUctAEGtTPchXcqXs5VTa4RbJgVFaq4A=
 github.com/sigstore/protobuf-specs v0.5.3-0.20261112181914-a84bc5ff572a/go.mod h1:1QTwiRx4i1dbHGub43GV+0G/Y1rZdlyJDxPmJ+6RUOk=
+github.com/sigstore/protobuf-specs v0.5.3-0.20261124074135-7eccec11d5be h1:+psNBsXnyZCmiJmUkZQdlAogjGyfSqSZqHU/+DMCX/0=
+github.com/sigstore/protobuf-specs v0.5.3-0.20261124074135-7eccec11d5be/go.mod h1:1QTwiRx4i1dbHGub43GV+0G/Y1rZdlyJDxPmJ+6RUOk=
 github.com/sigstore/rekor v1.5.5 h1:nZKTBT0uRlKaFW4PafFIE7F5H26PInFF2qOlWouKYYA=
 github.com/sigstore/rekor v1.5.5/go.mod h1:A0e/gTyJ5qCQn6/Zz2T0+TE+W3akuaLF5O0HJ4ogjgA=
 github.com/sigstore/rekor v1.6.1 h1:0qndwuY1mrrNGN9JvAtPbcMqL42YXnYgFr6a/4wS7U0=
