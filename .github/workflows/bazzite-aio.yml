@@ -43,7 +43,7 @@ jobs:
 
       - uses: extractions/setup-just@v4.0.0  # zizmor: ignore[unpinned-tools] installs the latest just release, as before; a pinned version would have no updater
 
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
 
