@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/diskfs/go-diskfs v1.9.4
-	github.com/klauspost/compress v1.20.4
+	github.com/klauspost/compress v1.20.5
 	github.com/secure-systems-lab/go-securesystemslib v0.11.1
 	github.com/sigstore/protobuf-specs v0.5.3-0.20261124074135-7eccec11d5be
 	github.com/sigstore/sigstore-go v1.4.1
