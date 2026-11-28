@@ -10,7 +10,7 @@ require (
 	github.com/secure-systems-lab/go-securesystemslib v0.11.1
 	github.com/shibumi/go-pathspec v1.3.0
 	github.com/spf13/cobra v1.10.2
-	github.com/spiffe/go-spiffe/v2 v2.9.0
+	github.com/spiffe/go-spiffe/v2 v2.10.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/sys v0.41.0
 	google.golang.org/grpc v1.79.3
