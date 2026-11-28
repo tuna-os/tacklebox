@@ -891,7 +891,8 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		}
 		reportMem("pre-erofs")
 		// Last tree change: label the live root from the image's own policy.
-		if _, err := selinux.Label(root, store); err != nil {
+		labelled, err := selinux.Label(root, store)
+		if err != nil {
 			return nil, fmt.Errorf("SELinux labels: %w", err)
 		}
 		sfsArena, err := newOpfsArena("tbox-erofs.img", "s")
@@ -978,8 +979,11 @@ func buildIsoResult(args []js.Value, withResult bool) any {
 		if err != nil {
 			return nil, err
 		}
-		kargs := purefs.AppendKargs(
-			livemedia.LiveKargs(envID, label, sfsName, ""), imageKargs)
+		liveKargs := livemedia.LiveKargs(envID, label, sfsName, "")
+		if labelled {
+			liveKargs = livemedia.EnforcingKargs(liveKargs)
+		}
+		kargs := purefs.AppendKargs(liveKargs, imageKargs)
 		kernelPath := livemedia.KernelPath(envID)
 		initrdPath := livemedia.InitrdPath(envID)
 		devicetreePath := ""

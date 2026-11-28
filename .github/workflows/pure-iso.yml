@@ -38,8 +38,8 @@ on:
         required: false
         default: true
         type: boolean
-      selinux_enforcing:
-        description: "Boot the live session with SELinux enforcing (tacklebox#281)"
+      selinux_permissive:
+        description: "Keep enforcing=0 on the live session (diagnosis)"
         required: false
         default: false
         type: boolean
@@ -122,14 +122,14 @@ jobs:
 
       - name: build ISO (pure-Go, auto tbox initrd overlay)
         env:
-          SELINUX_ENFORCING: ${{ inputs.selinux_enforcing && '1' || '' }}
+          SELINUX_PERMISSIVE: ${{ inputs.selinux_permissive && '1' || '' }}
         run: |
           ./purebuild \
             --image "$IMAGE" \
             --out "$ISO" \
             --label "$(echo "${SLUG}" | tr 'a-z-' 'A-Z_' | cut -c1-32)" \
             --workdir "${RUNNER_TEMP}/pure-scratch/purebuild" \
-            ${SELINUX_ENFORCING:+--selinux-enforcing}
+            ${SELINUX_PERMISSIVE:+--selinux-permissive}
 
       # Which copy of the parse hook actually boots. The combined initrd is
       # overlay-then-stock, and the segment order is forced (the kernel
