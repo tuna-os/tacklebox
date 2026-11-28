@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.2.0](https://github.com/tuna-os/tacklebox/compare/v0.1.1...v0.2.0) (2026-11-28)
+
+
+### Features
+
+* **erofs:** label the live root from the image's SELinux policy ([#521](https://github.com/tuna-os/tacklebox/issues/521)) ([7d1685c](https://github.com/tuna-os/tacklebox/commit/7d1685cf86a8dd8c47e74d0f7be2044bab812038))
+* **liveboot:** build experimental X13s live ISOs with build --x13s-live ([#497](https://github.com/tuna-os/tacklebox/issues/497)) ([1427011](https://github.com/tuna-os/tacklebox/commit/1427011a3d408e778a87ff29184bc0b0cb98e9ab))
+* **medium:** real Sigstore verifier and tboxWriteMedium WASM export ([#513](https://github.com/tuna-os/tacklebox/issues/513)) ([9aec91a](https://github.com/tuna-os/tacklebox/commit/9aec91a2cc2c10ef540fea4f85910b721fef84d7))
+* **medium:** write-medium fetches, verifies and writes a prepared installer image ([#512](https://github.com/tuna-os/tacklebox/issues/512)) ([88e93bf](https://github.com/tuna-os/tacklebox/commit/88e93bf654942908521379731a7f8cc077dd46ea))
+
+
+### Bug Fixes
+
+* **ci:** re-pin X13s initrd fixture to kernel 7.3.5-300.fc45 ([#520](https://github.com/tuna-os/tacklebox/issues/520)) ([4d7d0d6](https://github.com/tuna-os/tacklebox/commit/4d7d0d6d332f3336bf68ca211324c68733cb330f))
+* **deps:** update github.com/sigstore/protobuf-specs digest to 7eccec1 ([#525](https://github.com/tuna-os/tacklebox/issues/525)) ([f2f5d9f](https://github.com/tuna-os/tacklebox/commit/f2f5d9fc7c3f2d97ad8254298b93be29abb6ef06))
+* **deps:** update module github.com/in-toto/attestation to v1.2.0 ([#527](https://github.com/tuna-os/tacklebox/issues/527)) ([4e9338e](https://github.com/tuna-os/tacklebox/commit/4e9338e03a7da97ad584b7fbad19bcca8f245aba))
+* **deps:** update module github.com/klauspost/compress to v1.20.5 ([#498](https://github.com/tuna-os/tacklebox/issues/498)) ([533b9e5](https://github.com/tuna-os/tacklebox/commit/533b9e5b0f10ea195029ecc913303c07a046a5fa))
+* **deps:** update module github.com/secure-systems-lab/go-securesystemslib to v0.11.1 ([#528](https://github.com/tuna-os/tacklebox/issues/528)) ([b3bed9f](https://github.com/tuna-os/tacklebox/commit/b3bed9f8e5543c1cc581fdb839f4faa250d710c2))
+* **deps:** update module github.com/sigstore/sigstore-go to v1.4.1 ([#523](https://github.com/tuna-os/tacklebox/issues/523)) ([8d6c0c0](https://github.com/tuna-os/tacklebox/commit/8d6c0c0dee24a49faefa786facd458a0a71b93ab))
+* **deps:** update module github.com/spiffe/go-spiffe/v2 to v2.10.0 ([#533](https://github.com/tuna-os/tacklebox/issues/533)) ([08211da](https://github.com/tuna-os/tacklebox/commit/08211daf81f0576b19286e714b842109f2c5c3d8))
+* **deps:** update module github.com/spiffe/go-spiffe/v2 to v2.9.0 ([#529](https://github.com/tuna-os/tacklebox/issues/529)) ([3bd8800](https://github.com/tuna-os/tacklebox/commit/3bd8800f5c51e578025b307f5b57faa6a4c5ba7e))
+* **deps:** update module github.com/stretchr/testify to v1.12.1 ([#530](https://github.com/tuna-os/tacklebox/issues/530)) ([c9ffa0d](https://github.com/tuna-os/tacklebox/commit/c9ffa0d6924b0793e835d86d2bcacea6166911cd))
+* **deps:** update module google.golang.org/grpc to v1.85.0 ([#532](https://github.com/tuna-os/tacklebox/issues/532)) ([fa26d4a](https://github.com/tuna-os/tacklebox/commit/fa26d4a3998ffd39aacfd1d6db9d3c19d2901b73))
+* **liveboot:** accept Fedora's signed shim with its in-file COFF symbol table ([#505](https://github.com/tuna-os/tacklebox/issues/505)) ([453ffb4](https://github.com/tuna-os/tacklebox/commit/453ffb4a9074895b5cc26230b1e374d8a2b436ab))
+* **live:** name the live boot entry after the image's os-release ([#506](https://github.com/tuna-os/tacklebox/issues/506)) ([c60ef57](https://github.com/tuna-os/tacklebox/commit/c60ef57683e826f8e323a8aa0218d90a4ce93a2d))
+* **live:** stop the X13s initqueue with its reason once the ADSP budget is spent ([#507](https://github.com/tuna-os/tacklebox/issues/507)) ([02e12e8](https://github.com/tuna-os/tacklebox/commit/02e12e8687c5fde78b0c801851216bc278057143))
+* share live kargs builder across pure-Go builders ([#519](https://github.com/tuna-os/tacklebox/issues/519)) ([aa306b4](https://github.com/tuna-os/tacklebox/commit/aa306b4dc38f0170f701e875aff58653dc708955))
+
+
+### Refactoring
+
+* **build:** run --x13s-live through the build install strategy layer ([#504](https://github.com/tuna-os/tacklebox/issues/504)) ([4e9e632](https://github.com/tuna-os/tacklebox/commit/4e9e632d0201258d154a4ff364c55c61865e37f6)), closes [#501](https://github.com/tuna-os/tacklebox/issues/501)
+
+
+### Documentation
+
+* add release gate checklist and notes template ([#446](https://github.com/tuna-os/tacklebox/issues/446)) ([fd04946](https://github.com/tuna-os/tacklebox/commit/fd049460288e6c9f16158607b45b89cee8b7273b))
+* **readme:** list the experimental --x13s-live build flag ([#500](https://github.com/tuna-os/tacklebox/issues/500)) ([9312b24](https://github.com/tuna-os/tacklebox/commit/9312b24338b689a53f14dc59f28615c4e83273cf))
+* **user-guide:** describe where the boot-test scripts write their serial logs ([#495](https://github.com/tuna-os/tacklebox/issues/495)) ([a64cbd3](https://github.com/tuna-os/tacklebox/commit/a64cbd3088292aee09d45039537e80e3f74a7d00)), closes [#494](https://github.com/tuna-os/tacklebox/issues/494)
+
 ## [0.1.1](https://github.com/tuna-os/tacklebox/compare/v0.1.0...v0.1.1) (2026-11-17)
 
 
