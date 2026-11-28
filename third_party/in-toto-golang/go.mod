@@ -13,7 +13,7 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.10.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/sys v0.41.0
-	google.golang.org/grpc v1.79.3
+	google.golang.org/grpc v1.85.0
 )
 
 require (
